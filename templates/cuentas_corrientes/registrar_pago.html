@@ -1,0 +1,284 @@
+{% extends 'layout.html' %}
+
+{% block title %}Registrar Pago a Proveedor - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    .bg-usd-input { background-color: #fff3cd; border-left: 5px solid #ffc107; font-weight: bold; }
+    .bg-ars-input { background-color: #e8f4fd; border-left: 5px solid #0d6efd; font-weight: bold; }
+    .input-abono { width: 100%; }
+    .card-balance { position: sticky; top: 20px; }
+    .input-cotizacion { border: 2px solid #ffc107 !important; font-size: 1.2rem !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-cash-stack me-2"></i>Registrar Pago a Proveedor</h1>
+    <a href="{{ url_for('listar_proveedores_cc') }}" class="btn btn-outline-secondary">Volver</a>
+</div>
+
+<div class="alert alert-info shadow-sm d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <i class="bi bi-info-circle-fill me-2"></i>
+        Cotización del Sistema: <strong>1 USD = {{ valor_dolar_compra|default(1.0)|round(2) }} ARS</strong>
+    </div>
+    <span class="badge bg-dark text-uppercase fs-6">Pagando Rubro: {{ 'EQUIPOS (USD)' if imputacion == 'EQUIPOS' else 'REPUESTOS (ARS)' }}</span>
+</div>
+
+<!-- SELECTOR DE IMPUTACIÓN -->
+<div class="card mb-3 shadow-sm border-primary">
+    <div class="card-body py-3">
+        <form method="GET" action="{{ url_for('registrar_pago_proveedor', proveedor_id=proveedor.id) }}" id="form_imputacion">
+            <label class="form-label fw-bold small text-uppercase text-primary mb-2">¿Qué bolsa de deuda desea pagar?</label>
+            <div class="btn-group w-100" role="group">
+                <input type="radio" class="btn-check" name="imputacion" id="imp_equipos" value="EQUIPOS" {% if imputacion == 'EQUIPOS' %}checked{% endif %} onchange="this.form.submit()">
+                <label class="btn btn-outline-primary py-2 fw-bold" for="imp_equipos"><i class="bi bi-phone me-2"></i>EQUIPOS (USD)</label>
+
+                <input type="radio" class="btn-check" name="imputacion" id="imp_repuestos" value="REPUESTOS" {% if imputacion == 'REPUESTOS' %}checked{% endif %} onchange="this.form.submit()">
+                <label class="btn btn-outline-primary py-2 fw-bold" for="imp_repuestos"><i class="bi bi-tools me-2"></i>REPUESTOS (ARS)</label>
+            </div>
+        </form>
+    </div>
+</div>
+
+<form method="POST" id="pagoForm">
+    <input type="hidden" name="imputacion" value="{{ imputacion }}">
+    <input type="hidden" name="tipo_dolar" value="manual">
+
+    <!-- COTIZACIÓN MANUAL DE LA OPERACIÓN -->
+    <div class="card mb-4 border-warning shadow-sm">
+        <div class="card-body bg-light py-2">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h6 class="mb-0 fw-bold text-dark">
+                        <i class="bi bi-currency-exchange text-warning me-2"></i>
+                        Cotización de esta Operación
+                    </h6>
+                    <small class="text-muted">Cambie este valor para ajustar cuántos USD se descuentan por cada Peso entregado.</small>
+                </div>
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <span class="input-group-text bg-warning text-dark fw-bold">1 USD =</span>
+                        <input type="number" step="0.01" class="form-control text-center fw-bold input-cotizacion" 
+                               id="valor_dolar_manual" name="valor_dolar_manual" 
+                               value="{{ valor_dolar_compra|default(1.0) }}" oninput="recalcular()">
+                        <span class="input-group-text fw-bold">ARS</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- COLUMNA IZQUIERDA: DINERO Y TABLA -->
+        <div class="col-lg-9">
+            <!-- SECCIÓN 1: DINERO ENTREGADO -->
+            <div class="card shadow-sm mb-4 border-0">
+                <div class="card-header bg-primary text-white fw-bold">1. Dinero que sale de Caja / Banco</div>
+                <div class="card-body bg-light border row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Cuenta Salida Pesos:</label>
+                        <select class="form-select border-primary" name="cuenta_pago_ars">
+                            <option value="EFECTIVO">Caja Efectivo ARS</option>
+                            {% for cuenta in cuentas_entidades %}
+                            <option value="{{ cuenta.nombre }}">{{ cuenta.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="number" step="0.01" class="form-control mt-2 bg-ars-input" id="monto_ars_total" name="monto_ars" value="0.00" oninput="recalcular()">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Cuenta Salida Dólares:</label>
+                        <select class="form-select border-warning" name="entidad_origen_usd">
+                            <option value="EFECTIVO">Caja Billetes USD</option>
+                            {% for cuenta in cuentas_entidades %}
+                            <option value="{{ cuenta.nombre }}">{{ cuenta.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="number" step="0.01" class="form-control mt-2 bg-usd-input" id="monto_usd_total" name="monto_usd" value="0.00" oninput="recalcular()">
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <button type="button" class="btn btn-dark w-100 fw-bold" onclick="distribuirAuto()">
+                            <i class="bi bi-magic me-2"></i>DISTRIBUIR AUTO
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SECCIÓN 2: TABLA DE ASIGNACIÓN -->
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-dark text-white fw-bold">2. Asignación a Facturas Pendientes</div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-secondary">
+                            <tr>
+                                <th>Factura / Ítem</th>
+                                <th class="text-end">Deuda Restante</th>
+                                <th class="text-center" style="width: 300px;">Abonar con...</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for compra in compras_pendientes %}
+                            <tr class="fila-compra" data-id="{{ compra.compra_id }}" 
+                                data-deuda-usd="{{ compra.deuda_restante_usd }}" 
+                                data-deuda-ars="{{ compra.deuda_restante_ars }}">
+                                <td>
+                                    <div class="fw-bold">{{ compra.item_descripcion }}</div>
+                                    <small class="text-muted">Fecha: {{ compra.fecha_compra|datetimeformat('%d/%m/%y') }}</small>
+                                </td>
+                                <td class="text-end fw-bold text-danger">
+                                    {% if imputacion == 'EQUIPOS' %}
+                                        USD {{ "{:,.2f}".format(compra.deuda_restante_usd) }}
+                                    {% else %}
+                                        ARS {{ "{:,.2f}".format(compra.deuda_restante_ars) }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="row g-1">
+                                        <div class="col-6">
+                                            <div class="input-group input-group-sm">
+                                                <span class="input-group-text">$</span>
+                                                <input type="number" step="0.01" class="form-control input-ars-fila" 
+                                                       name="monto_a_pagar_ars_{{ compra.compra_id }}" value="0.00" oninput="recalcular()">
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="input-group input-group-sm">
+                                                <span class="input-group-text">USD</span>
+                                                <input type="number" step="0.01" class="form-control input-usd-fila" 
+                                                       name="monto_a_pagar_usd_{{ compra.compra_id }}" value="0.00" oninput="recalcular()">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="text-center mt-1">
+                                        <small class="text-primary fw-bold badge bg-light border info-impacto" id="impacto-{{ compra.compra_id }}">Impacto: 0.00</small>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- COLUMNA DERECHA: BALANCE -->
+        <div class="col-lg-3">
+            <div class="card card-balance shadow border-0">
+                <div class="card-body">
+                    <h6 class="text-uppercase fw-bold text-muted mb-3">Balance del Pago</h6>
+                    
+                    <div class="mb-3">
+                        <label class="small text-muted">Total Disponible:</label>
+                        <div class="fs-4 fw-bold text-dark" id="txt_disponible">0.00</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="small text-muted">Total Asignado:</label>
+                        <div class="fs-4 fw-bold text-primary" id="txt_asignado">0.00</div>
+                    </div>
+
+                    <hr>
+
+                    <div id="status_box" class="alert alert-warning py-2 small fw-bold text-center">
+                        Ingrese montos
+                    </div>
+
+                    <button type="submit" class="btn btn-success btn-lg w-100 fw-bold shadow" id="btnSubmit" disabled>
+                        CONFIRMAR PAGO
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+<script>
+    const modo = "{{ imputacion }}"; // 'EQUIPOS' o 'REPUESTOS'
+
+    function recalcular() {
+        // Obtenemos la cotización del input manual en cada cambio
+        const cotizActual = parseFloat($('#valor_dolar_manual').val()) || 1;
+        const totalArsHeader = parseFloat($('#monto_ars_total').val()) || 0;
+        const totalUsdHeader = parseFloat($('#monto_usd_total').val()) || 0;
+
+        let disponible = 0;
+        let totalAsignadoBolsa = 0;
+
+        // 1. Calcular disponible según el rubro usando la cotización manual
+        if (modo === 'EQUIPOS') {
+            disponible = totalUsdHeader + (totalArsHeader / cotizActual);
+            $('#txt_disponible').text('USD ' + disponible.toFixed(2));
+        } else {
+            disponible = totalArsHeader + (totalUsdHeader * cotizActual);
+            $('#txt_disponible').text('$ ' + disponible.toFixed(2));
+        }
+
+        // 2. Calcular asignación fila por fila
+        $('.fila-compra').each(function() {
+            const rowId = $(this).data('id');
+            const arsFila = parseFloat($(this).find('.input-ars-fila').val()) || 0;
+            const usdFila = parseFloat($(this).find('.input-usd-fila').val()) || 0;
+            let impactoFila = 0;
+
+            if (modo === 'EQUIPOS') {
+                impactoFila = usdFila + (arsFila / cotizActual);
+                $(`#impacto-${rowId}`).text('USD ' + impactoFila.toFixed(2));
+            } else {
+                impactoFila = arsFila + (usdFila * cotizActual);
+                $(`#impacto-${rowId}`).text('$ ' + impactoFila.toFixed(2));
+            }
+            totalAsignadoBolsa += impactoFila;
+        });
+
+        // 3. Mostrar totales y validar
+        if (modo === 'EQUIPOS') {
+            $('#txt_asignado').text('u$d ' + totalAsignadoBolsa.toFixed(2));
+        } else {
+            $('#txt_asignado').text('$ ' + totalAsignadoBolsa.toFixed(2));
+        }
+
+        const dif = disponible - totalAsignadoBolsa;
+        if (totalAsignadoBolsa > 0 && Math.abs(dif) < 0.01) {
+            $('#status_box').attr('class', 'alert alert-success py-2 small fw-bold text-center').text('BALANCE CORRECTO');
+            $('#btnSubmit').prop('disabled', false);
+        } else if (totalAsignadoBolsa > disponible + 0.01) {
+            $('#status_box').attr('class', 'alert alert-danger py-2 small fw-bold text-center').text('ASIGNADO EXCEDE DISPONIBLE');
+            $('#btnSubmit').prop('disabled', true);
+        } else {
+            $('#status_box').attr('class', 'alert alert-warning py-2 small fw-bold text-center').text('RESTA: ' + Math.abs(dif).toFixed(2));
+            $('#btnSubmit').prop('disabled', true);
+        }
+    }
+
+    function distribuirAuto() {
+        const cotizActual = parseFloat($('#valor_dolar_manual').val()) || 1;
+        const totalArsHeader = parseFloat($('#monto_ars_total').val()) || 0;
+        const totalUsdHeader = parseFloat($('#monto_usd_total').val()) || 0;
+        
+        let resto = (modo === 'EQUIPOS') ? (totalUsdHeader + (totalArsHeader / cotizActual)) : (totalArsHeader + (totalUsdHeader * cotizActual));
+
+        if (resto <= 0) return alert("Ingrese montos entregados primero.");
+
+        $('.fila-compra').each(function() {
+            const deuda = (modo === 'EQUIPOS') ? parseFloat($(this).data('deuda-usd')) : parseFloat($(this).data('deuda-ars'));
+            const inputArs = $(this).find('.input-ars-fila');
+            const inputUsd = $(this).find('.input-usd-fila');
+
+            inputArs.val("0.00");
+            inputUsd.val("0.00");
+
+            if (resto > 0.005) {
+                const abono = Math.min(resto, deuda);
+                if (modo === 'EQUIPOS') inputUsd.val(abono.toFixed(2));
+                else inputArs.val(abono.toFixed(2));
+                
+                resto -= abono;
+            }
+        });
+        recalcular();
+    }
+
+    $(document).ready(recalcular);
+</script>
+{% endblock %}

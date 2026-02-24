@@ -1,0 +1,148 @@
+{% extends 'layout.html' %}
+
+{% block title %}Historial Proveedor - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1><i class="bi bi-clock-history me-2"></i>Historial: {{ proveedor.razon_social or proveedor.nombre }}</h1>
+        <p class="text-muted mb-0">Cuenta seleccionada: 
+            <span class="badge {% if categoria_view == 'EQUIPOS' %}bg-primary{% else %}bg-dark{% endif %}">
+                {% if categoria_view == 'EQUIPOS' %}COMPRA DE CELULARES Y EQUIPOS (USD){% else %}REPUESTOS Y ACCESORIOS (ARS){% endif %}
+            </span>
+        </p>
+    </div>
+    <div class="d-flex flex-column align-items-end gap-2">
+        <a href="{{ url_for('listar_proveedores_cc') }}" class="btn btn-outline-secondary btn-sm">Volver a Lista</a>
+        
+        <!-- BOTONES DE FILTRO (Nombres actualizados) -->
+        <div class="btn-group shadow-sm">
+            <a href="{{ url_for('ver_detalle_cc_proveedor', proveedor_id=proveedor.id, view='EQUIPOS') }}" 
+               class="btn {% if categoria_view == 'EQUIPOS' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                <i class="bi bi-phone me-1"></i> Celulares y Equipos (USD)
+            </a>
+            <a href="{{ url_for('ver_detalle_cc_proveedor', proveedor_id=proveedor.id, view='REPUESTOS') }}" 
+               class="btn {% if categoria_view == 'REPUESTOS' %}btn-dark{% else %}btn-outline-dark{% endif %}">
+                <i class="bi bi-tools me-1"></i> Repuestos y Accesorios (ARS)
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Tarjeta de Saldo Dinámica -->
+<div class="card shadow-sm {% if categoria_view == 'EQUIPOS' %}border-primary{% else %}border-dark{% endif %} mb-4">
+    <div class="card-body d-flex justify-content-between align-items-center bg-light">
+        <div>
+            <h4 class="mb-0">Saldo Pendiente en {% if categoria_view == 'EQUIPOS' %}Dólares (USD){% else %}Pesos (ARS){% endif %}:</h4>
+            <small class="text-muted text-uppercase fw-bold">
+                {% if categoria_view == 'EQUIPOS' %}Compra de Celulares y Equipos{% else %}Repuestos y Accesorios{% endif %}
+            </small>
+        </div>
+        <div class="text-end">
+            <!-- Saldo Principal Dinámico -->
+            <h2 class="mb-0 {% if saldo_final > 0.01 %}text-danger{% else %}text-success{% endif %}">
+                {% if categoria_view == 'EQUIPOS' %}USD{% else %}ARS{% endif %} {{ "{:,.2f}".format(saldo_final) }}
+            </h2>
+            
+            <!-- Conversión Informativa (Solo se muestra en vista Equipos) -->
+            {% if categoria_view == 'EQUIPOS' and valor_dolar_compra %}
+                <div class="badge bg-secondary">
+                    Equivalente aprox: ARS {{ "{:,.2f}".format(saldo_final * valor_dolar_compra) }}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-footer bg-white border-top-0 py-2">
+        <div class="d-flex gap-3">
+            {% if categoria_view == 'EQUIPOS' %}
+                <span class="small"><i class="bi bi-info-circle-fill text-primary me-1"></i> Esta cuenta registra deuda de Celulares, Tablets y Smartwatches en USD.</span>
+            {% else %}
+                <span class="small"><i class="bi bi-info-circle-fill text-dark me-1"></i> Esta cuenta registra deuda de Repuestos, Insumos y Accesorios en Pesos.</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-striped table-hover align-middle">
+        <thead class="{% if categoria_view == 'EQUIPOS' %}table-primary{% else %}table-dark{% endif %}">
+            <tr>
+                <th>Fecha</th>
+                <th>Concepto</th>
+                <th class="text-center">{% if categoria_view == 'EQUIPOS' %}Cotización{% else %}Ref. Operación{% endif %}</th>
+                <th class="text-end">Debe ({% if categoria_view == 'EQUIPOS' %}USD{% else %}ARS{% endif %})</th>
+                <th class="text-end">Haber ({% if categoria_view == 'EQUIPOS' %}USD{% else %}ARS{% endif %})</th>
+                <th class="text-end">Saldo ({% if categoria_view == 'EQUIPOS' %}USD{% else %}ARS{% endif %})</th>
+                {% if categoria_view == 'EQUIPOS' %}
+                <th class="text-end text-muted">Ref. ARS</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for mov in movimientos %}
+            <tr>
+                <td class="small">{{ mov.fecha|datetimeformat }}</td>
+                
+                <td>
+                    <div class="fw-bold" style="font-size: 0.9em;">{{ mov.descripcion }}</div>
+                    {% if mov.ref %}<small class="text-muted">Ref: #{{ mov.ref }}</small>{% endif %}
+                </td>
+                
+                <!-- COLUMNA DINÁMICA: COTIZACIÓN -->
+                <td class="text-center small">
+                    {% if mov.cotizacion %}
+                        <span class="text-muted">${{ "{:,.2f}".format(mov.cotizacion) }}</span>
+                    {% else %}
+                        <span class="text-muted">-</span>
+                    {% endif %}
+                </td>
+
+                <!-- DEBE (Aumenta Deuda) -->
+                <td class="text-end text-danger">
+                    {% if mov.tipo == 'DEBE' %}
+                        <span class="fw-bold">
+                            {% if categoria_view == 'EQUIPOS' %}
+                                USD {{ "{:,.2f}".format(mov.monto_usd) }}
+                            {% else %}
+                                ARS {{ "{:,.2f}".format(mov.monto_ars) }}
+                            {% endif %}
+                        </span>
+                    {% else %}-{% endif %}
+                </td>
+                
+                <!-- HABER (Disminuye Deuda) -->
+                <td class="text-end text-success">
+                    {% if mov.tipo == 'HABER' %}
+                        <span class="fw-bold">
+                            {% if categoria_view == 'EQUIPOS' %}
+                                USD {{ "{:,.2f}".format(mov.monto_usd) }}
+                            {% else %}
+                                ARS {{ "{:,.2f}".format(mov.monto_ars) }}
+                            {% endif %}
+                        </span>
+                    {% else %}-{% endif %}
+                </td>
+                
+                <!-- SALDO ACUMULADO -->
+                <td class="text-end fw-bold {% if mov.saldo_acumulado > 0.01 %}text-danger{% endif %}">
+                    {% if categoria_view == 'EQUIPOS' %}USD{% else %}ARS{% endif %} {{ "{:,.2f}".format(mov.saldo_acumulado) }}
+                </td>
+
+                <!-- COLUMNA INFORMATIVA ARS (Solo en vista EQUIPOS) -->
+                {% if categoria_view == 'EQUIPOS' %}
+                <td class="text-end text-muted small">
+                    {% if mov.monto_ars_info %}
+                        ${{ "{:,.2f}".format(mov.monto_ars_info) }}
+                    {% else %}-{% endif %}
+                </td>
+                {% endif %}
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7" class="text-center text-muted py-3">No hay movimientos registrados en esta categoría.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

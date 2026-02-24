@@ -1,0 +1,111 @@
+{% extends 'layout.html' %}
+
+{% block title %}Agregar Persona - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-person-plus me-2"></i>Agregar Nueva Persona</h1>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('agregar_persona') }}">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="nombre" class="form-label">Nombre:</label>
+                    <input type="text" class="form-control" id="nombre" name="nombre" value="{{ nombre|default('') }}" autocomplete="given-name">
+                </div>
+                <div class="col-md-6">
+                    <label for="apellido" class="form-label">Apellido:</label>
+                    <input type="text" class="form-control" id="apellido" name="apellido" value="{{ apellido|default('') }}" autocomplete="family-name">
+                </div>
+                <div class="col-12">
+                    <label for="razon_social" class="form-label">Razón Social:</label>
+                    <input type="text" class="form-control" id="razon_social" name="razon_social" value="{{ razon_social|default('') }}" autocomplete="organization">
+                    <div class="form-text">Si es una empresa, ingrese la razón social. De lo contrario, nombre y apellido son suficientes.</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="cuit_cuil" class="form-label">DNI/CUIT/CUIL <span class="text-danger">*</span>:</label>
+                    {# He eliminado pattern y title para que no obligue a tener 11 exactos, 
+                        y agregué maxlength="11" para que no permita escribir más de esa cuenta #}
+                    <input type="text" class="form-control" id="cuit_cuil" name="cuit_cuil" 
+                    value="{{ cuit_cuil|default('') }}" required autocomplete="off" 
+                    maxlength="11">
+                    <div class="form-text">Sin guiones ni espacios. Ejemplo: 20123456789</div>
+                </div>
+                
+                <div class="col-md-6">
+                    <label for="telefono" class="form-label">Teléfono:</label>
+                    <input type="tel" class="form-control" id="telefono" name="telefono" value="{{ telefono|default('') }}" autocomplete="tel">
+                </div>
+                {# MODIFICADO: Email y Fecha de Nacimiento en la misma fila #}
+                <div class="col-md-6">
+                    <label for="email" class="form-label">Email:</label>
+                    <input type="email" class="form-control" id="email" name="email" value="{{ email|default('') }}" autocomplete="email">
+                </div>
+                <div class="col-md-6">
+                    <label for="fecha_nacimiento" class="form-label">Fecha de Nacimiento:</label>
+                    <input type="date" class="form-control" id="fecha_nacimiento" name="fecha_nacimiento" value="{{ fecha_nacimiento|default('') }}">
+                </div>
+                <div class="col-12">
+                    <hr>
+                    <label class="form-label fw-bold">Roles de la Persona:</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="es_cliente" name="es_cliente" {% if es_cliente %}checked{% endif %}>
+                        <label class="form-check-label" for="es_cliente">
+                            Es Cliente
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="es_proveedor" name="es_proveedor" {% if es_proveedor %}checked{% endif %}>
+                        <label class="form-check-label" for="es_proveedor">
+                            Es Proveedor
+                        </label>
+                    </div>
+                    <div class="form-text text-info">
+                        Se puede seleccionar uno, ambos o ninguno de los roles.
+                    </div>
+                </div>
+            </div>
+            <hr class="my-4">
+            <div class="d-flex justify-content-end gap-2">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-save me-2"></i>Guardar Persona</button>
+                <a href="{{ url_for('listar_personas') }}" class="btn btn-secondary"><i class="bi bi-x-circle me-2"></i>Cancelar</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Función para validar que al menos un campo de identificación esté lleno
+        function validateIdentification() {
+            const nombre = document.getElementById('nombre').value.trim();
+            const apellido = document.getElementById('apellido').value.trim();
+            const razonSocial = document.getElementById('razon_social').value.trim();
+            
+            const form = document.querySelector('form');
+            const submitButton = form.querySelector('button[type="submit"]');
+
+            if (!nombre && !apellido && !razonSocial) {
+                submitButton.setAttribute('disabled', 'disabled');
+            } else {
+                submitButton.removeAttribute('disabled');
+            }
+        }
+
+        document.getElementById('nombre').addEventListener('input', validateIdentification);
+        document.getElementById('apellido').addEventListener('input', validateIdentification);
+        document.getElementById('razon_social').addEventListener('input', validateIdentification);
+        validateIdentification();
+
+        const cuitCuilInput = document.getElementById('cuit_cuil');
+        cuitCuilInput.addEventListener('input', function() {
+            this.value = this.value.replace(/\D/g, ''); // Eliminar cualquier caracter que no sea dígito
+            if (this.value.length > 11) {
+                this.value = this.value.slice(0, 11);
+            }
+        });
+    });
+</script>
+{% endblock %}

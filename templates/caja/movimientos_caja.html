@@ -1,0 +1,240 @@
+{% extends 'layout.html' %}
+
+{% block title %}Movimientos de Caja y Cuentas - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-journals me-2"></i>Movimientos del Día (Todas las Cuentas)</h1>
+
+<!-- ALERTA INFORMATIVA: SEPARACIÓN DE CAJAS -->
+<div class="alert alert-warning d-flex align-items-center shadow-sm" role="alert">
+    <i class="bi bi-exclamation-triangle-fill flex-shrink-0 me-3 fs-4"></i>
+    <div>
+        <strong>Vista Unificada:</strong> Los totales de arriba corresponden únicamente al <strong>Efectivo Físico</strong>. 
+        En la tabla de abajo podrá ver el historial de todas las cuentas (Caja).
+    </div>
+</div>
+
+<!-- SECCIÓN: RESUMEN DE FLUJO FÍSICO (SOLO EFECTIVO) -->
+<div class="row mb-4 g-3">
+    <div class="col-md-12">
+        <h6 class="text-muted text-uppercase fw-bold small"><i class="bi bi-cash me-1"></i> Control de Billetes (Efectivo Físico)</h6>
+    </div>
+    <!-- Totales en Pesos (ARS) -->
+    <div class="col-md-3">
+        <div class="card border-success shadow-sm">
+            <div class="card-body py-2 text-center">
+                <span class="text-success fw-bold small">INGRESOS EFECTIVO ARS</span>
+                <h4 class="mb-0 text-success fw-bold">$ {{ "%.2f"|format(total_ingresos_ars|default(0)) }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-danger shadow-sm">
+            <div class="card-body py-2 text-center">
+                <span class="text-danger fw-bold small">EGRESOS EFECTIVO ARS</span>
+                <h4 class="mb-0 text-danger fw-bold">$ {{ "%.2f"|format(total_egresos_ars|default(0)) }}</h4>
+            </div>
+        </div>
+    </div>
+    <!-- Totales en Dólares (USD) -->
+    <div class="col-md-3">
+        <div class="card border-primary shadow-sm">
+            <div class="card-body py-2 text-center">
+                <span class="text-primary fw-bold small">INGRESOS EFECTIVO USD</span>
+                <h4 class="mb-0 text-primary fw-bold">U$D {{ "%.2f"|format(total_ingresos_usd|default(0)) }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-warning shadow-sm">
+            <div class="card-body py-2 text-center">
+                <span class="text-warning fw-bold small">EGRESOS EFECTIVO USD</span>
+                <h4 class="mb-0 text-warning fw-bold">U$D {{ "%.2f"|format(total_egresos_usd|default(0)) }}</h4>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4 shadow-sm border-primary">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Registrar Movimiento Manual (Ajuste)</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('movimientos_caja') }}" class="needs-validation" novalidate>
+            
+            <!-- FILA 1: Tipo, Sub-rubro, Cuenta -->
+            <div class="row g-3 mb-3">
+                <div class="col-md-3">
+                    <label for="tipo" class="form-label small fw-bold">Tipo de Movimiento:<span class="text-danger">*</span></label>
+                    <select class="form-select" id="tipo" name="tipo" required>
+                        <option value="">Seleccione...</option>
+                        <option value="INGRESO_MANUAL" {% if form_data.tipo == 'INGRESO_MANUAL' %}selected{% endif %}>Ingreso (+)</option>
+                        <option value="EGRESO_MANUAL" {% if form_data.tipo == 'EGRESO_MANUAL' %}selected{% endif %}>Egreso (-)</option>
+                    </select>
+                </div>
+                
+                <div class="col-md-3" id="subRubroField">
+                    <label for="sub_categoria" class="form-label small fw-bold">Sub-Rubro:<span class="text-danger" id="subRubroRequiredIndicator">*</span></label>
+                    <select class="form-select" id="sub_categoria" name="sub_categoria">
+                        <option value="">Seleccione...</option>
+                        {% for rubro in sub_rubros %}
+                            <option value="{{ rubro }}" {% if form_data.sub_categoria == rubro %}selected{% endif %}>{{ rubro }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <label for="metodo_pago" class="form-label small fw-bold text-primary">Cuenta de Destino/Origen:<span class="text-danger">*</span></label>
+                    <select class="form-select border-primary" id="metodo_pago" name="metodo_pago" required>
+                        <option value="EFECTIVO" selected>Caja Física (Efectivo)</option>
+                        <option value="BANCO">Banco / Transferencia</option>
+                        <option value="MERCADO_PAGO">Mercado Pago</option>
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <label for="monto_ars" class="form-label small fw-bold">Monto ARS:</label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" step="0.01" class="form-control" id="monto_ars" name="monto_ars" value="0.00" min="0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- FILA 2: Dólares y Descripción -->
+            <div class="row g-3 mb-3">
+                <div class="col-md-3">
+                    <label for="monto_usd" class="form-label small fw-bold text-danger">Monto USD:</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-warning-light">U$D</span>
+                        <input type="number" step="0.01" class="form-control border-warning" id="monto_usd" name="monto_usd" value="0.00" min="0">
+                    </div>
+                </div>
+                <div class="col-md-9">
+                    <label for="descripcion" class="form-label small fw-bold">Descripción / Motivo:<span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="descripcion" name="descripcion" placeholder="Ej: Pago de internet, Venta de accesorio fuera de stock..." required value="{{ form_data.descripcion|default('') }}">
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end">
+                <button type="submit" class="btn btn-success px-4 shadow-sm"><i class="bi bi-check-lg me-2"></i>Registrar Movimiento</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- TABLA DE MOVIMIENTOS UNIFICADA -->
+<div class="card shadow-sm mt-4">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Historial Detallado de Movimientos</h5>
+        <small>Muestra todas las cuentas del turno</small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th scope="col">Hora</th>
+                        <th scope="col">Cuenta</th>
+                        <th scope="col">Tipo</th>
+                        <th scope="col">Sub-Rubro</th>
+                        <th scope="col" class="text-end">ARS</th>
+                        <th scope="col" class="text-end">USD</th>
+                        <th scope="col">Descripción</th>
+                        <th scope="col">Usuario</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if movimientos %}
+                        {% for mov in movimientos %}
+                        <tr>
+                            <td><small class="text-muted">{{ mov.fecha|datetimeformat('%H:%M') }}</small></td>
+                            <td>
+                                <!-- COLOR DE CUENTA DINÁMICO -->
+                                <span class="badge {{ 'bg-success' if mov.metodo_pago == 'EFECTIVO' else 'bg-primary' if mov.metodo_pago == 'BANCO' else 'bg-info text-dark' }}">
+                                    <i class="bi {{ 'bi-cash' if mov.metodo_pago == 'EFECTIVO' else 'bi-bank' if mov.metodo_pago == 'BANCO' else 'bi-qr-code' }} me-1"></i>
+                                    {{ mov.metodo_pago }}
+                                </span>
+                            </td>
+                            <td>
+                                <small class="fw-bold text-uppercase {{ 'text-success' if 'INGRESO' in mov.tipo or 'VENTA' in mov.tipo else 'text-danger' }}">
+                                    {{ mov.tipo.replace('_', ' ') }}
+                                </small>
+                            </td>
+                            <td>
+                                {% if mov.sub_categoria %}
+                                    <span class="badge border text-dark bg-light">{{ mov.sub_categoria }}</span>
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end fw-bold {{ 'text-success' if 'INGRESO' in mov.tipo or 'VENTA' in mov.tipo or 'COBRO' in mov.tipo or 'APERTURA' in mov.tipo else 'text-danger' }}">
+                                {% if mov.monto_ars and mov.monto_ars > 0 %}
+                                    {{ '+' if 'INGRESO' in mov.tipo or 'VENTA' in mov.tipo or 'COBRO' in mov.tipo or 'APERTURA' in mov.tipo else '-' }}
+                                    $ {{ "{:,.2f}".format(mov.monto_ars) }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end fw-bold {{ 'text-success' if 'INGRESO' in mov.tipo or 'VENTA' in mov.tipo or 'COBRO' in mov.tipo or 'APERTURA' in mov.tipo else 'text-danger' }}">
+                                {% if mov.monto_usd and mov.monto_usd > 0 %}
+                                    {{ '+' if 'INGRESO' in mov.tipo or 'VENTA' in mov.tipo or 'COBRO' in mov.tipo or 'APERTURA' in mov.tipo else '-' }}
+                                    U$D {{ "{:,.2f}".format(mov.monto_usd) }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="small">{{ mov.descripcion or 'N/A' }}</td>
+                            <td class="small text-muted">{{ mov.username }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-4">No hay movimientos registrados en este turno.</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    (function () {
+        'use strict'
+
+        var forms = document.querySelectorAll('.needs-validation')
+        Array.prototype.slice.call(forms)
+            .forEach(function (form) {
+                form.addEventListener('submit', function (event) {
+                    const montoArs = parseFloat(document.getElementById('monto_ars').value) || 0;
+                    const montoUsd = parseFloat(document.getElementById('monto_usd').value) || 0;
+
+                    if (montoArs <= 0 && montoUsd <= 0) {
+                        alert("Debe ingresar un monto mayor a cero en ARS o USD.");
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }
+
+                    form.classList.add('was-validated');
+                }, false)
+            })
+
+        const tipoSelect = document.getElementById('tipo');
+        const subRubroField = document.getElementById('subRubroField');
+        const subCategoriaSelect = document.getElementById('sub_categoria');
+
+        function toggleSubRubroField() {
+            const isManual = tipoSelect.value === 'INGRESO_MANUAL' || tipoSelect.value === 'EGRESO_MANUAL';
+            subRubroField.style.visibility = isManual ? 'visible' : 'hidden';
+            if (isManual) subCategoriaSelect.setAttribute('required', 'true');
+            else subCategoriaSelect.removeAttribute('required');
+        }
+
+        tipoSelect.addEventListener('change', toggleSubRubroField);
+        toggleSubRubroField();
+    })()
+</script>
+{% endblock %}

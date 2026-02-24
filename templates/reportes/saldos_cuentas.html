@@ -1,0 +1,106 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1><i class="bi bi-wallet2 me-2"></i>Consolidado de Saldos</h1>
+        <div class="text-end">
+            <span class="badge bg-dark">Cotización Ref: ARS {{ valor_dolar }}</span>
+        </div>
+    </div>
+
+    <!-- Resumen Global -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card bg-primary text-white shadow">
+                <div class="card-body text-center">
+                    <h6 class="text-uppercase small">Efectivo Total (ARS)</h6>
+                    <h2 class="fw-bold">${{ "{:,.2f}".format(total_ars) }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-success text-white shadow">
+                <div class="card-body text-center">
+                    <h6 class="text-uppercase small">Efectivo Total (USD)</h6>
+                    <h2 class="fw-bold">U$D {{ "{:,.2f}".format(total_usd) }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-warning text-dark shadow">
+                <div class="card-body text-center">
+                    <h6 class="text-uppercase small">Patrimonio Neto Est. (ARS)</h6>
+                    <h2 class="fw-bold">${{ "{:,.2f}".format(total_equiv) }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detalle por Cuenta -->
+    <div class="card shadow">
+        <div class="card-header bg-white py-3">
+            <h5 class="m-0 font-weight-bold text-primary">Desglose por Cuenta / Entidad</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Cuenta</th>
+                            <th>Titular</th> <!-- CAMBIO: NUEVA COLUMNA AGREGADA -->
+                            <th class="text-end">Saldo ARS</th>
+                            <th class="text-end">Saldo USD</th>
+                            <th class="text-end">Equiv. Total (ARS)</th>
+                            <th class="text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in saldos %}
+                        <tr>
+                            <td>
+                                <div class="d-flex align-items-center">
+                                    <i class="bi {{ 'bi-cash-stack text-success' if s.cuenta == 'EFECTIVO' else 'bi-bank text-primary' }} fs-4 me-2"></i>
+                                    <span class="fw-bold">{{ s.cuenta }}</span>
+                                </div>
+                            </td>
+                            <td>
+                                <!-- Muestra el titular (My Point para EFECTIVO, o el asignado en DB) -->
+                                <span class="text-muted fw-bold small text-uppercase">{{ s.titular }}</span>
+                            </td>
+                            <td class="text-end fw-bold {{ 'text-danger' if s.saldo_ars < 0 else '' }}">
+                                ${{ "{:,.2f}".format(s.saldo_ars) }}
+                            </td>
+                            <td class="text-end fw-bold text-success">
+                                U$D {{ "{:,.2f}".format(s.saldo_usd) }}
+                            </td>
+                            <td class="text-end text-muted">
+                                ${{ "{:,.2f}".format(s.total_equivalente) }}
+                            </td>
+                            <td class="text-center">
+                                {% if s.total_equivalente > 0 %}
+                                    <span class="badge bg-success-soft text-success"><i class="bi bi-caret-up-fill"></i> Positivo</span>
+                                {% elif s.total_equivalente < 0 %}
+                                    <span class="badge bg-danger-soft text-danger"><i class="bi bi-caret-down-fill"></i> Deuda</span>
+                                {% else %}
+                                    <span class="badge bg-light text-dark">Vacio</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-4 alert alert-info small shadow-sm">
+        <i class="bi bi-info-circle-fill me-2"></i>
+        <strong>Nota:</strong> El saldo se calcula sumando todos los ingresos y restando todos los egresos registrados históricamente en el sistema para cada cuenta.
+    </div>
+</div>
+
+<style>
+    .bg-success-soft { background-color: #e1f6eb; }
+    .bg-danger-soft { background-color: #fde8e8; }
+</style>
+{% endblock %}

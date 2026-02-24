@@ -1,0 +1,170 @@
+{% extends 'layout.html' %}
+
+{% block title %}Cuentas Corrientes Clientes - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    .card-hover:hover { box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important; }
+    .table-v-middle { vertical-align: middle; }
+    .search-container { position: relative; }
+    .search-icon { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: #6c757d; }
+    .search-input { padding-left: 40px !important; border-radius: 25px; }
+    .badge-deuda { font-size: 0.95rem; min-width: 130px; display: inline-block; }
+    
+    /* Colores personalizados para rubros */
+    .bg-equipos { background-color: #e7f1ff; color: #0d6efd; border: 1px solid #cfe2ff; }
+    .bg-servicios { background-color: #f0fdfa; color: #0891b2; border: 1px solid #cff4fc; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h2 fw-bold text-dark"><i class="bi bi-people-fill me-2 text-primary"></i>Cuentas Corrientes Clientes</h1>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('listar_proveedores_cc') }}" class="btn btn-outline-dark fw-bold">
+            <i class="bi bi-arrow-left-right me-2"></i>Ver Deudas a Proveedores
+        </a>
+    </div>
+</div>
+
+<!-- BARRA DE REFERENCIA Y BÚSQUEDA -->
+<div class="row g-3 mb-4">
+    <div class="col-md-8">
+        <div class="alert alert-white border shadow-sm d-flex align-items-center mb-0">
+            <div class="me-3">
+                <i class="bi bi-info-circle-fill text-primary fs-4"></i>
+            </div>
+            <div>
+                <span class="d-block small text-muted text-uppercase fw-bold">Gestión Bimonetaria Activa</span>
+                Ventas de <strong>Equipos/Celulares</strong> en <span class="badge bg-primary">u$d</span>. 
+                Servicios de <strong>Reparación</strong> en <span class="badge bg-info text-dark">$ ARS</span>.
+                <span class="text-muted ms-2 small">| Ref. Blue: ${{ valor_dolar_compra|default(0)|round(2) }}</span>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="search-container shadow-sm">
+            <i class="bi bi-search search-icon"></i>
+            <input type="text" id="clienteSearch" class="form-control form-control-lg search-input" placeholder="Buscar cliente por nombre...">
+        </div>
+    </div>
+</div>
+
+<!-- TABLA DE CLIENTES -->
+<div class="card shadow-sm border-0 overflow-hidden">
+    <div class="card-body p-0">
+        {% if estados_cuenta %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 table-v-middle" id="clientesTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th class="ps-4 py-3">Cliente</th>
+                        <th>Contacto</th>
+                        <th class="text-end">Saldo Equipos (u$d)</th>
+                        <th class="text-end">Saldo Servicios (ARS)</th>
+                        <th class="text-center">Gestión</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for estado in estados_cuenta %}
+                    <tr class="cliente-fila">
+                        <td class="ps-4">
+                            <div class="fw-bold text-dark fs-5">{{ estado.nombre }}</div>
+                            <span class="text-muted small">ID: #{{ estado.id }}</span>
+                        </td>
+                        <td>
+                            {% if estado.telefono %}
+                            <a href="https://wa.me/{{ estado.telefono|replace('+', '')|replace(' ', '') }}" target="_blank" class="text-decoration-none text-success fw-bold">
+                                <i class="bi bi-whatsapp me-1"></i>{{ estado.telefono }}
+                            </a>
+                            {% else %}
+                            <span class="text-muted small">Sin teléfono</span>
+                            {% endif %}
+                        </td>
+                        
+                        {# COLUMNA USD (EQUIPOS) #}
+                        <td class="text-end">
+                            {% if estado.saldo_usd > 0.01 %}
+                                <div class="badge-deuda bg-equipos rounded p-2 text-end">
+                                    <small class="d-block text-uppercase fw-bold" style="font-size: 0.6rem;">Deuda Hardware</small>
+                                    <span class="fw-bold">u$d {{ "{:,.2f}".format(estado.saldo_usd) }}</span>
+                                </div>
+                            {% elif estado.saldo_usd < -0.01 %}
+                                <div class="badge-deuda bg-success-subtle text-success border border-success-subtle rounded p-2 text-end">
+                                    <small class="d-block text-uppercase fw-bold" style="font-size: 0.6rem;">Saldo a Favor</small>
+                                    <span class="fw-bold">u$d {{ "{:,.2f}".format(estado.saldo_usd|abs) }}</span>
+                                </div>
+                            {% else %}
+                                <span class="text-muted small">Al día</span>
+                            {% endif %}
+                        </td>
+
+                        {# COLUMNA ARS (SERVICIOS) #}
+                        <td class="text-end">
+                            {% if estado.saldo_ars > 0.01 %}
+                                <div class="badge-deuda bg-servicios rounded p-2 text-end">
+                                    <small class="d-block text-uppercase fw-bold" style="font-size: 0.6rem;">Deuda Reparación</small>
+                                    <span class="fw-bold">$ {{ "{:,.2f}".format(estado.saldo_ars) }}</span>
+                                </div>
+                            {% elif estado.saldo_ars < -0.01 %}
+                                <div class="badge-deuda bg-success-subtle text-success border border-success-subtle rounded p-2 text-end">
+                                    <small class="d-block text-uppercase fw-bold" style="font-size: 0.6rem;">Saldo a Favor</small>
+                                    <span class="fw-bold">$ {{ "{:,.2f}".format(estado.saldo_ars|abs) }}</span>
+                                </div>
+                            {% else %}
+                                <span class="text-muted small">Al día</span>
+                            {% endif %}
+                        </td>
+
+                        <td class="text-center pe-4">
+                            <div class="dropdown">
+                                <button class="btn btn-dark btn-sm dropdown-toggle fw-bold" type="button" data-bs-toggle="dropdown">
+                                    GESTIONAR
+                                </button>
+                                <ul class="dropdown-menu shadow">
+                                    <li><h6 class="dropdown-header">Registrar Pago de:</h6></li>
+                                    <li><a class="dropdown-item text-primary fw-bold" href="{{ url_for('cobrar_cliente', cliente_id=estado.id, imputacion='EQUIPOS') }}">
+                                        <i class="bi bi-phone me-2"></i>Equipos (u$d)
+                                    </a></li>
+                                    <li><a class="dropdown-item text-info fw-bold" href="{{ url_for('cobrar_cliente', cliente_id=estado.id, imputacion='SERVICIOS') }}">
+                                        <i class="bi bi-tools me-2"></i>Servicios ($)
+                                    </a></li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('ver_detalle_cc_cliente', cliente_id=estado.id) }}">
+                                        <i class="bi bi-journal-text me-2 text-dark"></i>Ver Historial Completo
+                                    </a></li>
+                                </ul>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-5 text-center">
+            <div class="display-1 text-muted opacity-25 mb-3"><i class="bi bi-emoji-smile"></i></div>
+            <h4 class="text-muted">¡No hay deudas pendientes!</h4>
+            <p class="text-muted">Todos los clientes están al día con sus pagos.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+// Buscador en tiempo real por nombre de cliente
+document.getElementById('clienteSearch').addEventListener('keyup', function() {
+    let filter = this.value.toLowerCase();
+    let rows = document.querySelectorAll('.cliente-fila');
+
+    rows.forEach(row => {
+        let nombre = row.querySelector('.fs-5').textContent.toLowerCase();
+        if (nombre.includes(filter)) {
+            row.style.display = "";
+        } else {
+            row.style.display = "none";
+        }
+    });
+});
+</script>
+{% endblock %}

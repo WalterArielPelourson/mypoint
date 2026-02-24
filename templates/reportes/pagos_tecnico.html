@@ -1,0 +1,235 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container-fluid">
+    <form id="form-pago-tecnico" action="{{ url_for('pagar_comision_final') }}" method="POST">
+    
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-person-badge"></i> Pago de Comisiones Técnicas (Solo ARS)</h2>
+        <div class="no-print">
+            <!-- Botón que abre el modal -->
+            <button type="button" class="btn btn-primary btn-lg shadow px-4" id="btn-preparar-pago" disabled>
+                Procesar Pago Seleccionado (<span id="count-selected">0</span>)
+            </button>
+        </div>
+    </div>
+
+    <!-- Filtros y Totales -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <label class="small fw-bold text-muted text-uppercase mb-2 d-block">Filtrar por Técnico:</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                        <input type="text" list="tecnicos" class="form-control border-start-0" 
+                               value="{{ nombre_tecnico }}" 
+                               onchange="window.location.href='?nombre_tecnico='+this.value" 
+                               placeholder="Escriba el nombre...">
+                        <datalist id="tecnicos">
+                            {% for t in tecnicos_sugeridos %}
+                            <option value="{{ t.tecnico_nombre }}">
+                            {% endfor %}
+                        </datalist>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card shadow-sm border-0 bg-primary text-white h-100">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-0">TOTAL A LIQUIDAR (ARS)</h6>
+                        <p class="mb-0 small opacity-75">Suma de las comisiones seleccionadas abajo</p>
+                    </div>
+                    <div class="h2 mb-0 fw-bold" id="total-seleccionado">$ 0,00</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Listado de Reparaciones -->
+    <div class="card shadow-sm border-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="tabla-reparaciones">
+                <thead class="table-dark">
+                    <tr>
+                        <th width="50" class="text-center">
+                            <input type="checkbox" id="check-all" class="form-check-input">
+                        </th>
+                        <th>Fecha</th>
+                        <th>Detalle de Reparación</th>
+                        <th class="text-end">Mano de Obra (Bruto)</th>
+                        <th width="140" class="text-center">% Comisión</th>
+                        <th class="text-end" width="180">Total Comisión (ARS)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in reparaciones %}
+                    <tr class="reparacion-fila">
+                        <td class="text-center">
+                            <input type="checkbox" name="reparacion_ids[]" value="{{ r.id }}" class="form-check-input row-check">
+                        </td>
+                        <td><small>{{ r.fecha_servicio[:10] }}</small></td>
+                        <td>
+                            <span class="fw-bold">#{{ r.id }} - {{ r.falla_reportada[:40] }}</span><br>
+                            <small class="text-muted">Técnico: {{ r.tecnico_nombre }}</small>
+                            <input type="hidden" name="tecnico_nombre" value="{{ r.tecnico_nombre }}">
+                        </td>
+                        <td class="text-end">
+                            <!-- Valor bruto cargado desde el presupuesto -->
+                            <span class="val-mano-obra" data-mo="{{ r.precio_mano_obra_ars }}">
+                                $ {{ "{:,.2f}".format(r.precio_mano_obra_ars) }}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="input-group input-group-sm">
+                                <input type="number" name="pct_input_{{ r.id }}" 
+                                       class="form-control text-center input-pct" 
+                                       value="50" min="0" max="100" step="1">
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </td>
+                        <td class="text-end">
+                            <!-- Aquí se muestra y se envía el cálculo final -->
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">$</span>
+                                <input type="number" name="monto_input_{{ r.id }}" 
+                                       class="form-control text-end fw-bold bg-light input-resultado" 
+                                       value="0.00" readonly>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center py-5 text-muted">
+                            <i class="bi bi-info-circle h4 d-block"></i>
+                            No hay reparaciones pendientes para este técnico.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Modal de Pago (Solo ARS) -->
+    <div class="modal fade" id="modalConfirmarPago" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">Confirmar Liquidación</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="text-center mb-4">
+                        <p class="text-muted mb-1">Monto total en pesos a entregar:</p>
+                        <h2 class="display-6 fw-bold text-primary" id="modal-total-ars">$ 0,00</h2>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Pagar desde la cuenta:</label>
+                        <select name="metodo_pago" class="form-select form-select-lg" required>
+                            <option value="EFECTIVO">Efectivo (Caja Física)</option>
+                            {% for c in cuentas_entidades %}
+                            <option value="{{ c.nombre }}">{{ c.nombre }} ({{ c.titular }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="alert alert-warning small">
+                        <i class="bi bi-exclamation-triangle-fill"></i> Esta acción registrará un egreso en la caja y quitará estas reparaciones de la lista de pendientes.
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary px-4 fw-bold">Registrar Pago</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    </form>
+</div>
+
+<!-- Cargar jQuery si no está en el layout -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+<script>
+$(document).ready(function() {
+    
+    function calcularTodo() {
+        let totalGeneral = 0;
+        let contadorSeleccionados = 0;
+
+        // Recorremos cada fila de la tabla
+        $('.reparacion-fila').each(function() {
+            const fila = $(this);
+            // Obtenemos el valor de mano de obra del atributo data
+            const manoObraVal = parseFloat(fila.find('.val-mano-obra').attr('data-mo')) || 0;
+            // Obtenemos el porcentaje ingresado
+            const porcentaje = parseFloat(fila.find('.input-pct').val()) || 0;
+            
+            // Calculamos la comisión para esta fila
+            const comisionFila = (manoObraVal * porcentaje) / 100;
+            
+            // Escribimos el resultado en el input de esa fila
+            fila.find('.input-resultado').val(comisionFila.toFixed(2));
+
+            // Si el checkbox está marcado, sumamos al total
+            if (fila.find('.row-check').is(':checked')) {
+                totalGeneral += comisionFila;
+                contadorSeleccionados++;
+            }
+        });
+
+        // Actualizamos los textos de la interfaz
+        const totalFormateado = totalGeneral.toLocaleString('es-AR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+
+        $('#total-seleccionado').text('$ ' + totalFormateado);
+        $('#modal-total-ars').text('$ ' + totalFormateado);
+        $('#count-selected').text(contadorSeleccionados);
+
+        // Habilitar o deshabilitar el botón de pago
+        if (contadorSeleccionados > 0) {
+            $('#btn-preparar-pago').prop('disabled', false);
+        } else {
+            $('#btn-preparar-pago').prop('disabled', true);
+        }
+    }
+
+    // Escuchar cambios en los porcentajes
+    $(document).on('input', '.input-pct', function() {
+        calcularTodo();
+    });
+
+    // Escuchar cambios en los checkboxes individuales
+    $(document).on('change', '.row-check', function() {
+        calcularTodo();
+    });
+
+    // Escuchar cambios en el checkbox "seleccionar todos"
+    $('#check-all').on('change', function() {
+        $('.row-check').prop('checked', this.checked);
+        calcularTodo();
+    });
+
+    // Abrir el modal de confirmación
+    $('#btn-preparar-pago').click(function() {
+        const myModal = new bootstrap.Modal(document.getElementById('modalConfirmarPago'));
+        myModal.show();
+    });
+
+    // Ejecutar cálculo al cargar por primera vez
+    calcularTodo();
+});
+</script>
+
+<style>
+    .card { border-radius: 10px; }
+    .input-resultado { pointer-events: none; } /* Evita que el usuario escriba en el resultado */
+    .bg-primary { background-color: #0d6efd !important; }
+</style>
+{% endblock %}

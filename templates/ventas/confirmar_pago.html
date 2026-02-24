@@ -1,0 +1,354 @@
+{% extends 'layout.html' %}
+
+{% block title %}Confirmar Pago Venta - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    .select2-container .select2-selection--single {
+        height: calc(1.5em + .75rem + 2px) !important;
+        border: 1px solid #ced4da !important;
+        border-radius: .25rem !important;
+    }
+    .select2-container .select2-selection--single .select2-selection__rendered {
+        line-height: calc(1.5em + .75rem + 2px);
+        padding-left: .75rem;
+    }
+    .select2-container .select2-selection--single .select2-selection__arrow {
+        height: calc(1.5em + .75rem + 2px);
+        right: .75rem;
+    }
+    .form-group-hidden { display: none; }
+    .bg-caja { background-color: #f8fff9; border: 1px solid #d1e7dd; }
+    .bg-virtual { background-color: #f0f7ff; border: 1px solid #cfe2ff; }
+    .bg-usd-input { background-color: #fafff0; border-left: 5px solid #198754; }
+    .bg-usd-virtual { background-color: #f5f0ff; border-left: 5px solid #6f42c1; }
+    .text-información { font-size: 0.85rem; opacity: 0.8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-cash me-2 text-success"></i>Confirmar Cobro de Venta</h1>
+
+<!-- MONITOR DE LIQUIDACIÓN DOLARIZADA -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm bg-dark text-white">
+            <div class="card-body py-3 text-center">
+                <small class="text-uppercase fw-bold opacity-75">Total del Equipo</small>
+                <div class="display-6 fw-bold">u$d {{ "{:,.2f}".format(venta.precio_final_usd) }}</div>
+                <div class="text-información" id="info_total_ars">ARS 0.00 (Informativo)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm bg-primary text-white">
+            <div class="card-body py-3 text-center">
+                <small class="text-uppercase fw-bold opacity-75">Pagando Hoy</small>
+                <div class="display-6 fw-bold">u$d <span id="display_pagando_hoy_usd">0.00</span></div>
+                <div class="text-información" id="info_pagando_ars">ARS 0.00 (Informativo)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm bg-warning text-dark" id="card_financiar_monitor">
+            <div class="card-body py-3 text-center">
+                <small class="text-uppercase fw-bold">Saldo a Financiar</small>
+                <div class="display-6 fw-bold">u$d <span id="display_restante_usd">0.00</span></div>
+                <div class="text-información fw-bold" id="info_restante_ars">ARS 0.00 (Informativo)</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4 shadow-sm border-0">
+    <div class="card-header bg-light">
+        <h5 class="mb-0 text-dark">Detalles del Presupuesto #{{ venta.id }}</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6 border-end">
+                <p class="mb-1"><strong>Cliente:</strong> {{ venta.razon_social or (venta.nombre + ' ' + venta.apellido) }}</p>
+                <p class="mb-0"><strong>Equipo:</strong> {{ venta.marca }} {{ venta.modelo }}</p>
+            </div>
+            <div class="col-md-6 text-md-end">
+                <p class="text-muted small text-uppercase fw-bold mb-0">Valor Final Pactado</p>
+                <h2 class="text-primary fw-bold">u$d {{ "{:,.2f}".format(venta.precio_final_usd) }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('procesar_pago', venta_id=venta.id) }}" class="needs-validation" novalidate>
+            
+            <!-- SECCIÓN COTIZACIÓN -->
+            <div class="row g-3 mb-4 p-3 bg-light rounded border border-warning">
+                <div class="col-md-6">
+                    <label class="form-label fw-bold text-dark"><i class="bi bi-calculator me-1"></i>Cotización para Pesificación:</label>
+                    <select name="tipo_dolar" id="tipo_dolar_pago" class="form-select border-warning fw-bold" onchange="toggleManualDolarPago()">
+                        <option value="blue" data-val="{{ valor_blue_venta|default(0) }}">Dólar Blue (Hoy): ${{ valor_blue_venta|round(2) }}</option>
+                        <option value="oficial" data-val="{{ valor_bcra_venta|default(0) }}">Dólar Oficial (BCRA): ${{ valor_bcra_venta|round(2) }}</option>
+                        <option value="manual">Cotización Manual</option>
+                    </select>
+                </div>
+                <div class="col-md-4" id="manual_dolar_pago_group" style="display:none;">
+                    <label class="form-label fw-bold text-danger">Valor Dólar Manual:</label>
+                    <input type="number" step="0.01" name="valor_dolar_manual" id="valor_dolar_manual_pago" class="form-control border-danger" placeholder="0.00" oninput="calcularTotalPagado()">
+                </div>
+            </div>
+
+            <div class="row g-4">
+                <!-- COLUMNA CAJA FÍSICA -->
+                <div class="col-md-6">
+                    <div class="card h-100 bg-caja">
+                        <div class="card-header bg-success text-white fw-bold">
+                            <i class="bi bi-wallet2 me-2"></i>CAJA FÍSICA (Billetes)
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Pesos en Efectivo (ARS):</label>
+                                <input type="number" step="0.01" class="form-control pago-input" id="monto_efectivo_ars" name="monto_efectivo_ars" value="0.00">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-bold text-success">Dólares en Billete (USD):</label>
+                                <input type="number" step="0.01" class="form-control pago-input bg-usd-input fw-bold" id="monto_efectivo_usd" name="monto_efectivo_usd" value="0.00">
+                            </div>
+                            <input type="hidden" name="cuenta_destino_usd" value="EFECTIVO">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- COLUMNA CUENTA VIRTUAL -->
+                <div class="col-md-6">
+                    <div class="card h-100 bg-virtual">
+                        <div class="card-header bg-primary text-white fw-bold">
+                            <i class="bi bi-bank me-2"></i>CUENTA VIRTUAL (Digital)
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Seleccionar Cuenta Destino:</label>
+                                <select name="cuenta_destino_virtual" class="form-select border-primary fw-bold">
+                                    {% for cuenta in cuentas_entidades %}
+                                        <option value="{{ cuenta.nombre }}">{{ cuenta.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label small fw-bold">Deposito (ARS):</label>
+                                    <input type="number" step="0.01" name="monto_transferencia_ars" id="monto_transferencia_ars" class="form-control pago-input" value="0.00">
+                                </div>
+                                <!--<div class="col-6">
+                                    <label class="form-label small fw-bold">Tarjetas / Otros (ARS):</label>
+                                    <input type="number" step="0.01" name="monto_debito_ars" id="monto_debito_ars" class="form-control pago-input" value="0.00">
+                                </div>-->
+                                <div class="col-12 mt-3">
+                                    <label class="form-label fw-bold text-purple" style="color: #6f42c1;">Deposito (USD):</label>
+                                    <input type="number" step="0.01" name="monto_virtual_usd" id="monto_virtual_usd" class="form-control pago-input bg-usd-virtual fw-bold" style="color: #6f42c1;" value="0.00">
+                                </div>
+                            </div>
+                            <!-- Inputs ocultos para no romper la lógica del backend que los espera -->
+                            <input type="hidden" name="monto_mp_ars" value="0">
+                            <input type="hidden" name="monto_credito_ars" value="0">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SECCIÓN PARTE DE PAGO (SIN CAMBIOS) -->
+                <div class="col-md-12">
+                    <div class="form-check form-switch bg-light p-3 rounded border">
+                        <input class="form-check-input ms-0 me-2" type="checkbox" id="usar_parte_pago" name="usar_parte_pago">
+                        <label class="form-check-label fw-bold text-primary" for="usar_parte_pago">¿Tomar celular como parte de pago?</label>
+                    </div>
+                </div>
+
+                <div class="col-md-6 parte-pago-fields form-group-hidden" id="celular_parte_pago_group">
+                    <label class="form-label">Celular Recibido:</label>
+                    <select class="form-select select2-celulares-parte-pago" id="celular_parte_pago_id" name="celular_parte_pago_id">
+                        <option value="">Seleccione equipo...</option>
+                    </select>
+                </div>
+                <div class="col-md-6 parte-pago-fields form-group-hidden" id="valor_parte_pago_group">
+                    <label class="form-label fw-bold">Valor asignado (ARS):</label> 
+                    <input type="number" step="0.01" class="form-control pago-input border-info" id="valor_celular_parte_pago" name="valor_celular_parte_pago" value="0.00">
+                </div>
+
+                <!-- SECCIÓN CRÉDITO (SIN CAMBIOS) -->
+                <div class="col-md-12" id="seccion_credito" style="display: none;">
+                    <div class="card border-primary shadow-sm">
+                        <div class="card-header bg-primary text-white fw-bold py-2 text-center text-uppercase">
+                            Plan de Cuotas Dolarizado
+                        </div>
+                        <div class="card-body bg-light">
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label fw-bold small">Cant. Cuotas:</label>
+                                    <input type="number" name="cantidad_cuotas" id="cantidad_cuotas" class="form-control border-primary cuotas-trigger" value="1" min="1">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label fw-bold small">Días entre venc.:</label>
+                                    <input type="number" name="intervalo_dias" id="intervalo_dias" class="form-control border-primary cuotas-trigger" value="30" min="1">
+                                </div>
+                                <div class="col-md-4 text-center">
+                                    <label class="form-label fw-bold small">A Financiar:</label>
+                                    <div class="h4 text-primary mb-0 fw-bold">u$d <span id="monto_a_financiar_usd_txt">0.00</span></div>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <table class="table table-sm table-bordered bg-white mb-0">
+                                    <thead class="table-secondary text-center small">
+                                        <tr>
+                                            <th>Cuota</th>
+                                            <th>Vencimiento</th>
+                                            <th class="text-end">Monto (u$d)</th>
+                                            <th class="text-end">Monto (ARS)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="cuerpo_cuotas" class="small"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RESUMEN FINAL -->
+                <div class="col-12 mt-2">
+                    <div class="alert alert-primary d-flex justify-content-between align-items-center mb-0 shadow-sm">
+                        <span class="fw-bold">TOTAL PERCIBIDO HOY:</span>
+                        <div class="text-end">
+                            <span class="fs-4 fw-bold">u$d <span id="total_pagado_usd_final">0.00</span></span>
+                            <div class="text-información fw-bold" id="resumen_pago_ars">ARS 0.00</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 d-flex justify-content-end gap-2 pb-4">
+                    <a href="{{ url_for('listar_presupuestos_venta') }}" class="btn btn-outline-secondary">Cancelar</a>
+                    <button type="submit" id="btn-confirmar" class="btn btn-primary px-5 fw-bold shadow">CONFIRMAR VENTA</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script>
+    function toggleManualDolarPago() {
+        const tipo = document.getElementById('tipo_dolar_pago').value;
+        const group = document.getElementById('manual_dolar_pago_group');
+        group.style.display = (tipo === 'manual') ? 'block' : 'none';
+        window.calcularTotalPagado();
+    }
+
+    (function () {
+        'use strict';
+        const precioTotalVentaUSD = parseFloat("{{ venta.precio_final_usd }}") || 0;
+        
+        window.calcularTotalPagado = function() {
+            const tipoDolar = $('#tipo_dolar_pago').val();
+            let cotiz = 1;
+            
+            if (tipoDolar === 'manual') {
+                cotiz = parseFloat($('#valor_dolar_manual_pago').val()) || 0;
+            } else {
+                cotiz = parseFloat($('#tipo_dolar_pago option:selected').data('val')) || 1;
+            }
+            
+            if (cotiz <= 0 || isNaN(cotiz)) cotiz = 1;
+
+            let totalUSD = 0;
+            
+            // Sumar Dólares Directos
+            totalUSD += parseFloat($('#monto_efectivo_usd').val()) || 0;
+            totalUSD += parseFloat($('#monto_virtual_usd').val()) || 0;
+            
+            // Sumar Pesos convertidos a Dólares
+            const idsARS = ['#monto_efectivo_ars', '#monto_transferencia_ars', '#monto_debito_ars', '#valor_celular_parte_pago'];
+            idsARS.forEach(id => {
+                totalUSD += (parseFloat($(id).val()) || 0) / cotiz;
+            });
+
+            const restanteUSD = precioTotalVentaUSD - totalUSD;
+
+            $('#display_pagando_hoy_usd').text(totalUSD.toFixed(2));
+            $('#display_restante_usd').text(Math.max(0, restanteUSD).toFixed(2));
+            $('#monto_a_financiar_usd_txt').text(Math.max(0, restanteUSD).toFixed(2));
+
+            const fmtARS = (val) => "ARS " + (val * cotiz).toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            $('#info_total_ars').text(fmtARS(precioTotalVentaUSD));
+            $('#info_pagando_ars').text(fmtARS(totalUSD));
+            $('#info_restante_ars').text(fmtARS(restanteUSD));
+            $('#resumen_pago_ars').text(fmtARS(totalUSD));
+
+            const btn = $('#btn-confirmar');
+            const cardMonitor = $('#card_financiar_monitor');
+
+            if (restanteUSD > 0.01) {
+                $('#seccion_credito').show();
+                cardMonitor.attr('class', 'card border-0 shadow-sm bg-warning text-dark');
+                btn.prop('disabled', false).attr('class', 'btn btn-warning fw-bold px-5 shadow').html('CONFIRMAR CON CRÉDITO');
+                generarPlanCuotas(restanteUSD, cotiz);
+            } else if (restanteUSD < -0.05) {
+                $('#seccion_credito').hide();
+                cardMonitor.attr('class', 'card border-0 shadow-sm bg-danger text-white');
+                btn.prop('disabled', true).attr('class', 'btn btn-danger px-5').text('EXCEDE EL TOTAL');
+            } else {
+                $('#seccion_credito').hide();
+                cardMonitor.attr('class', 'card border-0 shadow-sm bg-success text-white');
+                btn.prop('disabled', false).attr('class', 'btn btn-success fw-bold px-5 shadow').html('CONFIRMAR VENTA');
+            }
+            
+            $('#total_pagado_usd_final').text(totalUSD.toFixed(2));
+        };
+
+        window.generarPlanCuotas = function(saldoUSD, cotiz) {
+            const cuotas = parseInt($('#cantidad_cuotas').val()) || 1;
+            const dias = parseInt($('#intervalo_dias').val()) || 30;
+            const $cuerpo = $('#cuerpo_cuotas');
+            $cuerpo.empty();
+            const montoCuotaUSD = saldoUSD / cuotas;
+            const montoCuotaARS = montoCuotaUSD * cotiz;
+            let hoy = new Date();
+
+            for (let i = 1; i <= cuotas; i++) {
+                let fechaVenc = new Date();
+                fechaVenc.setDate(hoy.getDate() + (i * dias));
+                $cuerpo.append(`
+                    <tr>
+                        <td class="text-center">${i}/${cuotas}</td>
+                        <td class="text-center">${fechaVenc.toLocaleDateString('es-AR')}</td>
+                        <td class="text-end fw-bold">u$d ${montoCuotaUSD.toFixed(2)}</td>
+                        <td class="text-end text-muted">$ ${montoCuotaARS.toLocaleString('es-AR', {minimumFractionDigits:2})}</td>
+                    </tr>
+                `);
+            }
+        };
+
+        $('.pago-input, .cuotas-trigger').on('input', calcularTotalPagado);
+        $('#usar_parte_pago').on('change', function() {
+            $('.parte-pago-fields').toggleClass('form-group-hidden', !this.checked);
+            if(!this.checked) $('#valor_celular_parte_pago').val(0);
+            calcularTotalPagado();
+        });
+
+        $('#celular_parte_pago_id').select2({
+            ajax: {
+                url: '{{ url_for("api_buscar_celulares_parte_pago") }}',
+                dataType: 'json',
+                processResults: data => ({ results: data.results })
+            }
+        }).on('select2:select', function(e) {
+            const data = e.params.data;
+            if (data.costo_usd) {
+                const cotizCompra = parseFloat("{{ valor_blue_compra }}") || 1;
+                $('#valor_celular_parte_pago').val((data.costo_usd * cotizCompra).toFixed(2)).trigger('input');
+            }
+        });
+
+        calcularTotalPagado();
+    })();
+</script>
+{% endblock %}

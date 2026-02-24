@@ -1,0 +1,102 @@
+{% extends 'layout.html' %}
+
+{% block title %}Gestionar Cuentas - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1><i class="bi bi-bank2 me-2"></i>Configuración de Entidades de Pago</h1>
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Volver al Inicio
+        </a>
+    </div>
+
+    <!-- Card para Agregar Nueva Cuenta -->
+    <div class="card shadow-sm mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Registrar Nueva Cuenta / Entidad</h5>
+        </div>
+        <div class="card-body bg-light">
+            <form action="{{ url_for('crear_cuenta_virtual') }}" method="POST" class="row g-3">
+                <div class="col-md-5">
+                    <label class="form-label fw-bold">Nombre de la Entidad (Identificador)</label>
+                    <input type="text" name="nombre" class="form-control" placeholder="Ej: BANCO_GALICIA" required style="text-transform:uppercase;">
+                    <div class="form-text">Use mayúsculas y guiones bajos.</div>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label fw-bold">Titular de la Cuenta</label>
+                    <input type="text" name="titular" class="form-control" placeholder="Ej: Juan Pérez" required>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-success w-100">
+                        <i class="bi bi-save me-1"></i> Guardar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Listado de Cuentas Existentes -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-dark text-white">
+            <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Cuentas Configuradas</h5>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Nombre Entidad</th>
+                        <th>Titular</th>
+                        <th>Estado</th>
+                        <th class="text-center">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in cuentas %}
+                    <tr>
+                        <td>{{ c.id }}</td>
+                        <td><span class="badge bg-secondary fs-6">{{ c.nombre }}</span></td>
+                        <td>{{ c.titular }}</td>
+                        <td>
+                            {% if c.activo == 1 %}
+                                <span class="badge bg-success">Activa</span>
+                            {% else %}
+                                <span class="badge bg-danger">Inactiva</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <div class="d-flex justify-content-center gap-2">
+                                <!-- BOTÓN MODIFICAR -->
+                                <a href="{{ url_for('editar_cuenta_virtual', id=c.id) }}" class="btn btn-sm btn-warning">
+                                    <i class="bi bi-pencil-square"></i> Modificar
+                                </a>
+
+                                <!-- LÓGICA DE INACTIVAR / ACTIVAR -->
+                                {% if c.nombre not in ['BANCO', 'MERCADO_PAGO'] %}
+                                    <form action="{{ url_for('toggle_cuenta_virtual', id=c.id) }}" method="POST" onsubmit="return confirm('¿Cambiar el estado de esta cuenta?');">
+                                        {% if c.activo == 1 %}
+                                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Inactivar Cuenta">
+                                                <i class="bi bi-toggle-on"></i> Inactivar
+                                            </button>
+                                        {% else %}
+                                            <button type="submit" class="btn btn-sm btn-outline-success" title="Activar Cuenta">
+                                                <i class="bi bi-toggle-off"></i> Activar
+                                            </button>
+                                        {% endif %}
+                                    </form>
+                                {% else %}
+                                    <button class="btn btn-sm btn-outline-secondary disabled" title="Cuenta del sistema protegida">
+                                        <i class="bi bi-shield-lock"></i> Sistema
+                                    </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

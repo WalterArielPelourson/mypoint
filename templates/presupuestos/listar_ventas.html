@@ -1,0 +1,174 @@
+{% extends 'layout.html' %}
+
+{% block title %}Presupuestos de Venta - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    .select2-container .select2-selection--single {
+        height: calc(1.5em + .75rem + 2px) !important;
+        border: 1px solid #ced4da !important; /* Asegura que el borde coincida con otros inputs de Bootstrap */
+        border-radius: .25rem !important; /* Borde redondeado */
+    }
+    .select2-container .select2-selection--single .select2-selection__rendered {
+        line-height: calc(1.5em + .75rem + 2px);
+        padding-left: .75rem; /* Espaciado interno */
+    }
+    .select2-container .select2-selection--single .select2-selection__arrow {
+        height: calc(1.5em + .75rem + 2px);
+        right: .75rem; /* Posición de la flecha */
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-file-earmark-text me-2"></i>Presupuestos de Venta de Celulares</h1>
+
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        Filtros de Búsqueda
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFilters" aria-expanded="true" aria-controls="collapseFilters">
+            <i class="bi bi-filter-square me-1"></i>
+            <span class="d-none d-md-inline">Expandir/Contraer</span>
+        </button>
+    </div>
+    <div class="collapse show" id="collapseFilters">
+        <div class="card-body">
+            <form method="GET" class="row g-3">
+                <div class="col-md-5">
+                    <label for="cliente" class="form-label">Cliente:</label>
+                    <select class="form-select select2-persona" id="cliente" name="cliente" data-rol="cliente">
+                        <option value="">Todos los clientes</option>
+                        {% for cli in clientes_disponibles %}
+                        <option value="{{ cli.id }}" {% if filtros_activos.cliente|string == cli.id|string %}selected{% endif %}>
+                            {{ cli.razon_social or (cli.nombre + ' ' + cli.apellido) }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-5">
+                    <label for="producto" class="form-label">Producto (Marca, Modelo, IMEI):</label>
+                    <input type="text" class="form-control" id="producto" name="producto" value="{{ filtros_activos.producto }}">
+                </div>
+                <div class="col-md-2 d-flex justify-content-start align-items-end mt-3">
+                    <button type="submit" class="btn btn-primary me-2"><i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros</button>
+                    {% if request.args %}
+                        <a href="{{ url_for('listar_presupuestos_venta') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar</a>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive mt-4">
+    <table class="table table-striped table-hover align-middle">
+        <thead class="table-dark">
+            <tr>
+                <th scope="col">#ID Presupuesto</th>
+                <th scope="col">Fecha</th>
+                <th scope="col">Cliente</th>
+                <th scope="col">Producto</th>
+                <th scope="col">IMEI</th>
+                <th scope="col">Precio Final (ARS)</th>
+                <th scope="col">Estado</th>
+                <th scope="col">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if presupuestos %}
+                {% for pres in presupuestos %}
+                <tr>
+                    <td>{{ pres.id }}</td>
+                    <td>{{ pres.fecha_venta.split(' ')[0] }}<br><small class="text-muted">{{ pres.fecha_venta.split(' ')[1] }}</small></td>
+                    <td>{{ pres.razon_social or (pres.nombre + ' ' + pres.apellido) }}</td>
+                    <td>{{ pres.marca }} {{ pres.modelo }}</td>
+                    <td><span class="text-monospace">{{ pres.imei }}</span></td>
+                    <td>ARS {{ pres.precio_final_ars|round(2) }}</td>
+                    <td>
+                        {% if pres.status == 'PRESUPUESTO' %}
+                            <span class="badge bg-info text-dark">{{ pres.status }}</span>
+                        {% elif pres.status == 'COMPLETADA' %}
+                            <span class="badge bg-success">{{ pres.status }}</span> {# No debería aparecer aquí si solo muestra presupuestos pendientes #}
+                        {% else %}
+                            <span class="badge bg-danger">{{ pres.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex">
+                            <a href="{{ url_for('view_venta', venta_id=pres.id) }}" class="btn btn-sm btn-info me-1" title="Ver Detalles"><i class="bi bi-eye"></i></a>
+                            {% if pres.status == 'PRESUPUESTO' %}
+                            {# MODIFICADO: Este botón ahora redirige al formulario de pago #}
+                            <a href="{{ url_for('mostrar_formulario_pago', venta_id=pres.id) }}" class="btn btn-sm btn-success me-1" title="Confirmar y Cobrar"><i class="bi bi-check-circle"></i> Cobrar</a>
+                            
+                            <form action="{{ url_for('cancelar_presupuesto_venta', venta_id=pres.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea cancelar este presupuesto?');">
+                                <button type="submit" class="btn btn-sm btn-danger" title="Cancelar Presupuesto"><i class="bi bi-x-circle"></i></button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="8" class="text-center text-muted">No se encontraron presupuestos de venta pendientes con los filtros aplicados.</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+{# Select2 JS se carga en layout.html, así que aquí solo inicializamos el script #}
+<script>
+    $(document).ready(function() {
+        // Select2 para el filtro de clientes
+        $('#cliente').select2({
+            placeholder: 'Seleccione un cliente',
+            allowClear: true,
+            ajax: {
+                url: '{{ url_for('api_buscar_personas') }}',
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return {
+                        q: params.term,
+                        rol: $(this).data('rol')
+                    };
+                },
+                processResults: function (data) {
+                    return {
+                        results: data
+                    };
+                },
+                cache: true
+            },
+            minimumInputLength: 3,
+            templateResult: function (data) {
+                if (data.loading) return data.text;
+                // Formatear el resultado en la lista desplegable
+                return $('<span>' + data.text + '</span>');
+            },
+            templateSelection: function (data) {
+                // Cómo se muestra el elemento seleccionado
+                return data.text;
+            }
+        });
+
+        // Si ya hay un cliente seleccionado en los filtros, precargarlo en Select2
+        {% if filtros_activos.cliente %}
+            $.ajax({
+                type: 'GET',
+                url: '{{ url_for('api_buscar_personas') }}?q=&rol=cliente&id={{ filtros_activos.cliente }}' // Usa la API para buscar por ID
+            }).then(function (data) {
+                if (data.results && data.results.length > 0) {
+                    // Crea una nueva opción
+                    var option = new Option(data.results[0].text, data.results[0].id, true, true);
+                    // Añade la opción al select y dispara el evento 'change' para que Select2 la muestre
+                    $('#cliente').append(option).trigger('change');
+                }
+            });
+        {% endif %}
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,57 @@
+{# Este archivo es un fragmento para ser incluido en nueva_reparacion.html #}
+{# NO DEBE CONTENER LÓGICA DE JINJA QUE INTERPRETE 'form_data' o 'loop.index' DIRECTAMENTE AQUÍ. #}
+{# Los marcadores de posición '__index__' serán reemplazados por JavaScript. #}
+
+<div class="item-row mb-3 p-3 border rounded bg-light position-relative">
+    <button type="button" class="btn btn-danger btn-sm position-absolute top-0 end-0 m-2 remove-item" title="Eliminar ítem">
+        <i class="bi bi-trash"></i>
+    </button>
+    
+    <div class="row g-2 align-items-end">
+        <div class="col-md-4">
+            <label for="select_stock_item___index__" class="form-label item-label">Seleccionar de Stock:</label>
+            <select class="form-select select2-item-stock" 
+                    id="select_stock_item___index__" 
+                    name="repuesto_id[]" 
+                    data-placeholder="Buscar en stock..." {# Placeholder para Select2 #}
+                    > 
+                <option value=""></option> {# La opción vacía con valor="" permite el placeholder #}
+            </select>
+            {# Eliminar feedback específico aquí, el general de la fila lo manejará o JS #}
+        </div>
+
+        <div class="col-md-4">
+            <label for="manual_item_nombre___index__" class="form-label item-label">O Añadir Manualmente:</label>
+            <input type="text" class="form-control manual-item-nombre" 
+                   id="manual_item_nombre___index__" 
+                   name="manual_item_nombre[]" 
+                   placeholder="Nombre/Descripción"
+                   >
+            {# Eliminar feedback específico aquí #}
+        </div>
+
+        <div class="col-md-2">
+            <label for="item_cantidad___index__" class="form-label item-label">Cantidad <span class="text-danger">*</span>:</label>
+            <input type="number" class="form-control item-cantidad" 
+                   id="item_cantidad___index__" 
+                   name="cantidad[]" 
+                   placeholder="Cant." min="1" 
+                   value="1" 
+                   >
+            {# Eliminar feedback específico aquí #}
+        </div>
+
+        <div class="col-md-2">
+            <label for="item_costo_usd___index__" class="form-label item-label">Costo (USD) <span class="text-danger">*</span>:</label>
+            <input type="number" step="0.01" min="0" class="form-control item-costo-usd" 
+                   id="item_costo_usd___index__" 
+                   name="costo_usd_momento[]" 
+                   placeholder="Costo USD" 
+                   value="0.00" 
+                   >
+            {# Eliminar feedback específico aquí #}
+        </div>
+    </div>
+    {# Feedback general de la fila: ahora es más genérico y se mostrará al final de la fila #}
+    <div class="invalid-feedback item-overall-feedback mt-2"></div>
+</div>

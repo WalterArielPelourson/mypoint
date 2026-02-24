@@ -1,0 +1,184 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-bank me-2"></i>Gestión de Cuentas Virtuales (Bimoneda)</h2>
+        <div class="gap-2 d-flex">
+            {# Botón de acceso rápido para SuperAdmin #}
+            {% if current_user.role == 'superadmin' %}
+            <a href="{{ url_for('gestionar_cuentas_virtuales') }}" class="btn btn-warning btn-sm">
+                <i class="bi bi-gear-fill"></i> Configurar Cuentas
+            </a>
+            {% endif %}
+            <a href="{{ url_for('gestion_cuentas_virtuales') }}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-clockwise"></i> Limpiar Filtros
+            </a>
+        </div>
+    </div>
+    
+    <!-- Tarjetas de Saldo Dinámicas -->
+    <div class="row mb-4">
+        {% for ent in saldos_entidades %}
+        <div class="col-md-6 mb-3">
+            <div class="card {{ 'bg-primary' if loop.index0 % 2 == 0 else 'bg-info' }} text-white shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <h5><i class="bi bi-university me-2"></i>Saldo {{ ent.nombre }}</h5>
+                        {# Si es superadmin, le permitimos acceso rápido a editar esta cuenta específica #}
+                        {% if current_user.role == 'superadmin' %}
+                        <a href="{{ url_for('editar_cuenta_virtual', id=ent.id) }}" class="text-white" title="Editar configuración de cuenta">
+                            <i class="bi bi-pencil-square"></i>
+                        </a>
+                        {% endif %}
+                    </div>
+                    <small class="d-block mb-2">Titular: {{ ent.titular }}</small>
+                    <div class="row align-items-center">
+                        <div class="col-6 border-end {{ 'text-dark' if loop.index0 % 2 != 0 else '' }}">
+                            <small>Pesos ARS</small>
+                            <h3 class="fw-bold">$ {{ "%.2f"|format(ent.saldo_ars) }}</h3>
+                        </div>
+                        <div class="col-6 {{ 'text-dark' if loop.index0 % 2 != 0 else '' }}">
+                            <small>Dólares USD</small>
+                            <h3 class="fw-bold">U$D {{ "%.2f"|format(ent.saldo_usd) }}</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Formulario de Movimiento Manual (DINÁMICO) -->
+    <div class="card mb-4 border-warning shadow-sm">
+        <div class="card-header bg-warning text-dark fw-bold">
+            <i class="bi bi-pencil-square me-1"></i> Registrar Movimiento Manual (Ajuste Bimoneda)
+        </div>
+        <div class="card-body">
+            <form method="POST" class="row g-2">
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Operación</label>
+                    <select name="tipo" class="form-select" required>
+                        <option value="INGRESO">Ingreso (+)</option>
+                        <option value="EGRESO">Egreso (-)</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Cuenta</label>
+                    <select name="cuenta" class="form-select" required>
+                        {% for ent in cuentas_entidades %}
+                        <option value="{{ ent.nombre }}">{{ ent.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Monto ARS</label>
+                    <input type="number" step="0.01" name="monto_ars" class="form-control" placeholder="0.00">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Monto USD</label>
+                    <input type="number" step="0.01" name="monto_usd" class="form-control" placeholder="0.00">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">Descripción</label>
+                    <input type="text" name="descripcion" class="form-control" placeholder="Descripción del ajuste" required>
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                    <button type="submit" class="btn btn-success w-100">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
+                </div>
+                <div class="col-12">
+                    <small class="text-muted italic">* Complete solo el monto de la moneda que desea ajustar o ambos si es necesario.</small>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SECCIÓN DE FILTROS (DINÁMICO) -->
+    <div class="card mb-4 bg-light shadow-sm">
+        <div class="card-body">
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">Desde:</label>
+                    <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">Hasta:</label>
+                    <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">Filtrar por Cuenta:</label>
+                    <select name="cuenta_filter" class="form-select">
+                        <option value="TODAS" {% if filtro_cuenta == 'TODAS' %}selected{% endif %}>Todas las cuentas</option>
+                        {% for ent in cuentas_entidades %}
+                        <option value="{{ ent.nombre }}" {% if filtro_cuenta == ent.nombre %}selected{% endif %}>{{ ent.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-funnel me-1"></i> Aplicar Filtros
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tabla de Historial -->
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h4><i class="bi bi-clock-history me-2"></i>Historial de Cuentas Digitales</h4>
+        <span class="badge bg-secondary">Mostrando: {{ filtro_cuenta }}</span>
+    </div>
+    
+    <div class="table-responsive shadow-sm rounded">
+        <table class="table table-striped table-hover align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th>Fecha</th>
+                    <th>Cuenta</th>
+                    <th>Tipo</th>
+                    <th>Descripción</th>
+                    <th class="text-end">Monto ARS</th>
+                    <th class="text-end">Monto USD</th>
+                    <th>Usuario</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in movimientos %}
+                <tr>
+                    <td class="small">{{ m.fecha }}</td>
+                    <td>
+                        <span class="badge {% if m.metodo_pago == 'BANCO' %}bg-primary{% elif m.metodo_pago == 'MERCADO_PAGO' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+                            {{ m.metodo_pago }}
+                        </span>
+                    </td>
+                    <td><small class="text-uppercase fw-bold">{{ m.tipo }}</small></td>
+                    <td>{{ m.descripcion }}</td>
+                    <td class="text-end {{ 'text-success fw-bold' if 'INGRESO' in m.tipo or 'VENTA' in m.tipo or 'COBRO' in m.tipo else 'text-danger fw-bold' }}">
+                        {% if m.monto_ars and m.monto_ars > 0 %}
+                            {{ '+' if 'INGRESO' in m.tipo or 'VENTA' in m.tipo or 'COBRO' in m.tipo else '-' }} $ {{ "%.2f"|format(m.monto_ars) }}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end {{ 'text-success fw-bold' if 'INGRESO' in m.tipo or 'VENTA' in m.tipo or 'COBRO' in m.tipo else 'text-danger fw-bold' }}">
+                        {% if m.monto_usd and m.monto_usd > 0 %}
+                            {{ '+' if 'INGRESO' in m.tipo or 'VENTA' in m.tipo or 'COBRO' in m.tipo else '-' }} U$D {{ "%.2f"|format(m.monto_usd) }}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td><i class="bi bi-person me-1"></i>{{ m.username }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted p-4">
+                        No se encontraron movimientos para los filtros seleccionados.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

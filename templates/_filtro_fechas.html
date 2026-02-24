@@ -1,0 +1,27 @@
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        Filtros de Fecha
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseDateFilters" aria-expanded="true" aria-controls="collapseDateFilters">
+            <i class="bi bi-filter-square me-1"></i>
+            <span class="d-none d-md-inline">Expandir/Contraer</span>
+        </button>
+    </div>
+    <div class="collapse show" id="collapseDateFilters">
+        <div class="card-body">
+            {# ELIMINADO: <form method="GET" class="row g-3 align-items-end"> #}
+            <div class="row g-3"> {# Cambiado a un div simple #}
+                <div class="col-md-auto">
+                    <label for="start_date" class="form-label">Desde:</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}">
+                </div>
+                <div class="col-md-auto">
+                    <label for="end_date" class="form-label">Hasta:</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}">
+                </div>
+                {# ELIMINADO: {% block extra_filters %}{% endblock %} #}
+                {# ELIMINADO: Los botones de aplicar y limpiar #}
+            </div>
+            {# ELIMINADO: </form> #}
+        </div>
+    </div>
+</div>

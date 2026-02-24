@@ -1,0 +1,136 @@
+{% extends 'layout.html' %}
+
+{% block title %}Reporte de Inventario - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-boxes me-2"></i>Reporte de Inventario</h1>
+
+<div class="alert alert-info d-flex align-items-center" role="alert">
+    <i class="bi bi-info-circle-fill flex-shrink-0 me-2"></i>
+    <div>
+        {# CORRECCIÓN: Usar valor_dolar_compra que se inyecta y asegurar que sea numérico antes de redondear #}
+        Valor del dólar actual para valorización: <strong>ARS {{ valor_dolar_compra|default(0)|round(2) }}</strong>.
+        {% if valor_dolar_compra is none %}
+            <br><small class="text-danger">Advertencia: No se pudo obtener la cotización real del dólar de compra. Se están utilizando valores por defecto (ej. 1.0) para cálculos.</small>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6 col-lg-3 mb-3">
+        <div class="card text-white bg-primary h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-phone-fill me-2"></i>Celulares en Stock</h5>
+                <p class="card-text fs-5">Unidades: {{ valoracion_celulares.total_unidades|default(0) }}</p>
+                <p class="card-text fs-5">Valoración (USD): USD {{ valoracion_celulares.costo_total_usd|default(0)|round(2) }}</p>
+                {# CORRECCIÓN: Usar valor_dolar_compra para la conversión y asegurar el default(0) en ambos lados #}
+                <p class="card-text fs-5">Valoración (ARS): ARS {{ (valoracion_celulares.costo_total_usd|default(0) * valor_dolar_compra|default(0))|round(2) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 col-lg-3 mb-3">
+        <div class="card text-white bg-success h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-gear-fill me-2"></i>Repuestos en Stock</h5>
+                <p class="card-text fs-5">Unidades: {{ valoracion_repuestos.total_unidades|default(0) }}</p>
+                <p class="card-text fs-5">Valoración (USD): USD {{ valoracion_repuestos.costo_total_usd|default(0)|round(2) }}</p>
+                {# CORRECCIÓN: Usar valor_dolar_compra para la conversión y asegurar el default(0) en ambos lados #}
+                <p class="card-text fs-5">Valoración (ARS): ARS {{ (valoracion_repuestos.costo_total_usd|default(0) * valor_dolar_compra|default(0))|round(2) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-12 col-lg-6 mb-3">
+        <div class="card text-white bg-dark h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-box-seam-fill me-2"></i>Valor Total Inventario</h5>
+                <p class="card-text fs-3">Total (USD): USD {{ costo_total_unificado_usd|default(0)|round(2) }}</p>
+                {# CORRECCIÓN: Usar valor_dolar_compra para la conversión y asegurar el default(0) en ambos lados #}
+                <p class="card-text fs-3">Total (ARS): ARS {{ (costo_total_unificado_usd|default(0) * valor_dolar_compra|default(0))|round(2) }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        Opciones de Visualización
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOptions" aria-expanded="true" aria-controls="collapseOptions">
+            <i class="bi bi-filter-square me-1"></i>
+            <span class="d-none d-md-inline">Expandir/Contraer</span>
+        </button>
+    </div>
+    <div class="collapse show" id="collapseOptions">
+        <div class="card-body">
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="stock_bajo_limite" class="form-label">Límite de Stock Bajo para Repuestos:</label>
+                    <input type="number" class="form-control" id="stock_bajo_limite" name="stock_bajo_limite" value="{{ stock_bajo_limite }}" min="1">
+                </div>
+                <div class="col-md-auto">
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-funnel-fill me-1"></i>Aplicar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-phone me-2"></i>Celulares Vendidos (Sin Stock)</div>
+            <div class="card-body">
+                {% if celulares_sin_stock %}
+                <ul class="list-group list-group-flush">
+                    {% for cel in celulares_sin_stock %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        {{ cel.marca }} {{ cel.modelo }} ({{ cel.imei }})
+                        <span class="badge bg-danger">Vendido</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No hay celulares vendidos en el período actual.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-exclamation-triangle-fill me-2 text-warning"></i>Repuestos con Stock Bajo (<= {{ stock_bajo_limite }})</div>
+            <div class="card-body">
+                {% if stock_bajo_repuestos %}
+                <ul class="list-group list-group-flush">
+                    {% for rep in stock_bajo_repuestos %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        {{ rep.nombre_parte }} ({{ rep.modelo_compatible or 'Genérico' }})
+                        <span class="badge bg-warning text-dark">{{ rep.stock }} unidades</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No hay repuestos con stock bajo.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-x-circle-fill me-2 text-danger"></i>Repuestos Sin Stock (0)</div>
+            <div class="card-body">
+                {% if repuestos_sin_stock %}
+                <ul class="list-group list-group-flush">
+                    {% for rep in repuestos_sin_stock %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        {{ rep.nombre_parte }} ({{ rep.modelo_compatible or 'Genérico' }})
+                        <span class="badge bg-danger">Sin Stock</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No hay repuestos sin stock.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

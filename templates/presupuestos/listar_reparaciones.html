@@ -1,0 +1,194 @@
+{% extends 'layout.html' %}
+
+{% block title %}Presupuestos de Reparación - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" /> {# Asegúrate de incluir Select2 CSS #}
+<style>
+    /* Estilos para Select2 */
+    .select2-container .select2-selection--single {
+        height: calc(1.5em + .75rem + 2px) !important;
+        border: 1px solid #ced4da; /* Añadir borde para que coincida con otros inputs */
+        border-radius: .25rem; /* Añadir border-radius */
+    }
+    .select2-container .select2-selection--single .select2-selection__rendered {
+        line-height: calc(1.5em + .75rem + 2px);
+        padding-left: .75rem; /* Alineación del texto */
+    }
+    .select2-container .select2-selection--single .select2-selection__arrow {
+        height: calc(1.5em + .75rem + 2px);
+        right: .75rem; /* Posición de la flecha */
+    }
+    .select2-container--default .select2-selection--single .select2-selection__clear {
+        margin-right: 1.5rem; /* Para el botón de limpiar */
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-file-earmark-text me-2"></i>Presupuestos de Reparación</h1>
+
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        Filtros de Búsqueda
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFilters" aria-expanded="true" aria-controls="collapseFilters">
+            <i class="bi bi-filter-square me-1"></i>
+            <span class="d-none d-md-inline">Expandir/Contraer</span>
+        </button>
+    </div>
+    <div class="collapse show" id="collapseFilters">
+        <div class="card-body">
+            <form method="GET" class="row g-3">
+                <div class="col-md-5">
+                    <label for="cliente" class="form-label">Cliente:</label>
+                    <select class="form-select select2-persona" id="cliente" name="cliente" data-rol="cliente">
+                        <option value="">Todos los clientes</option>
+                        {# Los clientes_disponibles se cargan en la ruta de Flask #}
+                        {% for cli in clientes_disponibles %}
+                        <option value="{{ cli.id }}" {% if filtros_activos.cliente|string == cli.id|string %}selected{% endif %}>
+                            {{ cli.razon_social or (cli.nombre + ' ' + cli.apellido) }} (CUIT/CUIL: {{ cli.cuit_cuil or 'N/A' }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-5">
+                    <label for="imei" class="form-label">IMEI del Equipo:</label>
+                    <input type="text" class="form-control" id="imei" name="imei" value="{{ filtros_activos.imei }}">
+                </div>
+                {# Nuevo filtro por tipo de servicio #}
+                <div class="col-md-5">
+                    <label for="tipo_servicio" class="form-label">Tipo de Servicio:</label>
+                    <select class="form-select" id="tipo_servicio" name="tipo_servicio">
+                        <option value="">Todos los tipos</option>
+                        <option value="REPARACION" {% if filtros_activos.tipo_servicio == 'REPARACION' %}selected{% endif %}>Reparación</option>
+                        <option value="VENTA_ACCESORIO" {% if filtros_activos.tipo_servicio == 'VENTA_ACCESORIO' %}selected{% endif %}>Venta de Accesorio/Producto</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-flex justify-content-start align-items-end mt-3">
+                    <button type="submit" class="btn btn-primary me-2"><i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros</button>
+                    {% if request.args %}
+                        <a href="{{ url_for('listar_presupuestos_reparacion') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar</a>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive mt-4">
+    <table class="table table-striped table-hover align-middle">
+        <thead class="table-dark">
+            <tr>
+                <th scope="col">#ID Presupuesto</th>
+                <th scope="col">Fecha</th>
+                <th scope="col">Cliente</th>
+                <th scope="col">Tipo Servicio</th> {# Nueva columna para mostrar el tipo de servicio #}
+                <th scope="col">IMEI Equipo</th>
+                <th scope="col">Falla Reportada</th>
+                <th scope="col">Mano de Obra (ARS)</th>
+                <th scope="col">Costo Repuestos (USD)</th>
+                <th scope="col">Precio Final (ARS)</th>
+                <th scope="col">Estado</th>
+                <th scope="col">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if presupuestos %}
+                {% for pres in presupuestos %}
+                <tr>
+                    <td>{{ pres.id }}</td>
+                    <td>{{ pres.fecha_servicio.split(' ')[0] }}<br><small class="text-muted">{{ pres.fecha_servicio.split(' ')[1] }}</small></td>
+                    <td>{{ pres.razon_social or (pres.nombre + ' ' + pres.apellido) }}</td>
+                    <td>{{ pres.tipo_servicio }}</td> {# Mostrar el tipo de servicio #}
+                    <td>{{ pres.imei_equipo or 'N/A' }}</td>
+                    <td>{{ pres.falla_reportada|truncate(50) }}</td>
+                    <td>ARS {{ pres.precio_mano_obra_ars|round(2) }}</td>
+                    <td>USD {{ pres.costo_total_repuestos_usd|round(2) }}</td>
+                    <td>ARS {{ pres.precio_final_ars|round(2) }}</td>
+                    <td>
+                        {% if pres.status == 'PRESUPUESTO' %}
+                            <span class="badge bg-info text-dark">{{ pres.status }}</span>
+                        {% elif pres.status == 'COMPLETADO' %}
+                            <span class="badge bg-success">{{ pres.status }}</span>
+                        {% else %}
+                            <span class="badge bg-danger">{{ pres.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex">
+                            <a href="{{ url_for('view_reparacion', servicio_id=pres.id) }}" class="btn btn-sm btn-info me-1" title="Ver Detalles"><i class="bi bi-eye"></i></a>
+                            {% if pres.status == 'PRESUPUESTO' %}
+                            {# BOTÓN DE EDICIÓN: Agregado/Corregido aquí #}
+                            <a href="{{ url_for('editar_presupuesto_reparacion', servicio_id=pres.id) }}" class="btn btn-sm btn-warning me-1" title="Editar Presupuesto">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <form action="{{ url_for('confirmar_reparacion', servicio_id=pres.id) }}" method="POST" class="d-inline me-1" onsubmit="return confirm('¿Está seguro de que desea confirmar este servicio y descontar los repuestos del inventario?');">
+                                <button type="submit" class="btn btn-sm btn-success" title="Confirmar Servicio"><i class="bi bi-check-circle"></i></button>
+                            </form>
+                            <form action="{{ url_for('cancelar_presupuesto_reparacion', servicio_id=pres.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea cancelar este presupuesto?');">
+                                <button type="submit" class="btn btn-sm btn-danger" title="Cancelar Presupuesto"><i class="bi bi-x-circle"></i></button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="11" class="text-center text-muted">No se encontraron presupuestos de reparación pendientes con los filtros aplicados.</td> {# colspan ajustado #}
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script> {# Asegúrate de incluir Select2 JS #}
+<script>
+    $(document).ready(function() {
+        // Select2 para el filtro de clientes
+        $('#cliente').select2({
+            placeholder: 'Seleccione un cliente',
+            allowClear: true,
+            ajax: {
+                url: '{{ url_for('api_buscar_personas') }}',
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return {
+                        q: params.term,
+                        rol: $(this).data('rol')
+                    };
+                },
+                processResults: function (data) {
+                    // Mapear los resultados para añadir la descripción del CUIT/CUIL
+                    const formattedResults = data.map(item => ({
+                        id: item.id,
+                        text: item.text // Ya debería venir formateado con CUIT/CUIL desde la API
+                    }));
+                    return {
+                        results: formattedResults
+                    };
+                },
+                cache: true
+            },
+            minimumInputLength: 3 // Requiere al menos 3 caracteres para buscar
+        });
+
+        // Si ya hay un cliente seleccionado en los filtros, precargarlo en Select2
+        {% if filtros_activos.cliente %}
+            $.ajax({
+                type: 'GET',
+                // La API buscar_personas con 'q=""' y 'id' busca por ID directamente
+                url: '{{ url_for('api_buscar_personas', q="", rol="cliente") }}' + '&id=' + '{{ filtros_activos.cliente }}'
+            }).then(function (data) {
+                if (data.results && data.results.length > 0) {
+                    var option = new Option(data.results[0].text, data.results[0].id, true, true);
+                    $('#cliente').append(option).trigger('change');
+                }
+            });
+        {% endif %}
+    });
+</script>
+{% endblock %}

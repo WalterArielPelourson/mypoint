@@ -1,0 +1,173 @@
+{% extends 'layout.html' %}
+
+{% block title %}Arqueo de Caja - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-cash-stack me-2"></i>Arqueo de Caja</h1>
+
+{% if arqueo_abierto %}
+<div class="alert alert-success d-flex align-items-center" role="alert">
+    <i class="bi bi-check-circle-fill flex-shrink-0 me-2"></i>
+    <div>
+        Caja Abierta por <strong>{{ current_user.username }}</strong> el <strong>{{ arqueo_actual.fecha_apertura|datetimeformat }}</strong>.
+    </div>
+</div>
+
+<!-- Tarjeta Existente: Saldos en Sistema (Solo Efectivo) -->
+<div class="card mb-4 shadow-sm">
+    <div class="card-header bg-dark text-white">
+        <h5 class="mb-0">Saldos Físicos en Sistema (Efectivo Actual)</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p class="fs-5 mb-1"><strong>Monto Inicial ARS:</strong> ARS {{ arqueo_actual.monto_inicial_ars|default(0)|round(2) }}</p>
+                <p class="fs-3"><strong>Efectivo ARS:</strong> <span class="text-primary">ARS {{ saldo_actual_sistema_ars|default(0)|round(2) }}</span></p>
+            </div>
+            <div class="col-md-6">
+                <p class="fs-5 mb-1"><strong>Monto Inicial USD:</strong> USD {{ arqueo_actual.monto_inicial_usd|default(0)|round(2) }}</p>
+                <p class="fs-3"><strong>Efectivo USD:</strong> <span class="text-secondary">USD {{ saldo_actual_sistema_usd|default(0)|round(2) }}</span></p>
+            </div>
+        </div>
+        <div class="mt-2">
+            <a href="{{ url_for('movimientos_caja') }}" class="btn btn-sm btn-info"><i class="bi bi-list-columns-reverse me-1"></i>Ver Movimientos del Día</a>
+        </div>
+    </div>
+</div>
+
+<!-- SECCIÓN MODIFICADA: Resumen de Saldos Físicos (Solo Efectivo) -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header py-3">
+        <h5 class="m-0 font-weight-bold text-primary">Saldos Físicos Actuales (Ingresos - Egresos)</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped align-middle">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Medio de Pago / Cuenta</th>
+                        <th class="text-end">Saldo Neto Actual</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {# Filtramos para mostrar solo lo que contiene 'Efectivo' #}
+                    {% set existe_efectivo = false %}
+                    {% for medio, monto in totales_visualizar.items() %}
+                        {% if 'Efectivo' in medio %}
+                            {% set existe_efectivo = true %}
+                            <tr>
+                                <td>
+                                    <i class="bi bi-cash text-success me-2"></i> 
+                                    {{ medio }}
+                                </td>
+                                <td class="text-end fw-bold {{ 'text-danger' if monto < 0 else '' }}">
+                                    {# Mostramos el prefijo correspondiente según la moneda #}
+                                    {% if 'USD' in medio %}
+                                        U$D {{ "{:,.2f}".format(monto) }}
+                                    {% else %}
+                                        $ {{ "{:,.2f}".format(monto) }}
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    {% if not existe_efectivo %}
+                    <tr>
+                        <td colspan="2" class="text-center">No hay registros de efectivo en el turno actual.</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+        <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            Nota: Estos valores representan el efectivo físico (billetes) que debería haber en caja según los movimientos registrados.
+        </small>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <h5 class="mb-3 text-danger"><i class="bi bi-door-closed-fill me-2"></i>Cerrar Caja</h5>
+        <p class="small text-muted mb-4">Ingrese el dinero real que tiene físicamente en el local para verificar diferencias contra el sistema.</p>
+        <form method="POST" action="{{ url_for('arqueo_caja') }}" class="needs-validation" novalidate>
+            <input type="hidden" name="cerrar_caja" value="1">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="monto_contado_fisico_ars" class="form-label">Contado Físico ARS (Billetes):<span class="text-danger">*</span></label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" step="0.01" class="form-control" id="monto_contado_fisico_ars" name="monto_contado_fisico_ars" 
+                               value="{{ request.form.monto_contado_fisico_ars|default(saldo_actual_sistema_ars|default(0)|round(2)) }}" required min="0">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <label for="monto_contado_fisico_usd" class="form-label">Contado Físico USD (Billetes):<span class="text-danger">*</span></label>
+                    <div class="input-group">
+                        <span class="input-group-text">U$D</span>
+                        <input type="number" step="0.01" class="form-control" id="monto_contado_fisico_usd" name="monto_contado_fisico_usd" 
+                               value="{{ request.form.monto_contado_fisico_usd|default(saldo_actual_sistema_usd|default(0)|round(2)) }}" required min="0">
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label for="observaciones" class="form-label">Observaciones del Cierre:</label>
+                    <textarea class="form-control" id="observaciones" name="observaciones" rows="2" placeholder="Ej: Faltante de 10 pesos por cambio...">{{ request.form.observaciones|default('') }}</textarea>
+                </div>
+                <div class="col-12 mt-4 d-flex justify-content-end">
+                    <button type="submit" class="btn btn-danger btn-lg"><i class="bi bi-check-all me-1"></i>Finalizar Arqueo y Cerrar Caja</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% else %}
+<div class="alert alert-warning d-flex align-items-center" role="alert">
+    <i class="bi bi-exclamation-triangle-fill flex-shrink-0 me-2"></i>
+    <div>
+        La caja está cerrada actualmente. Realice la apertura para poder operar.
+    </div>
+</div>
+
+<div class="card shadow-sm border-success">
+    <div class="card-body">
+        <h5 class="mb-3 text-success"><i class="bi bi-door-open-fill me-2"></i>Apertura de Caja</h5>
+        <form method="POST" action="{{ url_for('arqueo_caja') }}" class="needs-validation" novalidate>
+            <input type="hidden" name="abrir_caja" value="1">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="monto_inicial_ars" class="form-label">Monto Inicial en Pesos (ARS):<span class="text-danger">*</span></label>
+                    <input type="number" step="0.01" class="form-control" id="monto_inicial_ars" name="monto_inicial_ars" value="{{ request.form.monto_inicial_ars|default('0.00') }}" required min="0">
+                </div>
+                <div class="col-md-6">
+                    <label for="monto_inicial_usd" class="form-label">Monto Inicial en Dólares (USD):<span class="text-danger">*</span></label>
+                    <input type="number" step="0.01" class="form-control" id="monto_inicial_usd" name="monto_inicial_usd" value="{{ request.form.monto_inicial_usd|default('0.00') }}" required min="0">
+                </div>
+                <div class="col-12 mt-4 d-flex justify-content-end">
+                    <button type="submit" class="btn btn-success btn-lg"><i class="bi bi-play-fill me-1"></i>Iniciar Turno / Abrir Caja</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    (function () {
+      'use strict'
+      var forms = document.querySelectorAll('.needs-validation')
+      Array.prototype.slice.call(forms).forEach(function (form) {
+          form.addEventListener('submit', function (event) {
+            if (!form.checkValidity()) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+            form.classList.add('was-validated');
+          }, false)
+        })
+    })()
+</script>
+{% endblock %}

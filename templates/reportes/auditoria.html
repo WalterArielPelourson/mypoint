@@ -1,0 +1,149 @@
+{% extends 'layout.html' %}
+
+{% block title %}Reporte de Auditoría - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-journal-check me-2"></i>Reporte de Auditoría del Sistema</h1>
+
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-funnel me-1"></i>Filtros de Búsqueda</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFilters" aria-expanded="true" aria-controls="collapseFilters">
+            <i class="bi bi-filter-square me-1"></i>
+            <span class="d-none d-md-inline">Expandir/Contraer</span>
+        </button>
+    </div>
+    <div class="collapse show" id="collapseFilters">
+        <div class="card-body">
+            {# INICIO DEL FORMULARIO ÚNICO #}
+            <form method="GET" action="{{ url_for('reporte_auditoria') }}" class="row g-3">
+                
+                {# Incluye SÓLO los campos de fecha del archivo parcial #}
+                {% include '_filtro_fechas.html' %}
+                
+                <div class="col-md-3">
+                    <label for="usuario" class="form-label">Usuario:</label>
+                    <select class="form-select" id="usuario" name="usuario">
+                        <option value="">Todos los usuarios</option>
+                        {% for u in usuarios %}
+                        <option value="{{ u.id }}" {% if filtros_activos.usuario|string == u.id|string %}selected{% endif %}>
+                            {{ u.username }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="movimiento" class="form-label">Tipo de Movimiento:</label>
+                    <select class="form-select" id="movimiento" name="movimiento">
+                        <option value="">Todos los tipos</option>
+                        {% for tipo in tipos_movimiento %}
+                        <option value="{{ tipo }}" {% if filtros_activos.movimiento == tipo %}selected{% endif %}>
+                            {{ tipo.replace('_', ' ') }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="item_tipo" class="form-label">Tipo de Ítem:</label>
+                    <select class="form-select" id="item_tipo" name="item_tipo">
+                        <option value="">Todos los ítems</option>
+                        {% for tipo_item in tipos_item %}
+                        <option value="{{ tipo_item }}" {% if filtros_activos.item_tipo == tipo_item %}selected{% endif %}>
+                            {{ tipo_item.replace('_', ' ') }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label for="detalles" class="form-label">Buscar en Detalles:</label>
+                    <input type="text" class="form-control" id="detalles" name="detalles" value="{{ filtros_activos.detalles }}">
+                </div>
+
+                {# Botones de Acción #}
+                <div class="col-12 d-flex justify-content-start align-items-end mt-3 gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros
+                    </button>
+                    
+                    {# BOTÓN EXPORTAR NUEVO #}
+                    {# Pasa todos los filtros activos a la ruta de exportación #}
+                    <a href="{{ url_for('exportar_auditoria', start_date=start_date, end_date=end_date, usuario=filtros_activos.usuario, movimiento=filtros_activos.movimiento, item_tipo=filtros_activos.item_tipo, detalles=filtros_activos.detalles) }}" class="btn btn-success" title="Descargar Excel/CSV">
+                        <i class="bi bi-file-earmark-excel me-1"></i> Exportar
+                    </a>
+
+                    <a href="{{ url_for('reporte_auditoria') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Limpiar Filtros
+                    </a>
+                </div>
+            </form>
+            {# FIN DEL FORMULARIO ÚNICO #}
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive mt-4">
+    <table class="table table-striped table-hover align-middle">
+        <thead class="table-dark">
+            <tr>
+                <th scope="col">#ID</th>
+                <th scope="col">Fecha y Hora</th>
+                <th scope="col">Usuario</th>
+                <th scope="col">Tipo de Movimiento</th>
+                <th scope="col">Tipo de Ítem</th>
+                <th scope="col">Detalles</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if movimientos %}
+                {% for mov in movimientos %}
+                <tr>
+                    <td>{{ mov.id }}</td>
+                    <td class="text-nowrap">{{ mov.fecha|datetimeformat }}</td>
+                    <td>{{ mov.username }}</td>
+                    <td>
+                        {% if 'CREACION' in mov.tipo_movimiento %}
+                            <span class="badge bg-success">{{ mov.tipo_movimiento.replace('_', ' ') }}</span>
+                        {% elif 'MODIFICACION' in mov.tipo_movimiento %}
+                            <span class="badge bg-warning text-dark">{{ mov.tipo_movimiento.replace('_', ' ') }}</span>
+                        {% elif 'ELIMINACION' in mov.tipo_movimiento or 'CANCELACION' in mov.tipo_movimiento %}
+                            <span class="badge bg-danger">{{ mov.tipo_movimiento.replace('_', ' ') }}</span>
+                        {% else %}
+                            <span class="badge bg-info text-dark">{{ mov.tipo_movimiento.replace('_', ' ') }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if mov.tipo_item == 'CAJA' %}
+                            <span class="badge bg-secondary"><i class="bi bi-wallet2"></i> Caja</span>
+                        {% else %}
+                            {{ mov.tipo_item or 'N/A' }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-info" type="button" data-bs-toggle="collapse" data-bs-target="#details-{{ mov.id }}" aria-expanded="false" aria-controls="details-{{ mov.id }}" title="Ver detalles">
+                            <i class="bi bi-info-circle"></i> Ver
+                        </button>
+                        <div class="collapse" id="details-{{ mov.id }}">
+                            <div class="card card-body mt-2 p-2 bg-light small">
+                                {% if mov.detalles_parsed %}
+                                    <ul class="list-unstyled mb-0">
+                                    {% for key, value in mov.detalles_parsed.items() %}
+                                        <li><strong>{{ key.replace('_', ' ')|capitalize }}:</strong> {{ value }}</li>
+                                    {% endfor %}
+                                    </ul>
+                                {% else %}
+                                    No hay detalles disponibles.
+                                {% endif %}
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">No se encontraron movimientos de auditoría con los filtros aplicados.</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

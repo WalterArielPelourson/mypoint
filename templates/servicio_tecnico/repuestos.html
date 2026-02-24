@@ -1,0 +1,144 @@
+{% extends 'layout.html' %}
+
+{% block title %}Inventario de Productos y Repuestos - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-box-seam me-2"></i>Inventario de Productos, Accesorios y Repuestos</h1>
+
+<div class="card mb-3 shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center bg-light">
+        <span class="fw-bold"><i class="bi bi-filter-square me-1"></i> Filtros de Búsqueda</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFilters" aria-expanded="true" aria-controls="collapseFilters">
+            <i class="bi bi-chevron-up"></i>
+        </button>
+    </div>
+    <div class="collapse show" id="collapseFilters">
+        <div class="card-body">
+            <form method="GET" class="row g-3">
+                <!-- Filtro Categoría -->
+                <div class="col-md-3">
+                    <label for="categoria" class="form-label small fw-bold">Categoría:</label>
+                    <select class="form-select form-select-sm" id="categoria" name="categoria">
+                        <option value="">Todas las categorías</option>
+                        <option value="REPUESTO" {% if filtros_activos.categoria == 'REPUESTO' %}selected{% endif %}>Repuestos</option>
+                        <option value="ACCESORIO" {% if filtros_activos.categoria == 'ACCESORIO' %}selected{% endif %}>Accesorios</option>
+                        
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <label for="nombre" class="form-label small fw-bold">Nombre del Producto:</label>
+                    <input type="text" class="form-control form-control-sm" id="nombre" name="nombre" placeholder="Ej: Pantalla, Funda..." value="{{ filtros_activos.nombre }}">
+                </div>
+                
+                <div class="col-md-3">
+                    <label for="modelo" class="form-label small fw-bold">Modelo Compatible:</label>
+                    <input type="text" class="form-control form-control-sm" id="modelo" name="modelo" placeholder="Ej: iPhone 11, G54..." value="{{ filtros_activos.modelo }}">
+                </div>
+                
+                <div class="col-md-3">
+                    <label for="stock" class="form-label small fw-bold">Nivel de Stock:</label>
+                    <select class="form-select form-select-sm" id="stock" name="stock">
+                        <option value="">Todos</option>
+                        <option value="bajo" {% if filtros_activos.stock == 'bajo' %}selected{% endif %}>Stock Bajo (≤ 5)</option>
+                        <option value="sin" {% if filtros_activos.stock == 'sin' %}selected{% endif %}>Sin Stock (0)</option>
+                    </select>
+                </div>
+
+                <div class="col-md-12 d-flex justify-content-between align-items-center mt-3">
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros</button>
+                        {% if request.args.get('categoria') or request.args.get('nombre') or request.args.get('modelo') or request.args.get('stock') %}
+                            <a href="{{ url_for('inventario_repuestos') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar</a>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="d-flex gap-2">
+                        <!-- Botón de Exportación CSV -->
+                        <a href="{{ url_for('exportar_inventario_repuestos') }}" class="btn btn-sm btn-info text-dark fw-bold">
+                            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Exportar CSV
+                        </a>
+
+                        <!-- Botón Registrar -->
+                        <a href="{{ url_for('registrar_compra_repuesto') }}" class="btn btn-sm btn-success fw-bold">
+                            <i class="bi bi-plus-circle me-1"></i>Registrar Compra
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive mt-4">
+    <table class="table table-striped table-hover align-middle shadow-sm">
+        <thead class="table-dark">
+            <tr>
+                <th scope="col" style="width: 50px;">#ID</th>
+                <th scope="col" style="width: 120px;">Categoría</th>
+                <th scope="col">Descripción / Producto</th>
+                <th scope="col">Compatibilidad</th>
+                <th scope="col" class="text-end">Costo Prom. (USD)</th>
+                <th scope="col" class="text-center">Stock Actual</th>
+                <th scope="col" class="text-center" style="width: 120px;">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if repuestos %}
+                {% for repuesto in repuestos %}
+                <tr>
+                    <td><small class="text-muted">{{ repuesto.id }}</small></td>
+                    
+                    <!-- Columna Categoría con Badges de Colores -->
+                    <td>
+                        {% if repuesto.categoria == 'REPUESTO' %}
+                            <span class="badge bg-secondary w-100">Repuesto</span>
+                        {% elif repuesto.categoria == 'ACCESORIO' %}
+                            <span class="badge bg-info text-dark w-100">Accesorio</span>
+                        {% elif repuesto.categoria == 'EQUIPO' %}
+                            <span class="badge bg-primary w-100">Equipo</span>
+                        {% else %}
+                            <span class="badge bg-light text-dark border w-100">{{ repuesto.categoria|capitalize }}</span>
+                        {% endif %}
+                    </td>
+
+                    <td class="fw-bold">{{ repuesto.nombre_parte }}</td>
+                    <td>{{ repuesto.modelo_compatible or 'Genérico / Universal' }}</td>
+                    <td class="text-end fw-bold text-success">USD {{ repuesto.costo_usd|round(2) }}</td>
+                    <td class="text-center">
+                        {% if repuesto.stock == 0 %}
+                            <span class="badge bg-danger rounded-pill px-3">Agotado</span>
+                        {% elif repuesto.stock <= 5 %}
+                            <span class="badge bg-warning text-dark rounded-pill px-3">{{ repuesto.stock }} (Bajo)</span>
+                        {% else %}
+                            <span class="badge bg-success rounded-pill px-3">{{ repuesto.stock }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <div class="btn-group" role="group">
+                            {% if current_user.role in ['admin', 'superadmin'] %}
+                            <a href="{{ url_for('editar_repuesto', repuesto_id=repuesto.id) }}" class="btn btn-sm btn-outline-warning" title="Editar Producto">
+                                <i class="bi bi-pencil-square"></i>
+                            </a>
+                            <form action="{{ url_for('eliminar_repuesto', repuesto_id=repuesto.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea eliminar este producto permanentemente?');">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted py-5">
+                        <i class="bi bi-search fs-2 d-block mb-2"></i>
+                        No se encontraron productos con los filtros aplicados.
+                    </td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

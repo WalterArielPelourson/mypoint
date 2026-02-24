@@ -1,0 +1,146 @@
+{% extends 'layout.html' %}
+
+{% block title %}Libro Diario - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-book-half me-2"></i>Libro Diario (Movimientos Completos)</h1>
+
+<!-- SECCIÓN DE FILTROS AVANZADOS -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-light">
+        <i class="bi bi-funnel me-1"></i>Filtros de Búsqueda
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('libro_diario') }}" class="row g-3 align-items-end">
+            <!-- Filtro Fechas -->
+            <div class="col-md-2">
+                <label for="start_date" class="form-label fw-bold small">Desde:</label>
+                <input type="date" class="form-control form-control-sm" id="start_date" name="start_date" value="{{ start_date }}">
+            </div>
+            <div class="col-md-2">
+                <label for="end_date" class="form-label fw-bold small">Hasta:</label>
+                <input type="date" class="form-control form-control-sm" id="end_date" name="end_date" value="{{ end_date }}">
+            </div>
+
+            <!-- Filtro Forma de Pago -->
+            <div class="col-md-3">
+                <label for="forma_pago" class="form-label fw-bold small">Forma de Pago:</label>
+                <select class="form-select form-select-sm" id="forma_pago" name="forma_pago">
+                    <option value="" {% if not filtro_forma_pago %}selected{% endif %}>Todas</option>
+                    <option value="EFECTIVO" {% if filtro_forma_pago == 'EFECTIVO' %}selected{% endif %}>Efectivo</option>
+                    <option value="TRANSFERENCIA" {% if filtro_forma_pago == 'TRANSFERENCIA' %}selected{% endif %}>Transferencia</option>
+                    <option value="DEBITO" {% if filtro_forma_pago == 'DEBITO' %}selected{% endif %}>Débito</option>
+                    <option value="CREDITO" {% if filtro_forma_pago == 'CREDITO' %}selected{% endif %}>Crédito</option>
+                    <option value="MERCADO_PAGO" {% if filtro_forma_pago == 'MERCADO_PAGO' %}selected{% endif %}>Mercado Pago</option>
+                </select>
+            </div>
+
+            <!-- Filtro Origen (Cliente/Proveedor) -->
+            <div class="col-md-3">
+                <label for="origen" class="form-label fw-bold small">Movimientos de:</label>
+                <select class="form-select form-select-sm" id="origen" name="origen">
+                    <option value="" {% if not filtro_origen %}selected{% endif %}>Todos</option>
+                    <option value="CLIENTE" {% if filtro_origen == 'CLIENTE' %}selected{% endif %}>Clientes (Ventas/Cobros)</option>
+                    <option value="PROVEEDOR" {% if filtro_origen == 'PROVEEDOR' %}selected{% endif %}>Proveedores (Compras/Pagos)</option>
+                </select>
+            </div>
+
+            <!-- Botones -->
+            <div class="col-md-2 d-grid gap-2">
+                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search me-1"></i>Filtrar</button>
+                
+                {# BOTÓN EXPORTAR NUEVO #}
+                <a href="{{ url_for('exportar_libro_diario', start_date=start_date, end_date=end_date, forma_pago=filtro_forma_pago, origen=filtro_origen) }}" class="btn btn-success btn-sm" title="Descargar Excel/CSV">
+                    <i class="bi bi-file-earmark-excel me-1"></i>Exportar
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="alert alert-info mt-2 d-flex align-items-center py-2" role="alert">
+    <i class="bi bi-info-circle-fill flex-shrink-0 me-2"></i>
+    <div class="small">Este informe muestra un registro cronológico de todos los movimientos (Caja, Bancos, Cta. Cte.) del sistema.</div>
+</div>
+
+<div class="table-responsive mt-4">
+    <table class="table table-striped table-hover align-middle table-sm">
+        <thead class="table-dark">
+            <tr>
+                <th scope="col">Fecha y Hora</th>
+                <th scope="col">Usuario</th>
+                <th scope="col">Tipo de Transacción</th>
+                <th scope="col">Categoría</th>
+                <th scope="col">Sub-Rubro / Método</th>
+                <th scope="col">Descripción</th>
+                <th scope="col" class="text-end">Ingreso ARS</th>
+                <th scope="col" class="text-end">Egreso ARS</th>
+                <th scope="col" class="text-end">Ingreso USD</th>
+                <th scope="col" class="text-end">Egreso USD</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if movimientos %}
+                {% for mov in movimientos %}
+                <tr>
+                    <td class="text-nowrap small">{{ mov.fecha|datetimeformat }}</td>
+                    <td class="small">{{ mov.username }}</td>
+                    <td class="small fw-bold">{{ mov.tipo_transaccion.replace('_', ' ') }}</td>
+                    <td class="small">
+                        {% if mov.categoria == 'CAJA' %}
+                            <span class="badge bg-secondary">Caja Física</span>
+                        {% elif mov.categoria == 'CUENTA_CORRIENTE' %}
+                            <span class="badge bg-info text-dark">Cta. Cte. / Banco</span>
+                        {% else %}
+                            {{ mov.categoria.replace('_', ' ') }}
+                        {% endif %}
+                    </td>
+                    <td class="small">
+                        <!-- Lógica para mostrar Sub-rubro o Método de Pago -->
+                        {% if mov.sub_categoria %}
+                            <div class="text-muted fst-italic">{{ mov.sub_categoria }}</div>
+                        {% endif %}
+                        
+                        {% if mov.metodo_pago_filtro and mov.metodo_pago_filtro != 'OTRO' and mov.metodo_pago_filtro != 'EFECTIVO' %}
+                            <span class="badge bg-light text-dark border">{{ mov.metodo_pago_filtro }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">
+                        {% if mov.detalles_parsed %}
+                            {% for key, value in mov.detalles_parsed.items() %}
+                                {% if key != 'Sub-Rubro' %}
+                                    <strong>{{ key.replace('_', ' ')|capitalize }}:</strong> {{ value }}<br>
+                                {% endif %}
+                            {% endfor %}
+                        {% else %}
+                            {{ mov.detalles or '-' }}
+                        {% endif %}
+                    </td>
+                    
+                    {# COLUMNAS DE MONTOS #}
+                    <td class="text-end {% if mov.monto_ingreso_ars %}text-success fw-bold{% endif %}">
+                        {% if mov.monto_ingreso_ars %}ARS {{ mov.monto_ingreso_ars|default(0)|round(2) }}{% else %}-{% endif %}
+                    </td>
+                    <td class="text-end {% if mov.monto_egreso_ars %}text-danger fw-bold{% endif %}">
+                        {% if mov.monto_egreso_ars %}ARS {{ mov.monto_egreso_ars|default(0)|round(2) }}{% else %}-{% endif %}
+                    </td>
+                    <td class="text-end {% if mov.monto_ingreso_usd %}text-success fw-bold{% endif %}">
+                        {% if mov.monto_ingreso_usd %}USD {{ mov.monto_ingreso_usd|default(0)|round(2) }}{% else %}-{% endif %}
+                    </td>
+                    <td class="text-end {% if mov.monto_egreso_usd %}text-danger fw-bold{% endif %}">
+                        {% if mov.monto_egreso_usd %}USD {{ mov.monto_egreso_usd|default(0)|round(2) }}{% else %}-{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted py-5">
+                        <i class="bi bi-filter-circle fs-1 d-block mb-2"></i>
+                        No se encontraron movimientos con los filtros seleccionados.
+                    </td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -1,0 +1,204 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container-fluid">
+    <h2 class="mb-4"><i class="bi bi-bar-chart-line-fill"></i> Rentabilidad Consolidada Detallada</h2>
+
+    <!-- Filtro de Fecha -->
+    <div class="card shadow-sm mb-4 no-print border-0 bg-light">
+        <div class="card-body">
+            <form class="row g-3 align-items-center">
+                <div class="col-auto"><label class="small fw-bold">Desde:</label><input type="date" name="start_date" class="form-control form-control-sm" value="{{ start_date }}"></div>
+                <div class="col-auto"><label class="small fw-bold">Hasta:</label><input type="date" name="end_date" class="form-control form-control-sm" value="{{ end_date }}"></div>
+                <div class="col-auto pt-3"><button type="submit" class="btn btn-dark btn-sm px-4">Filtrar</button></div>
+            </form>
+        </div>
+    </div>
+
+    {# NAMESPACE PARA TOTALIZAR CORRECTAMENTE SIN ERRORES DE SCOPE #}
+    {% set ns = namespace(
+        t_util_e = 0,
+        t_util_i = 0,
+        t_g_caja = 0,
+        t_egr_virtual_operativo = 0
+    ) %}
+
+    <!-- DASHBOARD DE RENTABILIDAD BRUTA -->
+    <div class="row mb-4 g-3">
+        <!-- EQUIPOS -->
+        <div class="col-md-4 col-lg-2">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-dark text-white py-1 small fw-bold text-uppercase">Equipos</div>
+                <div class="card-body">
+                    {% set t_v_e = resumen_equipos | map(attribute='total_venta') | map('default', 0) | sum %}
+                    {% set t_c_e = resumen_equipos | map(attribute='total_costo') | map('default', 0) | sum %}
+                    {% set ns.t_util_e = t_v_e - t_c_e %}
+                    <h4 class="text-primary fw-bold">${{ "{:,.2f}".format(ns.t_util_e) }}</h4>
+                    <hr class="my-2">
+                    {% for re in resumen_equipos %}
+                    <div class="d-flex justify-content-between x-small mb-1">
+                        <span class="text-muted">{{ re.clase }}:</span>
+                        <span class="fw-bold">${{ "{:,.2f}".format((re.total_venta or 0) - (re.total_costo or 0)) }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- INSUMOS -->
+        <div class="col-md-4 col-lg-2">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-primary text-white py-1 small fw-bold text-uppercase">Insumos</div>
+                <div class="card-body">
+                    {% set t_v_i = resumen_insumos | map(attribute='total_venta') | map('default', 0) | sum %}
+                    {% set t_c_i = resumen_insumos | map(attribute='total_costo') | map('default', 0) | sum %}
+                    {% set ns.t_util_i = t_v_i - t_c_i %}
+                    <h4 class="text-primary fw-bold">${{ "{:,.2f}".format(ns.t_util_i) }}</h4>
+                    <hr class="my-2">
+                    {% for ri in resumen_insumos %}
+                    <div class="d-flex justify-content-between x-small mb-1">
+                        <span class="text-muted">{{ ri.clase }}:</span>
+                        <span class="fw-bold">${{ "{:,.2f}".format((ri.total_venta or 0) - (ri.total_costo or 0)) }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- MANO DE OBRA -->
+        <div class="col-md-4 col-lg-2">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-success text-white py-1 small fw-bold text-uppercase">Mano de Obra</div>
+                <div class="card-body">
+                    <h4 class="text-success fw-bold">${{ "{:,.2f}".format(mano_obra.neto or 0) }}</h4>
+                    <hr class="my-2">
+                    <div class="d-flex justify-content-between x-small text-muted mb-1">
+                        <span>Bruto:</span><span>+${{ "{:,.2f}".format(mano_obra.bruto or 0) }}</span>
+                    </div>
+                    <div class="d-flex justify-content-between x-small text-danger">
+                        <span>Comis:</span><span>-${{ "{:,.2f}".format(mano_obra.comisiones or 0) }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GASTOS OPERATIVOS CAJA (EXCLUYENDO SOCIOS) -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card shadow-sm border-0 h-100 border-start border-danger border-4">
+                <div class="card-header bg-danger text-white py-1 small fw-bold text-uppercase">Gastos Operativos (Caja)</div>
+                <div class="card-body">
+                    <div style="max-height: 100px; overflow-y: auto;">
+                        {% for rg in resumen_gastos %}
+                            {% if rg.clase not in ['Aportes Socios', 'Retiros Socios'] %}
+                                {% set ns.t_g_caja = ns.t_g_caja + (rg.total or 0) %}
+                                <div class="d-flex justify-content-between x-small mb-1">
+                                    <span class="text-muted">{{ rg.clase or 'Otros' }}:</span>
+                                    <span class="fw-bold">-${{ "{:,.2f}".format(rg.total or 0) }}</span>
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                    <hr class="my-2">
+                    <h4 class="text-danger fw-bold">-${{ "{:,.2f}".format(ns.t_g_caja) }}</h4>
+                </div>
+            </div>
+        </div>
+
+        <!-- EGRESOS VIRTUALES (SOLO MANUALES, NO PROVEEDORES) -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card shadow-sm border-0 h-100 border-start border-warning border-4">
+                <div class="card-header bg-warning text-dark py-1 small fw-bold text-uppercase">Egresos Virtuales (Operativos)</div>
+                <div class="card-body">
+                    <div style="max-height: 100px; overflow-y: auto;">
+                        {# IMPORTANTE: Aquí recorremos la variable filtrada en Python que solo trae EGRESO_MANUAL_VIRTUAL #}
+                        {% for ev in egr_virtuales_man %}
+                            {% set ns.t_egr_virtual_operativo = ns.t_egr_virtual_operativo + (ev.total or 0) %}
+                            <div class="d-flex justify-content-between x-small mb-1">
+                                <span class="text-muted">{{ ev.cuenta }}:</span>
+                                <span class="fw-bold">-${{ "{:,.2f}".format(ev.total or 0) }}</span>
+                            </div>
+                        {% endfor %}
+                    </div>
+                    <hr class="my-2">
+                    <h4 class="text-warning fw-bold" style="filter: brightness(0.7);">-${{ "{:,.2f}".format(ns.t_egr_virtual_operativo) }}</h4>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESULTADO FINAL -->
+    {% set rentabilidad_final = ns.t_util_e + ns.t_util_i + mano_obra.neto - ns.t_g_caja - ns.t_egr_virtual_operativo %}
+    <div class="alert alert-dark shadow-sm border-0 d-flex justify-content-between align-items-center">
+        <h4 class="mb-0 fw-bold"><i class="bi bi-cash-stack"></i> RENTABILIDAD NETA DEL PERÍODO:</h4>
+        <h1 class="mb-0 fw-bold">${{ "{:,.2f}".format(rentabilidad_final) }}</h1>
+    </div>
+
+    <!-- SECCIÓN: FLUJO POR CUENTAS Y BALANCE FINAL -->
+    <h5 class="fw-bold mb-3 mt-5"><i class="bi bi-wallet2"></i> Flujo de Fondos y Balance por Cuenta</h5>
+    <div class="row">
+        {% for f in flujo_cuentas %}
+        <div class="col-md-4 mb-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <h6 class="fw-bold border-bottom pb-2 mb-3">{{ f.nombre }}</h6>
+                    <div class="row text-center mb-3">
+                        <div class="col-6 border-end">
+                            <small class="text-muted d-block x-small text-uppercase">Pesos (ARS)</small>
+                            <span class="text-success d-block small">+${{ "{:,.2f}".format(f.ing_ars or 0) }}</span>
+                            <span class="text-danger d-block small">-${{ "{:,.2f}".format(f.egr_ars or 0) }}</span>
+                        </div>
+                        <div class="col-6">
+                            <small class="text-muted d-block x-small text-uppercase">Dólares (USD)</small>
+                            <span class="text-success d-block small">+u$d {{ "{:,.2f}".format(f.ing_usd or 0) }}</span>
+                            <span class="text-danger d-block small">-u$d {{ "{:,.2f}".format(f.egr_usd or 0) }}</span>
+                        </div>
+                    </div>
+                    <!-- Balance del Resultado de la cuenta -->
+                    <div class="bg-light p-2 rounded border">
+                        <div class="d-flex justify-content-between x-small mb-1">
+                            <span class="fw-bold text-muted text-uppercase small">Saldo Período ARS:</span>
+                            <span class="{{ 'text-success' if (f.ing_ars - f.egr_ars) >= 0 else 'text-danger' }} fw-bold">
+                                ${{ "{:,.2f}".format(f.ing_ars - f.egr_ars) }}
+                            </span>
+                        </div>
+                        <div class="d-flex justify-content-between x-small">
+                            <span class="fw-bold text-muted text-uppercase small">Saldo Período USD:</span>
+                            <span class="{{ 'text-success' if (f.ing_usd - f.egr_usd) >= 0 else 'text-danger' }} fw-bold">
+                                u$d {{ "{:,.2f}".format(f.ing_usd - f.egr_usd) }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- DETALLES ADICIONALES -->
+    <div class="mt-4 no-print text-center">
+        <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#collapseDetalle">
+            <i class="bi bi-search"></i> Auditar Operaciones Individuales
+        </button>
+    </div>
+
+    <div class="collapse mt-3" id="collapseDetalle">
+        <div class="card card-body shadow-sm border-0 bg-light">
+            <h6 class="fw-bold mb-3 text-center text-muted text-uppercase small">Reportes detallados del período:</h6>
+            <div class="d-flex justify-content-center gap-3 flex-wrap">
+                <a href="{{ url_for('detalle_ventas_rentabilidad', start_date=start_date, end_date=end_date) }}" class="btn btn-dark shadow-sm px-4">
+                    <i class="bi bi-phone"></i> Detalle de Ventas
+                </a>
+                <a href="{{ url_for('detalle_servicios_rentabilidad', start_date=start_date, end_date=end_date) }}" class="btn btn-primary shadow-sm px-4">
+                    <i class="bi bi-tools"></i> Detalle de Servicios
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .x-small { font-size: 0.72rem; }
+    .card-header { font-size: 0.75rem; letter-spacing: 0.5px; }
+    h4 { font-size: 1.1rem; }
+    .no-print { @media print { display: none !important; } }
+</style>
+{% endblock %}

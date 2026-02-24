@@ -1,0 +1,74 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-tools"></i> Detalle de Servicios e Insumos (ARS)</h2>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('exportar_detalle_servicios_ars', start_date=start_date, end_date=end_date) }}" class="btn btn-success">
+                <i class="bi bi-file-earmark-spreadsheet"></i> Exportar CSV
+            </a>
+            <a href="{{ url_for('reporte_rentabilidad', start_date=start_date, end_date=end_date) }}" class="btn btn-outline-secondary">
+                Volver al Resumen
+            </a>
+        </div>
+    </div>
+
+    <div class="card shadow-sm border-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-primary text-dark">
+                    <tr>
+                        <th>Fecha</th>
+                        <th>ID</th>
+                        <th>Cliente</th>
+                        <th>Técnico</th>
+                        <th class="text-end">Mano de Obra</th>
+                        <th class="text-end">Costo Repuestos</th>
+                        <th class="text-end">Cobrado Final</th>
+                        <th class="text-end">Utilidad Bruta</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in servicios %}
+                    <tr>
+                        <td>{{ s.fecha_servicio[:10] }}</td>
+                        <td><span class="badge bg-dark">#{{ s.id }}</span></td>
+                        <td>{{ s.razon_social or (s.nombre ~ ' ' ~ s.apellido) }}</td>
+                        <td>{{ s.tecnico_nombre or 'Sin asignar' }}</td>
+                        <td class="text-end">${{ "{:,.2f}".format(s.precio_mano_obra_ars or 0) }}</td>
+                        <td class="text-end text-muted">${{ "{:,.2f}".format(s.costo_insumos_ars or 0) }}</td>
+                        <td class="text-end fw-bold">${{ "{:,.2f}".format(s.precio_final_ars or 0) }}</td>
+                        <td class="text-end text-success fw-bold">
+                            ${{ "{:,.2f}".format((s.precio_final_ars or 0) - (s.costo_insumos_ars or 0)) }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-muted">No hay servicios registrados en este período.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light fw-bold">
+                    <tr>
+                        <td colspan="4" class="text-end text-uppercase">Totales del Período:</td>
+                        <td class="text-end text-primary">
+                            ${{ "{:,.2f}".format(servicios | map(attribute='precio_mano_obra_ars') | map('default', 0) | sum) }}
+                        </td>
+                        <td class="text-end text-muted">
+                            ${{ "{:,.2f}".format(servicios | map(attribute='costo_insumos_ars') | map('default', 0) | sum) }}
+                        </td>
+                        <td class="text-end">
+                            ${{ "{:,.2f}".format(servicios | map(attribute='precio_final_ars') | map('default', 0) | sum) }}
+                        </td>
+                        <td class="text-end text-success h5">
+                            {% set total_venta = servicios | map(attribute='precio_final_ars') | map('default', 0) | sum %}
+                            {% set total_costo = servicios | map(attribute='costo_insumos_ars') | map('default', 0) | sum %}
+                            ${{ "{:,.2f}".format(total_venta - total_costo) }}
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

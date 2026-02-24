@@ -1,0 +1,129 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('menu_ajuste_stock') }}">Ajustes</a></li>
+            <li class="breadcrumb-item active">Carga Inicial de Insumos</li>
+        </ol>
+    </nav>
+
+    <div class="row mb-4">
+        <!-- SECCIÓN CARGA INICIAL (ALTA DE PRODUCTOS CON STOCK) -->
+        <div class="col-md-12">
+            <div class="card shadow-sm border-primary">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-plus-circle-fill me-2"></i>Carga Inicial de Productos (Repuestos/Accesorios)</h5>
+                    <span class="badge bg-light text-primary">SuperAdmin Mode</span>
+                </div>
+                <div class="card-body bg-light">
+                    <p class="text-muted small">Use este formulario para dar de alta productos que ya tiene físicamente y su stock al momento de iniciar el sistema.</p>
+                    <form action="{{ url_for('crear_item_base') }}" method="POST" class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Nombre del Producto</label>
+                            <input type="text" name="nombre" class="form-control" placeholder="Ej: PIN DE CARGA" required>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold">Modelo / Compat.</label>
+                            <input type="text" name="modelo" class="form-control" placeholder="Ej: MOTO G20 / Universal">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold">Categoría</label>
+                            <select name="categoria" class="form-select">
+                                <option value="REPUESTO">🔧 Repuesto</option>
+                                <option value="ACCESORIO">🎧 Accesorio</option>
+                                
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold">Stock Inicial</label>
+                            <input type="number" name="stock_inicial" class="form-control border-primary" value="0" min="0" required>
+                        </div>
+                        <div class="col-md-1">
+                            <label class="form-label fw-bold">Costo USD</label>
+                            <input type="number" step="0.01" name="costo_usd" class="form-control" required>
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary w-100">Cargar al Stock</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- SECCIÓN AJUSTES POR DIFERENCIA (LO QUE YA EXISTE) -->
+        <div class="col-md-12">
+            <div class="card shadow-sm border-warning">
+                <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-pencil-square me-2"></i>Ajustar Diferencias de Inventario</h5>
+                    <div class="input-group input-group-sm w-25">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input type="text" id="filtroTabla" class="form-control" placeholder="Buscar producto...">
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-sm table-hover align-middle">
+                            <thead class="table-dark sticky-top">
+                                <tr>
+                                    <th>Categoría</th>
+                                    <th>Producto</th>
+                                    <th>Compatibilidad</th>
+                                    <th>Stock Actual</th>
+                                    <th class="text-center">Ajuste Manual</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cuerpoTabla">
+                                {% for item in items %}
+                                <tr>
+                                    <td><span class="badge bg-secondary">{{ item.categoria }}</span></td>
+                                    <td><strong>{{ item.nombre_parte }}</strong></td>
+                                    <td>{{ item.modelo_compatible }}</td>
+                                    <td class="text-center"><span class="badge bg-info text-dark fs-6">{{ item.stock }}</span></td>
+                                    <td>
+                                        <form action="{{ url_for('ajuste_stock_insumos') }}" method="POST" class="row g-1">
+                                            <input type="hidden" name="repuesto_id" value="{{ item.id }}">
+                                            <div class="col-md-4">
+                                                <select name="tipo_ajuste" class="form-select form-select-sm">
+                                                    <option value="SUMAR">Sumar (+)</option>
+                                                    <option value="RESTAR">Restar (-)</option>
+                                                    <option value="SET">Setear (=)</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <input type="number" name="cantidad" class="form-control form-control-sm" placeholder="Cant" required>
+                                            </div>
+                                            <div class="col-md-5">
+                                                <div class="input-group input-group-sm">
+                                                    <input type="text" name="motivo" class="form-control" placeholder="Motivo">
+                                                    <button type="submit" class="btn btn-warning btn-sm border-dark">Aplicar</button>
+                                                </div>
+                                            </div>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Filtro de búsqueda rápido en la tabla
+document.getElementById('filtroTabla').addEventListener('keyup', function() {
+    let valor = this.value.toLowerCase();
+    let filas = document.querySelectorAll('#cuerpoTabla tr');
+    
+    filas.forEach(fila => {
+        let texto = fila.textContent.toLowerCase();
+        fila.style.display = texto.includes(valor) ? '' : 'none';
+    });
+});
+</script>
+{% endblock %}

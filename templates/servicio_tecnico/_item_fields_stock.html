@@ -1,0 +1,40 @@
+{# Este fragmento es para añadir ítems de stock (repuestos) #}
+{# Los marcadores de posición '__index__' serán reemplazados por JavaScript. #}
+<div class="item-row item-stock-row mb-3 p-3 border rounded bg-light position-relative" data-item-type="stock">
+    <button type="button" class="btn btn-danger btn-sm position-absolute top-0 end-0 m-2 remove-item" title="Eliminar ítem">
+        <i class="bi bi-trash"></i>
+    </button>
+    
+    <div class="row g-2 align-items-end w-100">
+        <div class="col-md-6">
+            <label for="select_stock_item___index__" class="form-label item-label">Repuesto de Stock <span class="text-danger">*</span>:</label>
+            <select class="form-select select2-item-stock" 
+                    id="select_stock_item___index__" 
+                    name="repuesto_stock_id[]" 
+                    data-placeholder="Buscar en stock..."
+                    required> 
+                <option value=""></option>
+            </select>
+        </div>
+
+        <div class="col-md-3">
+            <label for="item_cantidad_stock___index__" class="form-label item-label">Cantidad <span class="text-danger">*</span>:</label>
+            <input type="number" class="form-control item-cantidad-stock" 
+                   id="item_cantidad_stock___index__" 
+                   name="cantidad_stock[]" 
+                   placeholder="Cant." min="1" 
+                   value="1" required>
+        </div>
+
+        <div class="col-md-3">
+            {# ## MODIFICACIÓN ##: Etiqueta y atributos del input para reflejar "Precio Venta (USD)" #}
+            <label for="item_precio_venta_usd_stock___index__" class="form-label item-label">Precio Venta (USD) <span class="text-danger">*</span>:</label>
+            <input type="number" step="0.01" min="0" class="form-control item-precio-venta-usd-stock" 
+                   id="item_precio_venta_usd_stock___index__" 
+                   name="precio_venta_usd_stock[]" {# ## MODIFICACIÓN ##: Cambiado el 'name' #}
+                   placeholder="Precio Venta USD" {# ## MODIFICACIÓN ##: Cambiado el 'placeholder' #}
+                   value="0.00" readonly required>
+        </div>
+    </div>
+    <div class="invalid-feedback item-overall-feedback mt-2"></div>
+</div>

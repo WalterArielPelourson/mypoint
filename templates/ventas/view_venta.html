@@ -1,0 +1,179 @@
+{% extends 'layout.html' %}
+
+{% block title %}Detalle de Venta/Presupuesto - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">
+    {% if venta.status == 'PRESUPUESTO' %}
+        <i class="bi bi-file-earmark-text me-2"></i>Presupuesto de Venta #{{ venta.id }}
+        <span class="badge bg-info text-dark ms-2">PENDIENTE</span>
+    {% else %}
+        <i class="bi bi-check-circle-fill me-2"></i>Venta Completada #{{ venta.id }}
+        <span class="badge bg-success ms-2">COMPLETADA</span>
+    {% endif %}
+</h1>
+
+<div class="card mb-4 shadow-sm">
+    <div class="card-header">
+        <h5 class="mb-0">Datos Generales</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Fecha:</strong> {{ venta.fecha_venta|datetimeformat }}</p>
+                <p><strong>Vendedor:</strong> {{ current_user.username }}</p>
+                <p><strong>Estado:</strong> 
+                    {% if venta.status == 'PRESUPUESTO' %}
+                        <span class="badge bg-info text-dark">{{ venta.status }}</span>
+                    {% elif venta.status == 'COMPLETADA' %}
+                        <span class="badge bg-success">{{ venta.status }}</span>
+                    {% else %}
+                        <span class="badge bg-danger">{{ venta.status }}</span>
+                    {% endif %}
+                </p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Cliente:</strong> {{ venta.razon_social or (venta.nombre + ' ' + venta.apellido) }}</p>
+                <p><strong>CUIT/CUIL Cliente:</strong> {{ venta.cuit_cuil }}</p>
+                <p><strong>Valor Dólar al momento:</strong> ARS {{ venta.valor_dolar_momento|round(2) }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4 shadow-sm">
+    <div class="card-header">
+        <h5 class="mb-0">Detalles del Celular Vendido</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Marca:</strong> {{ venta.marca }}</p>
+                <p><strong>Modelo:</strong> {{ venta.modelo }}</p>
+                <p><strong>IMEI:</strong> <span class="text-monospace">{{ venta.imei }}</span></p>
+                <p><strong>Condición:</strong> {{ venta.condicion }}</p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Impuestos (%):</strong> {{ venta.impuestos_pct|round(2) }}%</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ## CAMBIOS POR PARTE DE PAGO ## #}
+{% if venta.celular_parte_pago_id %}
+<div class="card mb-4 shadow-sm border-warning">
+    <div class="card-header bg-warning text-dark">
+        <h5 class="mb-0">Celular Recibido como Parte de Pago</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Marca:</strong> {{ venta.pp_marca }}</p>
+                <p><strong>Modelo:</strong> {{ venta.pp_modelo }}</p>
+                <p><strong>IMEI:</strong> <span class="text-monospace">{{ venta.pp_imei }}</span></p>
+                <p><strong>Condición:</strong> {{ venta.pp_condicion }}</p>
+            </div>
+            <div class="col-md-6">
+                <p class="fs-5"><strong>Valor Acreditado:</strong> <span class="badge bg-dark">ARS {{ venta.valor_celular_parte_pago|round(2) }}</span></p>
+                <p class="text-muted"><i class="bi bi-info-circle me-1"></i>El celular ha reingresado al inventario como stock disponible.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{# ## FIN CAMBIOS POR PARTE DE PAGO ## #}
+
+<div class="card mb-4 shadow-sm">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0">Resumen Financiero y Medios de Pago</h5>
+    </div>
+    <div class="card-body">
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <h3 class="text-primary">Total ARS: {{ "{:,.2f}".format(venta.precio_final_ars) }}</h3>
+            </div>
+            <div class="col-md-6 text-md-end">
+                <h3 class="text-secondary">Total USD:  {{ "{:,.2f}".format(venta.precio_final_usd) }}</h3>
+            </div>
+        </div>
+
+        {% if venta.status == 'COMPLETADA' %}
+        <div class="table-responsive">
+            <table class="table table-hover border">
+                <thead class="table-light">
+                    <tr>
+                        <th>Medio de Pago / Concepto</th>
+                        <th class="text-end">Importe</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if venta.monto_cobrado_ars > 0 %}
+                    <tr>
+                        <td><i class="bi bi-cash me-2 text-success"></i>Efectivo (Pesos ARS)</td>
+                        <td class="text-end">ARS {{ venta.monto_cobrado_ars|round(2) }}</td>
+                    </tr>
+                    {% endif %}
+
+                    {% if venta.monto_cobrado_usd > 0 %}
+                    <tr>
+                        <td><i class="bi bi-currency-dollar me-2 text-success"></i>Efectivo (Dólares USD)</td>
+                        <td class="text-end">USD {{ venta.monto_cobrado_usd|round(2) }}</td>
+                    </tr>
+                    {% endif %}
+
+                    {% if venta.monto_transferencia_ars > 0 %}
+                    <tr>
+                        <td><i class="bi bi-bank me-2 text-info"></i>Transferencia Bancaria</td>
+                        <td class="text-end">ARS {{ venta.monto_transferencia_ars|round(2) }}</td>
+                    </tr>
+                    {% endif %}
+
+                    {% if venta.monto_mp_ars > 0 %}
+                    <tr>
+                        <td><i class="bi bi-qr-code-scan me-2 text-primary"></i>Mercado Pago</td>
+                        <td class="text-end">ARS {{ venta.monto_mp_ars|round(2) }}</td>
+                    </tr>
+                    {% endif %}
+
+                    {% if (venta.monto_debito_ars + venta.monto_credito_ars) > 0 %}
+                    <tr>
+                        <td><i class="bi bi-credit-card me-2 text-dark"></i>Tarjetas (Débito/Crédito)</td>
+                        <td class="text-end">ARS {{ (venta.monto_debito_ars + venta.monto_credito_ars)|round(2) }}</td>
+                    </tr>
+                    {% endif %}
+
+                    {% if venta.valor_celular_parte_pago > 0 %}
+                    <tr>
+                        <td><i class="bi bi-phone-flip me-2 text-warning"></i>Equipo en Parte de Pago</td>
+                        <td class="text-end">ARS {{ venta.valor_celular_parte_pago|round(2) }}</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+                <tfoot>
+                    {% if venta.saldo_pendiente > 0 %}
+                    <tr class="table-danger">
+                        <td class="fw-bold">SALDO PENDIENTE (Deuda Cliente)</td>
+                        <td class="text-end fw-bold">ARS {{ venta.saldo_pendiente|round(2) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr class="table-success">
+                        <td colspan="2" class="text-center fw-bold"><i class="bi bi-shield-check me-2"></i>PAGO TOTAL RECIBIDO</td>
+                    </tr>
+                    {% endif %}
+                </tfoot>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-2"></i>Los detalles de pago se registrarán una vez que el presupuesto sea confirmado y cobrado.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="d-flex justify-content-between mt-4">
+    <a href="{{ return_url }}" class="btn btn-secondary"><i class="bi bi-arrow-left-circle me-1"></i>Volver</a>
+    <a href="{{ url_for('imprimir_venta', venta_id=venta.id) }}" target="_blank" class="btn btn-info"><i class="bi bi-printer me-1"></i>Imprimir Comprobante</a>
+</div>
+{% endblock %}

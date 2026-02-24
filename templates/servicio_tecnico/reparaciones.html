@@ -1,0 +1,146 @@
+{% extends 'layout.html' %}
+
+{% block title %}Historial de Reparaciones - {{ super() }}{% endblock %}
+
+{% block content %}
+<!-- CABECERA: Título y Botón de Exportación -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0"><i class="bi bi-tools me-2"></i>{{ titulo }}</h1>
+    <a href="{{ url_for('exportar_reparaciones', **request.args) }}" class="btn btn-outline-primary shadow-sm">
+        <i class="bi bi-file-earmark-spreadsheet me-1"></i>Exportar a CSV
+    </a>
+</div>
+
+<!-- PANEL DE FILTROS -->
+<div class="card mb-4 shadow-sm">
+    <div class="card-header bg-light">
+        <h5 class="mb-0 text-dark"><i class="bi bi-funnel me-2"></i>Filtros de Búsqueda</h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('listar_reparaciones_completadas') }}" class="row g-3 align-items-end">
+            
+            {# Incluimos los campos de fecha (Desde/Hasta) #}
+            {% include '_filtro_fechas.html' %}
+
+            <div class="col-md-3">
+                <label for="cliente" class="form-label fw-bold">Cliente:</label>
+                <select class="form-select select2-persona" id="cliente" name="cliente" data-rol="cliente">
+                    <option value="">Todos los clientes</option>
+                    {% for cli in clientes_disponibles %}
+                    <option value="{{ cli.id }}" {% if filtros_activos.cliente|string == cli.id|string %}selected{% endif %}>
+                        {{ cli.razon_social or (cli.nombre + ' ' + cli.apellido) }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="imei" class="form-label fw-bold">IMEI del Equipo:</label>
+                <input type="text" class="form-control" id="imei" name="imei" value="{{ filtros_activos.imei }}" placeholder="Buscar por IMEI...">
+            </div>
+
+            <div class="col-md-12 text-end">
+                <button type="submit" class="btn btn-primary px-4">
+                    <i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros
+                </button>
+                <a href="{{ url_for('listar_reparaciones_completadas') }}" class="btn btn-secondary px-4">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Limpiar Filtros
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="table-responsive mt-4">
+    <table class="table table-striped table-hover align-middle">
+        <thead class="table-dark">
+            <tr>
+                <th scope="col">#ID Servicio</th>
+                <th scope="col">Fecha</th>
+                <th scope="col">Cliente</th>
+                <th scope="col">IMEI Equipo</th>
+                <th scope="col">Falla Reportada</th>
+                <th scope="col">Mano de Obra (ARS)</th>
+                <th scope="col">Costo Repuestos (USD)</th>
+                <th scope="col">Precio Final (ARS)</th>
+                <th scope="col">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if reparaciones %}
+                {% for reparacion in reparaciones %}
+                <tr>
+                    <td>{{ reparacion.id }}</td>
+                    <td>{{ reparacion.fecha_servicio.split(' ')[0] }}<br><small class="text-muted">{{ reparacion.fecha_servicio.split(' ')[1] }}</small></td>
+                    <td>{{ reparacion.razon_social or (reparacion.nombre + ' ' + reparacion.apellido) }}</td>
+                    <td>{{ reparacion.imei_equipo or 'N/A' }}</td>
+                    <td>{{ reparacion.falla_reportada|truncate(50) }}</td>
+                    <td>ARS {{ reparacion.precio_mano_obra_ars|round(2) }}</td>
+                    <td>USD {{ reparacion.costo_total_repuestos_usd|round(2) }}</td>
+                    <td>ARS {{ reparacion.precio_final_ars|round(2) }}</td>
+                    <td>
+                        <div class="btn-group">
+                            <a href="{{ url_for('view_reparacion', servicio_id=reparacion.id) }}" class="btn btn-sm btn-outline-info" title="Ver Detalles"><i class="bi bi-eye"></i></a>
+                            <a href="{{ url_for('imprimir_reparacion', servicio_id=reparacion.id) }}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Imprimir Comprobante"><i class="bi bi-printer"></i></a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="9" class="text-center text-muted py-4">No se encontraron reparaciones completadas con los filtros aplicados.</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    $(document).ready(function() {
+        // Select2 para el filtro de clientes
+        $('#cliente').select2({
+            placeholder: 'Seleccione un cliente',
+            allowClear: true,
+            ajax: {
+                url: '{{ url_for('api_buscar_personas') }}',
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return {
+                        q: params.term,
+                        rol: $(this).data('rol')
+                    };
+                },
+                processResults: function (data) {
+                    return {
+                        results: data
+                    };
+                },
+                cache: true
+            },
+            minimumInputLength: 3,
+            templateResult: function (data) {
+                if (data.loading) return data.text;
+                return $('<span>' + data.text + '</span>');
+            },
+            templateSelection: function (data) {
+                return data.text;
+            }
+        });
+
+        // Si ya hay un cliente seleccionado en los filtros, precargarlo en Select2
+        {% if filtros_activos.cliente %}
+            $.ajax({
+                type: 'GET',
+                url: '{{ url_for('api_buscar_personas', q="", rol="cliente") }}' + '&id=' + '{{ filtros_activos.cliente }}'
+            }).then(function (data) {
+                if (data.results && data.results.length > 0) {
+                    var option = new Option(data.results[0].text, data.results[0].id, true, true);
+                    $('#cliente').append(option).trigger('change');
+                }
+            });
+        {% endif %}
+    });
+</script>
+{% endblock %}

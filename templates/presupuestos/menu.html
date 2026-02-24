@@ -1,0 +1,30 @@
+{% extends 'layout.html' %}
+
+{% block title %}Menú de Presupuestos - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-file-earmark-text-fill me-2"></i>Menú de Presupuestos</h1>
+
+<div class="row row-cols-1 row-cols-md-2 g-4">
+    <div class="col">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-cart-fill display-4 text-primary mb-3"></i>
+                <h5 class="card-title">Presupuestos de Venta de Celulares</h5>
+                <p class="card-text">Consulta y gestiona las cotizaciones de venta de celulares pendientes.</p>
+                <a href="{{ url_for('listar_presupuestos_venta') }}" class="btn btn-primary mt-3"><i class="bi bi-arrow-right-circle me-2"></i>Ir a Presupuestos de Venta</a>
+            </div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-tools display-4 text-success mb-3"></i>
+                <h5 class="card-title">Presupuestos de Reparación</h5>
+                <p class="card-text">Consulta y gestiona las cotizaciones de servicios de reparación pendientes.</p>
+                <a href="{{ url_for('listar_presupuestos_reparacion') }}" class="btn btn-success mt-3"><i class="bi bi-arrow-right-circle me-2"></i>Ir a Presupuestos de Reparación</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

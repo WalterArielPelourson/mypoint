@@ -1,0 +1,275 @@
+{% extends 'layout.html' %}
+
+{% block title %}Registrar Cobro Aplicado - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0"><i class="bi bi-cash-coin me-2 text-success"></i>Registrar Cobro Aplicado</h1>
+    <a href="{{ url_for('listar_clientes_cc') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+    </a>
+</div>
+
+<!-- SECCIÓN: Selector de Imputación -->
+<div class="card mb-4 shadow-sm border-primary">
+    <div class="card-body py-3">
+        <form method="GET" action="{{ url_for('cobrar_cliente', cliente_id=cliente.id) }}" id="form_imputacion">
+            <label class="form-label fw-bold small text-uppercase text-primary mb-2">Seleccione categoría de deuda:</label>
+            <div class="btn-group w-100" role="group">
+                <input type="radio" class="btn-check" name="imputacion" id="imp_equipos" value="EQUIPOS" 
+                       {% if imputacion == 'EQUIPOS' %}checked{% endif %} onchange="this.form.submit()">
+                <label class="btn btn-outline-primary py-2 fw-bold" for="imp_equipos">
+                    <i class="bi bi-phone me-2"></i>EQUIPOS / CUOTAS (USD)
+                </label>
+
+                <input type="radio" class="btn-check" name="imputacion" id="imp_servicios" value="SERVICIOS" 
+                       {% if imputacion == 'SERVICIOS' %}checked{% endif %} onchange="this.form.submit()">
+                <label class="btn btn-outline-primary py-2 fw-bold" for="imp_servicios">
+                    <i class="bi bi-tools me-2"></i>SERVICIOS / REPARACIONES ($)
+                </label>
+            </div>
+        </form>
+    </div>
+</div>
+
+<form method="POST" id="main_form_cobro">
+    <input type="hidden" name="imputacion" value="{{ imputacion }}">
+    
+    <div class="row">
+        <!-- Panel Izquierdo: Selección de comprobantes -->
+        <div class="col-md-7">
+            <div class="card shadow-sm mb-4 border-0">
+                <div class="card-header {% if imputacion == 'EQUIPOS' %}bg-primary{% else %}bg-info{% endif %} text-white py-3">
+                    <h5 class="mb-0">
+                        <i class="bi bi-list-check me-2"></i>
+                        {{ 'Deuda de Equipos (Dólares)' if imputacion == 'EQUIPOS' else 'Deuda de Servicios (Pesos)' }}
+                    </h5>
+                </div>
+                <div class="card-body border">
+                    <div class="alert alert-info py-2 small mb-3">
+                        <i class="bi bi-info-circle-fill me-2"></i>Escriba en la columna <b>"Monto a Aplicar"</b> cuánto dinero asigna a cada comprobante.
+                    </div>
+
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-hover align-middle border" id="tabla_comprobantes">
+                            <thead class="table-dark sticky-top">
+                                <tr>
+                                    <th>Vencimiento</th>
+                                    <th>Concepto</th>
+                                    <th class="text-end">Saldo ({{ 'USD' if imputacion == 'EQUIPOS' else '$' }})</th>
+                                    <th class="text-center" style="width: 180px;">Aplicar ({{ 'USD' if imputacion == 'EQUIPOS' else '$' }})</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in items %}
+                                <tr class="{% if item.vencida %}table-danger{% endif %}">
+                                    <td class="small">
+                                        {{ item.fecha|datetimeformat('%d/%m/%Y') }}
+                                        {% if item.vencida %}<br><span class="badge bg-danger">VENCIDA</span>{% endif %}
+                                    </td>
+                                    <td>
+                                        <input type="hidden" name="item_id[]" value="{{ item.id }}">
+                                        <input type="hidden" name="item_tipo[]" value="{{ item.tipo }}">
+                                        
+                                        {% if item.tipo == 'CUOTA' %}
+                                            <div class="fw-bold text-primary">Cuota #{{ item.numero_cuota }}</div>
+                                            <small class="text-muted">Venta #{{ item.venta_id }}</small>
+                                        {% else %}
+                                            <div class="fw-bold text-info">Servicio #{{ item.id }}</div>
+                                            <small class="text-muted">Reparación</small>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end fw-bold">
+                                        {{ 'USD' if imputacion == 'EQUIPOS' else '$' }} {{ "{:,.2f}".format(item.saldo_pendiente) }}
+                                    </td>
+                                    <td>
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text">{{ 'USD' if item.tipo == 'CUOTA' else '$' }}</span>
+                                            <input type="number" step="0.01" min="0" max="{{ item.saldo_pendiente + 0.10 }}" 
+                                                   name="monto_aplicado[]" 
+                                                   class="form-control fw-bold input-aplicar" 
+                                                   placeholder="0.00" oninput="calcularTotalesAsignados()">
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="4" class="text-center py-5 text-muted">No hay deudas pendientes en esta categoría.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card-footer bg-light">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="fw-bold text-uppercase small text-secondary">Total aplicado en tabla:</span>
+                        <span class="fs-4 fw-bold text-primary" id="total_asignado_tabla">
+                            {{ 'u$d' if imputacion == 'EQUIPOS' else '$' }} 0.00
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panel Derecho: Datos físicos del dinero -->
+        <div class="col-md-5">
+            <div class="card shadow-sm border-success">
+                <div class="card-header bg-success text-white py-3">
+                    <h5 class="mb-0"><i class="bi bi-box-arrow-in-down me-2"></i>Dinero que entrega el Cliente</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Moneda física recibida:</label>
+                        <select class="form-select border-primary fw-bold" id="moneda" name="moneda" onchange="actualizarInterfaz()">
+                            <option value="ARS" selected>Pesos (ARS)</option>
+                            <option value="USD">Dólares (USD)</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Cuenta de destino:</label>
+                        <select class="form-select border-success" name="cuenta_destino">
+                            <option value="EFECTIVO">Caja Efectivo</option>
+                            {% for cuenta in cuentas_entidades %}
+                                <option value="{{ cuenta.nombre }}">{{ cuenta.nombre }} ({{ cuenta.titular }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Cotización (Se muestra siempre para calcular el impacto USD <-> ARS) -->
+                    <div id="seccion_dolar_cobro" class="mb-3 p-3 bg-light border rounded border-warning">
+                        <label class="form-label fw-bold small text-warning text-uppercase">Cotización de referencia:</label>
+                        <select name="tipo_dolar" id="tipo_dolar" class="form-select form-select-sm mb-2" onchange="actualizarInterfaz()">
+                            <option value="blue" data-val="{{ valor_blue_compra|default(0) }}">Blue: ${{ valor_blue_compra }}</option>
+                            <option value="oficial" data-val="{{ valor_bcra_compra|default(0) }}">Oficial: ${{ valor_bcra_compra }}</option>
+                            <option value="manual">Manual</option>
+                        </select>
+                        <input type="number" step="0.01" name="valor_dolar_manual" id="valor_dolar_manual" 
+                               class="form-control form-control-sm border-danger d-none" placeholder="Valor del dólar..." oninput="actualizarInterfaz()">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold text-success">Monto total entregado:</label>
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text bg-success text-white" id="simbolo_moneda">$</span>
+                            <input type="number" step="0.01" class="form-control fw-bold text-success" id="monto_a_cobrar" name="monto_a_cobrar" 
+                                   required oninput="actualizarInterfaz()">
+                        </div>
+                        
+                        <div id="conversion_info" class="alert alert-warning mt-3 py-2">
+                            <small class="d-block fw-bold text-uppercase">Equivalencia para la deuda:</small>
+                            <span class="fs-4 fw-bold">
+                                <span id="label_moneda_impacto">{{ 'u$d' if imputacion == 'EQUIPOS' else 'ARS' }}</span> 
+                                <span id="valor_conversion">0.00</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Observaciones:</label>
+                        <textarea class="form-control" name="observaciones" rows="2" placeholder="Nro de transferencia, quién pagó, etc..."></textarea>
+                    </div>
+
+                    <div id="alerta_desajuste" class="alert alert-danger d-none small">
+                        <i class="bi bi-x-octagon-fill me-2"></i> La sumatoria de la tabla debe ser igual al valor del dinero entregado.
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-success btn-lg fw-bold" id="btn-confirmar">
+                            CONFIRMAR COBRO
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    const MODO_IMPUTACION = "{{ imputacion }}"; // 'EQUIPOS' o 'SERVICIOS'
+
+    function actualizarInterfaz() {
+        const monedaEntrega = document.getElementById('moneda').value; // Moneda física (ARS/USD)
+        const montoEntrega = parseFloat(document.getElementById('monto_a_cobrar').value) || 0;
+        const tipoDolar = document.getElementById('tipo_dolar').value;
+        const manualInput = document.getElementById('valor_dolar_manual');
+        
+        // Símbolo del input derecho
+        document.getElementById('simbolo_moneda').innerText = (monedaEntrega === 'USD') ? 'USD' : '$';
+        
+        // Manejo de input manual de dólar
+        manualInput.classList.toggle('d-none', tipoDolar !== 'manual');
+        
+        let cotiz = 1;
+        if (tipoDolar === 'manual') {
+            cotiz = parseFloat(manualInput.value) || 0;
+        } else {
+            const select = document.getElementById('tipo_dolar');
+            cotiz = parseFloat(select.options[select.selectedIndex].getAttribute('data-val')) || 1;
+        }
+
+        // CÁLCULO DE EQUIVALENCIA (Lo más importante)
+        let valorImpacto = 0;
+        
+        if (MODO_IMPUTACION === 'EQUIPOS') {
+            // La tabla está en USD. Si me dan pesos, divido. Si me dan USD, es directo.
+            valorImpacto = (monedaEntrega === 'ARS') ? (montoEntrega / cotiz) : montoEntrega;
+            document.getElementById('label_moneda_impacto').innerText = 'USD';
+        } else {
+            // La tabla está en ARS. Si me dan USD, multiplico. Si me dan ARS, es directo.
+            valorImpacto = (monedaEntrega === 'USD') ? (montoEntrega * cotiz) : montoEntrega;
+            document.getElementById('label_moneda_impacto').innerText = 'ARS';
+        }
+
+        document.getElementById('valor_conversion').innerText = valorImpacto.toFixed(2);
+        
+        validarAsignacion();
+    }
+
+    function calcularTotalesAsignados() {
+        let sumatoria = 0;
+        document.querySelectorAll('.input-aplicar').forEach(input => {
+            sumatoria += parseFloat(input.value) || 0;
+        });
+        
+        const simbolo = (MODO_IMPUTACION === 'EQUIPOS') ? 'USD' : '$';
+        document.getElementById('total_asignado_tabla').innerText = simbolo + ' ' + sumatoria.toLocaleString('es-AR', {minimumFractionDigits: 2});
+        
+        validarAsignacion();
+    }
+
+    function validarAsignacion() {
+        const valorImpacto = parseFloat(document.getElementById('valor_conversion').innerText) || 0;
+        
+        let sumatoriaTabla = 0;
+        document.querySelectorAll('.input-aplicar').forEach(input => {
+            sumatoriaTabla += parseFloat(input.value) || 0;
+        });
+
+        const btn = document.getElementById('btn-confirmar');
+        const alerta = document.getElementById('alerta_desajuste');
+
+        // Tolerancia de céntimos para redondeos
+        const diferencia = Math.abs(sumatoriaTabla - valorImpacto);
+        const margenTolerancia = (MODO_IMPUTACION === 'EQUIPOS') ? 0.05 : 1.0;
+
+        if (sumatoriaTabla > 0 && diferencia <= margenTolerancia) {
+            btn.disabled = false;
+            btn.classList.replace('btn-danger', 'btn-success');
+            alerta.classList.add('d-none');
+        } else {
+            btn.disabled = true;
+            btn.classList.replace('btn-success', 'btn-danger');
+            if (sumatoriaTabla > 0) alerta.classList.remove('d-none');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        actualizarInterfaz();
+        calcularTotalesAsignados();
+    });
+</script>
+{% endblock %}

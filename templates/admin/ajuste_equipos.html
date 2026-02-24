@@ -1,0 +1,135 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container mt-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('menu_ajuste_stock') }}">Ajustes</a></li>
+            <li class="breadcrumb-item active">Carga Inicial de Equipos</li>
+        </ol>
+    </nav>
+
+    <div class="row">
+        <!-- FORMULARIO CARGA INICIAL (SIN IMPACTO FINANCIERO) -->
+        <div class="col-md-8">
+            <div class="card shadow-sm border-primary mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-box-seam me-2"></i>Carga de Stock Inicial (Equipos)</h5>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('ajuste_stock_equipos') }}" method="POST">
+                        <input type="hidden" name="accion" value="CARGA_INICIAL">
+                        
+                        <div class="row g-3">
+                            <!-- Fila 1: Clasificación del Sistema -->
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold">Tipo de Ítem *</label>
+                                <select name="tipo_item" class="form-select border-primary" required>
+                                    <option value="CELULAR">CELULAR</option>
+                                    <option value="TABLET">TABLET</option>
+                                    <option value="SMARTWATCH">SMARTWATCH</option>
+                                    <option value="EQUIPO">OTRO EQUIPO</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold">Marca *</label>
+                                <input type="text" name="marca" class="form-control" placeholder="Ej: APPLE" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold">Modelo *</label>
+                                <input type="text" name="modelo" class="form-control" placeholder="Ej: IPHONE 14 PRO" required>
+                            </div>
+
+                            <!-- Fila 2: IMEI y Condición -->
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">IMEI / SN *</label>
+                                <input type="text" name="imei" class="form-control" placeholder="Identificador único" required>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Condición *</label>
+                                <select name="condicion" class="form-select" required>
+                                    <option value="Nuevo">Nuevo</option>
+                                    <option value="Usado">Usado</option>
+                                    <option value="Entregado como parte de pago">Entregado como parte de pago</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Color *</label>
+                                <input type="text" name="color" class="form-control" placeholder="Ej: Space Gray" required>
+                            </div>
+
+                            <!-- Fila 3: Especificaciones Técnicas -->
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Almacenamiento *</label>
+                                <div class="input-group">
+                                    <input type="number" name="almacenamiento" class="form-control" placeholder="256" required>
+                                    <span class="input-group-text">GB</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <!-- CAMPO OPCIONAL -->
+                                <label class="form-label fw-bold text-muted">Memoria RAM</label>
+                                <div class="input-group">
+                                    <input type="number" name="ram" class="form-control" placeholder="8">
+                                    <span class="input-group-text">GB</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Batería (%) *</label>
+                                <input type="number" name="bateria" class="form-control" placeholder="95" required min="0" max="100">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Costo Inicial (USD) *</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" step="0.01" name="costo_usd" class="form-control" required min="0">
+                                </div>
+                            </div>
+
+                            <!-- Observaciones -->
+                            <div class="col-md-12">
+                                <!-- CAMPO OPCIONAL -->
+                                <label class="form-label fw-bold text-muted">Observaciones / Detalles</label>
+                                <textarea name="observaciones" class="form-control" rows="2" placeholder="Notas adicionales sobre el estado del equipo..."></textarea>
+                            </div>
+
+                            <div class="col-12 mt-4 text-end">
+                                <button type="submit" class="btn btn-primary btn-lg px-5">
+                                    <i class="bi bi-check-circle me-2"></i>Cargar Equipo al Stock
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- FORMULARIO BAJA POR DIFERENCIA -->
+        <div class="col-md-4">
+            <div class="card shadow-sm border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0"><i class="bi bi-dash-circle me-2"></i>Descontar por Ajuste</h5>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('ajuste_stock_equipos') }}" method="POST" onsubmit="return confirm('¿Está seguro de descontar este IMEI?');">
+                        <input type="hidden" name="accion" value="DESCUENTO_DIFERENCIA">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">IMEI a descontar *</label>
+                            <input type="text" name="imei" class="form-control border-danger" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Motivo de la Baja</label>
+                            <select name="motivo" class="form-select">
+                                <option value="Perdida">Pérdida de Inventario</option>
+                                <option value="Robo">Robo / Hurto</option>
+                                <option value="Rotura">Rotura Accidental</option>
+                                <option value="Error Carga">Error de Carga Manual</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-outline-danger w-100 fw-bold">Ejecutar Baja de Stock</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

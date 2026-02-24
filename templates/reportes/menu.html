@@ -1,0 +1,204 @@
+{% extends 'layout.html' %}
+
+{% block title %}Menú de Reportes - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-graph-up-arrow me-2"></i>Menú de Reportes</h1>
+
+<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+    
+    {# --- REPORTES PERMITIDOS PARA VENDEDOR Y ADMIN --- #}
+
+    <!-- REPORTE DE CUMPLEAÑOS -->
+    <div class="col">
+        <a href="{{ url_for('reporte_cumpleanos') }}" class="text-decoration-none">
+            <div class="card h-100 shadow-sm border-0 bg-gradient" style="background-color: #ff6b6b; color: white;">
+                <div class="card-body text-center p-4 d-flex flex-column justify-content-center">
+                    <i class="bi bi-balloon-heart fs-1"></i>
+                    <h5 class="mt-3 fw-bold">Cumpleaños del Mes</h5>
+                    <p class="small opacity-75">Fidelización de clientes y saludos por WhatsApp.</p>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- REPORTE: SEMÁFORO DE CUOTAS -->
+    <div class="col">
+        <div class="card h-100 shadow-sm text-center border-danger">
+            <div class="card-body d-flex flex-column justify-content-between">
+                <div>
+                    <i class="bi bi-calendar-check display-4 text-danger mb-3"></i>
+                    <h5 class="card-title text-danger fw-bold">Cuotas Pendientes (Semáforo)</h5>
+                    <p class="card-text text-muted">Control de cobros: cuotas vencidas y próximas a vencer.</p>
+                </div>
+                <a href="{{ url_for('reporte_cuotas_pendientes') }}" class="btn btn-danger mt-3 shadow-sm">
+                    <i class="bi bi-exclamation-triangle me-2"></i>Gestionar Cobros
+                </a>
+            </div>
+        </div>
+    </div>
+
+
+    {# --- REPORTES RESTRINGIDOS: SOLO ADMIN Y SUPERADMIN --- #}
+    {% if current_user.role in ['admin', 'superadmin'] %}
+
+        <!-- REPORTE DE ACTIVIDAD -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-activity display-4 text-primary mb-3"></i>
+                        <h5 class="card-title">Reporte de Actividad General</h5>
+                        <p class="card-text">Resumen de ventas y servicios en un período.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_actividad') }}" class="btn btn-primary mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPORTE DE RENTABILIDAD -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-coin display-4 text-success mb-3"></i>
+                        <h5 class="card-title">Reporte de Rentabilidad</h5>
+                        <p class="card-text">Análisis de ganancias de ventas y servicios.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_rentabilidad') }}" class="btn btn-success mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPORTE DE INVENTARIO -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-boxes display-4 text-info mb-3"></i>
+                        <h5 class="card-title">Reporte de Inventario</h5>
+                        <p class="card-text">Estado actual de celulares y repuestos en stock.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_inventario') }}" class="btn btn-info mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPORTE DE ESTACIONALIDAD -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-calendar-range display-4 text-warning mb-3"></i>
+                        <h5 class="card-title">Reporte de Estacionalidad</h5>
+                        <p class="card-text">Tendencias de ventas y reparaciones por mes/día.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_estacionalidad') }}" class="btn btn-warning mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPORTE DE AUDITORÍA -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-journal-check display-4 text-secondary mb-3"></i>
+                        <h5 class="card-title">Reporte de Auditoría</h5>
+                        <p class="card-text">Registro de todos los movimientos del sistema.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_auditoria') }}" class="btn btn-secondary mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- LIBRO DIARIO -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-book-half display-4 text-dark mb-3"></i>
+                        <h5 class="card-title">Libro Diario</h5>
+                        <p class="card-text">Todos los movimientos contables en ARS/USD.</p>
+                    </div>
+                    <a href="{{ url_for('libro_diario') }}" class="btn btn-dark mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- LISTADO DIARIO CAJA -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-list-columns-reverse display-4 text-success mb-3"></i>
+                        <h5 class="card-title">Listado Diario (Caja)</h5>
+                        <p class="card-text">Detalle de ingresos y egresos de efectivo por día.</p>
+                    </div>
+                    <a href="{{ url_for('listado_diario') }}" class="btn btn-success mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- LIQUIDACIÓN TÉCNICO -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-person-badge display-4 text-primary mb-3"></i>
+                        <h5 class="card-title">Liquidación Técnico</h5>
+                        <p class="card-text">Comisiones por mano de obra y historial de pagos.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_pagos_tecnico') }}" class="btn btn-primary mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- SALDOS DE CUENTAS -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-wallet2 display-4 text-info mb-3"></i>
+                        <h5 class="card-title">Saldos de Cuentas</h5>
+                        <p class="card-text">Resumen de saldos en ARS y USD de todas las cajas.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_saldos_cuentas') }}" class="btn btn-info mt-3"><i class="bi bi-eye me-2"></i>Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPORTE DE PROMOCIONES Y REGALOS -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center border-success">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-gift display-4 text-success mb-3"></i>
+                        <h5 class="card-title">Promociones y Regalos</h5>
+                        <p class="card-text">Análisis de accesorios entregados sin cargo.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_regalos_promociones') }}" class="btn btn-success mt-3">
+                        <i class="bi bi-eye me-2"></i>Ver Reporte
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- BACKUP DATABASE -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center border-danger-subtle">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-cloud-arrow-down-fill display-4 text-danger mb-3"></i>
+                        <h5 class="card-title">Descargar Backup DB</h5>
+                        <p class="card-text">Copia de seguridad de la base de datos.</p>
+                    </div>
+                    <a href="{{ url_for('backup_database') }}" class="btn btn-outline-danger mt-3"><i class="bi bi-download me-2"></i>Descargar</a>
+                </div>
+            </div>
+        </div>
+
+    {% endif %}
+
+</div>
+{% endblock %}

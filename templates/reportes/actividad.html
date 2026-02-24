@@ -1,0 +1,111 @@
+{% extends 'layout.html' %}
+
+{% block title %}Reporte de Actividad General - {{ super() }}{% endblock %}
+
+{% block content %}
+<!-- CABECERA: Título y Botones de Exportación -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0"><i class="bi bi-activity me-2"></i>Reporte de Actividad General</h1>
+    <div class="btn-group shadow-sm">
+        <a href="{{ url_for('exportar_ventas', **request.args) }}" class="btn btn-outline-primary">
+            <i class="bi bi-cart-check me-1"></i>Ventas CSV
+        </a>
+        <a href="{{ url_for('exportar_reparaciones', **request.args) }}" class="btn btn-outline-success">
+            <i class="bi bi-tools me-1"></i>Reparaciones CSV
+        </a>
+    </div>
+</div>
+
+{# Filtros de Fecha #}
+<div class="card mb-4 shadow-sm">
+    <div class="card-header bg-light">
+        <h5 class="mb-0 text-dark"><i class="bi bi-calendar3 me-2"></i>Filtrar Período</h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('reporte_actividad') }}" class="row g-3 align-items-end">
+            <div class="col-md-10">
+                {% include '_filtro_fechas.html' %}
+            </div>
+            <div class="col-md-2 d-flex">
+                <button type="submit" class="btn btn-primary w-100 me-2">
+                    <i class="bi bi-funnel-fill me-1"></i>Aplicar
+                </button>
+                <a href="{{ url_for('reporte_actividad') }}" class="btn btn-secondary" title="Deshacer filtros">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6 col-lg-3 mb-3">
+        <div class="card text-white bg-primary h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-cart-fill me-2"></i>Ventas</h5>
+                <p class="card-text fs-5">Unidades Vendidas: {{ metricas_ventas.total_ventas|default(0) }}</p>
+                <p class="card-text fs-5">Facturación Total: ARS {{ metricas_ventas.facturacion_total|default(0)|round(2) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 col-lg-3 mb-3">
+        <div class="card text-white bg-success h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-tools me-2"></i>Reparaciones</h5>
+                <p class="card-text fs-5">Servicios Completados: {{ metricas_reparaciones.total_reparaciones|default(0) }}</p>
+                <p class="card-text fs-5">Facturación Total: ARS {{ metricas_reparaciones.facturacion_total|default(0)|round(2) }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-12 col-lg-6 mb-3">
+        <div class="card text-white bg-dark h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-currency-dollar me-2"></i>Facturación Unificada</h5>
+                <p class="card-text fs-3">Total General (ARS): ARS {{ facturacion_unificada|default(0)|round(2) }}</p>
+                <p class="card-text text-muted">Período: {{ start_date }} al {{ end_date }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-phone-fill me-2"></i>Top 5 Celulares Más Vendidos</div>
+            <div class="card-body">
+                {% if top_celulares %}
+                <ul class="list-group list-group-flush">
+                    {% for cel in top_celulares %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        {{ cel.marca }} {{ cel.modelo }} ({{ cel.condicion }})
+                        <span class="badge bg-primary rounded-pill">{{ cel.unidades|default(0) }} unidades</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No hay datos de ventas de celulares para este período.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-wrench-adjustable me-2"></i>Top 5 Fallas de Reparación Más Comunes</div>
+            <div class="card-body">
+                {% if top_servicios %}
+                <ul class="list-group list-group-flush">
+                    {% for serv in top_servicios %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        {{ serv.falla_reportada|default('N/A')|truncate(50) }}
+                        <span class="badge bg-success rounded-pill">{{ serv.cantidad|default(0) }} servicios</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted">No hay datos de reparaciones para este período.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,433 @@
+{% extends 'layout.html' %}
+
+{# ## MODIFICADO ##: El título ahora es dinámico, recibido desde la función de Flask #}
+{% block title %}{{ title }} - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<style>
+    /* Estilos para Select2 */
+    .select2-container .select2-selection--single {
+        height: calc(1.5em + .75rem + 2px) !important;
+        border: 1px solid #ced4da;
+        border-radius: .25rem;
+    }
+    .select2-container .select2-selection--single .select2-selection__rendered {
+        line-height: calc(1.5em + .75rem + 2px);
+        padding-left: .75rem;
+    }
+    .select2-container .select2-selection--single .select2-selection__arrow {
+        height: calc(1.5em + .75rem + 2px);
+        right: .75rem;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__clear {
+        margin-right: 1.5rem;
+    }
+
+    .form-group-hidden {
+        display: none;
+    }
+    .item-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+        border: 1px solid #dee2e6;
+        padding: 15px;
+        border-radius: .25rem;
+        background-color: #f8f9fa;
+        position: relative;
+    }
+    .item-row .remove-item {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+    .item-row .form-control, .item-row .form-select, .item-row .select2-container {
+        flex: 1 1 auto;
+        min-width: 120px;
+    }
+    .invalid-feedback {
+        display: none; 
+        font-size: 0.875em;
+    }
+    .form-control.is-invalid + .invalid-feedback,
+    .form-select.is-invalid + .invalid-feedback {
+        display: block;
+    }
+    .item-row .item-overall-feedback.is-invalid-row {
+        display: block;
+        color: var(--bs-danger);
+        margin-top: 0.25rem;
+        font-size: 0.875em;
+    }
+    /* Estilo para resaltar la lógica USD */
+    .bg-usd-logic {
+        background-color: #fff3cd;
+        border-left: 5px solid #ffc107;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-tools me-2"></i>{{ title }}</h1>
+
+{# Alerta de Cotización Dinámica #}
+<div class="alert alert-info d-flex align-items-center bg-usd-logic shadow-sm" role="alert">
+    <i class="bi bi-shield-check flex-shrink-0 me-2" style="font-size: 1.5rem;"></i>
+    <div>
+        <strong>Cotización de Insumos:</strong> Seleccione a continuación el tipo de dólar para convertir los repuestos. La Mano de Obra se suma directamente en Pesos.
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <form id="form-reparacion" method="POST" action="{% if is_edit %}{{ url_for('editar_presupuesto_reparacion', servicio_id=servicio_id) }}{% else %}{{ url_for('crear_presupuesto_reparacion') }}{% endif %}" class="needs-validation" novalidate>
+            {% if is_edit %}
+            <input type="hidden" name="servicio_id" value="{{ servicio_id }}">
+            {% endif %}
+
+            <div class="row g-3">
+                <!-- Cliente -->
+                <div class="col-md-6">
+                    <label for="cliente_id" class="form-label">Cliente <span class="text-danger">*</span>:</label>
+                    <select class="form-select select2-persona" id="cliente_id" name="cliente_id" data-rol="cliente" required>
+                        <option value="">Seleccione un cliente...</option>
+                        {% for cli in clientes %}
+                        <option value="{{ cli.id }}" {% if form_data.get('cliente_id') and form_data.get('cliente_id')|int == cli.id %}selected{% endif %}>
+                            {{ cli.razon_social or (cli.nombre + ' ' + cli.apellido) }} (CUIT/CUIL: {{ cli.cuit_cuil }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="invalid-feedback">Por favor, seleccione un cliente.</div>
+                </div>
+
+                <!-- Técnico -->
+                <div class="col-md-6">
+                    <label for="tecnico_nombre" class="form-label">Técnico Asignado <span class="text-danger">*</span>:</label>
+                    <input type="text" class="form-control" id="tecnico_nombre" name="tecnico_nombre" list="lista_tecnicos" 
+                           value="{{ form_data.get('tecnico_nombre', '') }}" placeholder="Escriba el nombre del técnico..." required>
+                    <datalist id="lista_tecnicos">
+                        {% for sug in sugerencias_tecnicos %}
+                        <option value="{{ sug.tecnico_nombre }}">
+                        {% endfor %}
+                    </datalist>
+                    <div class="invalid-feedback">Por favor, ingrese el nombre del técnico.</div>
+                </div>
+                
+                <!-- Tipo Servicio -->
+                <div class="col-md-6">
+                    <label for="tipo_servicio" class="form-label">Tipo de Servicio <span class="text-danger">*</span>:</label>
+                    <select class="form-select" id="tipo_servicio" name="tipo_servicio" required>
+                        <option value="">Seleccione...</option>
+                        <option value="REPARACION" {% if form_data.get('tipo_servicio', '') == 'REPARACION' %}selected{% endif %}>Reparación</option>
+                        <option value="VENTA_ACCESORIO" {% if form_data.get('tipo_servicio', '') == 'VENTA_ACCESORIO' %}selected{% endif %}>Venta de Accesorio/Producto</option>
+                    </select>
+                    <div class="invalid-feedback">Por favor, seleccione el tipo de servicio.</div>
+                </div>
+
+                <div class="col-md-6">
+                    <label for="imei_equipo" class="form-label">IMEI del Equipo (Solo para Reparación):</label>
+                    <input type="text" class="form-control" id="imei_equipo" name="imei_equipo" value="{{ form_data.get('imei_equipo', '') }}" placeholder="Opcional, si aplica" pattern="\d{15}" title="El IMEI debe contener 15 dígitos numéricos." maxlength="15">
+                    <div class="invalid-feedback">El IMEI debe contener 15 dígitos numéricos.</div>
+                </div>
+                <div class="col-12">
+                    <label for="falla_reportada" class="form-label">Falla Reportada/Descripción del Producto <span class="text-danger">*</span>:</label>
+                    <textarea class="form-control" id="falla_reportada" name="falla_reportada" rows="2" required>{{ form_data.get('falla_reportada', '') }}</textarea>
+                    <div class="invalid-feedback">La falla reportada o descripción es obligatoria.</div>
+                </div>
+                <div class="col-12">
+                    <label for="solucion_aplicada" class="form-label">Solución Aplicada (Solo para Reparación - Opcional):</label>
+                    <textarea class="form-control" id="solucion_aplicada" name="solucion_aplicada" rows="2">{{ form_data.get('solucion_aplicada', '') }}</textarea>
+                </div>
+            </div>
+
+            <!-- SECCIÓN COTIZACIÓN -->
+            <div class="card my-4 border-warning bg-light shadow-sm">
+                <div class="card-header bg-warning text-dark fw-bold py-2">
+                    <i class="bi bi-currency-exchange me-2"></i>Cotización aplicada a los Repuestos/Insumos
+                </div>
+                <div class="card-body py-3">
+                    <div class="row g-3 align-items-center">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Tipo de Dólar:</label>
+                            <select name="tipo_dolar" id="tipo_dolar" class="form-select border-primary" onchange="toggleManualDolar()">
+                                <option value="blue" data-val="{{ valor_blue_venta|default(1.0) }}" selected>Dólar Blue Venta: ${{ valor_blue_venta|round(2) }}</option>
+                                <option value="oficial" data-val="{{ valor_bcra_venta|default(1.0) }}">Dólar Oficial Venta: ${{ valor_bcra_venta|round(2) }}</option>
+                                <option value="manual">Ingresar Valor Manual</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6" id="manual_group" style="display:none;">
+                            <label class="form-label small fw-bold text-danger">Cotización Manual (ARS):</label>
+                            <input type="number" step="0.01" name="valor_dolar_manual" id="valor_dolar_manual" class="form-control border-danger fw-bold" placeholder="Ej: 1250" oninput="calcularTotalesServicio()">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h4 class="mt-4 mb-3" id="items-heading"><i class="bi bi-gear me-2"></i>Items / Repuestos / Accesorios</h4>
+            <div id="items-container">
+                {# PASO DE DATOS DESDE FLASK A JAVASCRIPT MEDIANTE DIVS INICIALES #}
+                {% if form_data.get('repuesto_stock_id[]') or form_data.get('manual_item_nombre[]') %}
+                    {% for i in range(form_data.get('repuesto_stock_id[]')|length if form_data.get('repuesto_stock_id[]') else 0) %}
+                        <div class="item-row-initial" data-item-type="stock"
+                             data-repuesto-id="{{ form_data.get('repuesto_stock_id[]')[i] }}"
+                             data-repuesto-nombre="{{ form_data.get('repuesto_nombre_display[]')[i] }}"
+                             data-cantidad="{{ form_data.get('cantidad_stock[]')[i] }}"
+                             data-precio-venta-usd="{{ form_data.get('precio_venta_usd_stock[]')[i] }}">
+                        </div>
+                    {% endfor %}
+                    {% for i in range(form_data.get('manual_item_nombre[]')|length if form_data.get('manual_item_nombre[]') else 0) %}
+                        <div class="item-row-initial" data-item-type="manual"
+                             data-manual-nombre="{{ form_data.get('manual_item_nombre[]')[i] }}"
+                             data-cantidad="{{ form_data.get('cantidad_manual[]')[i] }}"
+                             data-precio-venta-usd="{{ form_data.get('precio_venta_usd_manual[]')[i] }}">
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+            
+            <div class="dropdown mt-2">
+                <button class="btn btn-info btn-sm dropdown-toggle" type="button" id="addItemDropdown" data-bs-toggle="dropdown">
+                    <i class="bi bi-plus-circle me-1"></i> Añadir Ítem
+                </button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="#" id="add-stock-item-btn">De Stock</a></li>
+                    <li><a class="dropdown-item" href="#" id="add-manual-item-btn">Manualmente</a></li>
+                </ul>
+            </div>
+
+            <h4 class="mt-4 mb-3"><i class="bi bi-cash me-2"></i>Resumen de Costos y Precios</h4>
+            <div class="row g-3 bg-light p-3 rounded border shadow-sm">
+                <div class="col-md-3" id="mano_obra_group">
+                    <label for="precio_mano_obra_ars" class="form-label fw-bold">Mano de Obra (ARS) <span class="text-danger">*</span>:</label>
+                    <input type="number" step="0.01" class="form-control border-primary fw-bold" id="precio_mano_obra_ars" name="precio_mano_obra_ars" value="{{ form_data.get('precio_mano_obra_ars', '0.00') }}" min="0" required oninput="calcularTotalesServicio()">
+                </div>
+
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Subtotal Items (USD):</label>
+                    <input type="text" class="form-control bg-white" id="precio_venta_total_items_usd_display" readonly value="USD 0.00">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-bold text-primary">COTIZACIÓN APLICADA:</label>
+                    <input type="text" class="form-control bg-white fw-bold text-primary border-primary" id="cotiz_aplicada_display" readonly value="$ 1.00">
+                </div>
+                
+                <div class="col-md-12 mt-3">
+                    <label class="form-label fw-bold fs-5">PRECIO FINAL A COBRAR (ARS):</label>
+                    <input type="text" class="form-control form-control-lg bg-success text-white fw-bold text-center shadow-sm" id="precio_final_ars_display" readonly value="ARS 0.00">
+                    <small class="text-muted d-block text-center mt-1">Cálculo: (Items USD * Cotización) + Mano Obra ARS</small>
+                </div>
+            </div>
+
+            <hr class="my-4">
+            <div class="d-flex justify-content-end gap-2">
+                <button type="submit" class="btn btn-primary btn-lg"><i class="bi bi-save me-2"></i>{% if is_edit %}Actualizar{% else %}Crear{% endif %} Presupuesto</button>
+                <a href="{{ url_for('listar_presupuestos_reparacion') }}" class="btn btn-secondary btn-lg">Cancelar</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# Templates dinámicos #}
+<template id="item-stock-template">
+    {% include 'servicio_tecnico/_item_fields_stock.html' %}
+</template>
+<template id="item-manual-template">
+    {% include 'servicio_tecnico/_item_fields_manual.html' %}
+</template>
+
+{% endblock %}
+
+{% block scripts_extra %}
+<script src="https://cdn.jsdelivr.net/npm/select2@4.10.0-rc.0/dist/js/select2.min.js"></script>
+<script>
+    $(document).ready(function() {
+        'use strict';
+
+        const itemsContainer = $('#items-container');
+        const addStockItemButton = $('#add-stock-item-btn');
+        const addManualItemButton = $('#add-manual-item-btn');
+        const itemStockTemplateHtml = $('#item-stock-template').html();
+        const itemManualTemplateHtml = $('#item-manual-template').html();
+        const precioManoObraArsInput = $('#precio_mano_obra_ars');
+
+        let itemCounter = 0;
+
+        window.toggleManualDolar = function() {
+            const tipo = $('#tipo_dolar').val();
+            if (tipo === 'manual') {
+                $('#manual_group').show();
+            } else {
+                $('#manual_group').hide();
+            }
+            calcularTotalesServicio();
+        };
+
+        window.calcularTotalesServicio = function() {
+            let totalPrecioVentaItemsUsd = 0; 
+            const tipoDolar = $('#tipo_dolar').val();
+            let cotizacion = 1.0;
+
+            if (tipoDolar === 'manual') {
+                cotizacion = parseFloat($('#valor_dolar_manual').val()) || 0;
+            } else {
+                const select = document.getElementById('tipo_dolar');
+                cotizacion = parseFloat(select.options[select.selectedIndex].getAttribute('data-val')) || 1.0;
+            }
+
+            $('#cotiz_aplicada_display').val('$ ' + cotizacion.toFixed(2));
+
+            itemsContainer.find('.item-row').each(function() {
+                const itemType = $(this).data('item-type');
+                let cantidad = 0;
+                let precioUnitarioUsd = 0; 
+
+                if (itemType === 'stock') {
+                    if ($(this).find('.select2-item-stock').val()) {
+                        cantidad = parseFloat($(this).find('.item-cantidad-stock').val()) || 0;
+                        precioUnitarioUsd = parseFloat($(this).find('.item-precio-venta-usd-stock').val()) || 0; 
+                    }
+                } else if (itemType === 'manual') {
+                    if ($(this).find('.manual-item-nombre').val().trim() !== '') {
+                        cantidad = parseFloat($(this).find('.item-cantidad-manual').val()) || 0;
+                        precioUnitarioUsd = parseFloat($(this).find('.item-precio-venta-usd-manual').val()) || 0; 
+                    }
+                }
+                totalPrecioVentaItemsUsd += (cantidad * precioUnitarioUsd);
+            });
+
+            $('#precio_venta_total_items_usd_display').val('USD ' + totalPrecioVentaItemsUsd.toFixed(2));
+            const manoObraArs = parseFloat(precioManoObraArsInput.val()) || 0;
+            const precioTotalServicioArs = (totalPrecioVentaItemsUsd * cotizacion) + manoObraArs;
+            $('#precio_final_ars_display').val('ARS ' + precioTotalServicioArs.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+        }
+
+        $('.select2-persona').select2({
+            placeholder: 'Buscar cliente...',
+            allowClear: true,
+            ajax: {
+                url: '{{ url_for("api_buscar_personas") }}',
+                dataType: 'json',
+                delay: 250,
+                data: function (params) { return { q: params.term, rol: 'cliente' }; },
+                processResults: function (data) { return { results: data }; },
+                cache: true
+            },
+            minimumInputLength: 3
+        });
+
+        function initializeItemSelect2(element) {
+            $(element).select2({
+                placeholder: 'Buscar repuesto...',
+                allowClear: true,
+                ajax: {
+                    url: '{{ url_for("api_buscar_repuestos") }}',
+                    dataType: 'json',
+                    delay: 250,
+                    data: function(params) { return { q: params.term }; },
+                    processResults: function(data) { return { results: data.results }; },
+                    cache: true
+                }
+            }).on('select2:select', function (e) {
+                const row = $(this).closest('.item-row');
+                row.find('.item-precio-venta-usd-stock').val(e.params.data.precio_venta_usd.toFixed(2)).prop('readonly', true);
+                row.find('.item-cantidad-stock').val(1);
+                calcularTotalesServicio();
+            });
+        }
+
+        function initializeItemRowEvents(row, index, itemType, precargadoData = {}) {
+            row.find('.remove-item').on('click', function() {
+                $(this).closest('.item-row').remove();
+                calcularTotalesServicio();
+            });
+
+            if (itemType === 'stock') {
+                const stockSelect = row.find('.select2-item-stock');
+                initializeItemSelect2(stockSelect);
+                
+                if (precargadoData.repuesto_id) {
+                    if (precargadoData.repuesto_nombre) {
+                        const opt = new Option(precargadoData.repuesto_nombre, precargadoData.repuesto_id, true, true);
+                        stockSelect.append(opt).trigger('change');
+                        row.find('.item-cantidad-stock').val(precargadoData.cantidad);
+                        row.find('.item-precio-venta-usd-stock').val(precargadoData.precio_venta_usd).prop('readonly', true);
+                    }
+                }
+            } 
+            
+            // ## MODIFICACIÓN CLAVE: Lógica para rellenar campos MANUALES al editar ##
+            else if (itemType === 'manual') {
+                if (precargadoData.manual_nombre) {
+                    row.find('.manual-item-nombre').val(precargadoData.manual_nombre);
+                    row.find('.item-cantidad-manual').val(precargadoData.cantidad);
+                    row.find('.item-precio-venta-usd-manual').val(precargadoData.precio_venta_usd);
+                }
+            }
+            
+            row.find('input').on('input', calcularTotalesServicio);
+            calcularTotalesServicio();
+        }
+
+        addStockItemButton.on('click', function(e) {
+            e.preventDefault();
+            const newRow = $(itemStockTemplateHtml);
+            itemsContainer.append(newRow);
+            initializeItemRowEvents(newRow, itemCounter++, 'stock');
+        });
+
+        addManualItemButton.on('click', function(e) {
+            e.preventDefault();
+            const newRow = $(itemManualTemplateHtml);
+            itemsContainer.append(newRow);
+            initializeItemRowEvents(newRow, itemCounter++, 'manual');
+        });
+
+        // PROCESAR FILAS INICIALES (EDICIÓN)
+        const initialRows = itemsContainer.find('.item-row-initial');
+        if (initialRows.length) {
+            initialRows.each(function() {
+                const div = $(this);
+                const type = div.data('item-type');
+                const row = type === 'stock' ? $(itemStockTemplateHtml) : $(itemManualTemplateHtml);
+                itemsContainer.append(row);
+                initializeItemRowEvents(row, itemCounter++, type, {
+                    repuesto_id: div.data('repuesto-id'),
+                    repuesto_nombre: div.data('repuesto-nombre'),
+                    manual_nombre: div.data('manual-nombre'),
+                    cantidad: div.data('cantidad'),
+                    precio_venta_usd: div.data('precio-venta-usd')
+                });
+            });
+            initialRows.remove();
+        } else if ('{{ form_data | length }}' === '0') {
+            addStockItemButton.trigger('click');
+        }
+
+        $('#tipo_servicio').on('change', function() {
+            const isReparacion = $(this).val() === 'REPARACION';
+            $('#mano_obra_group').toggle(isReparacion);
+            $('#imei_equipo').prop('disabled', !isReparacion);
+            if (!isReparacion) precioManoObraArsInput.val('0.00');
+            calcularTotalesServicio();
+        }).trigger('change');
+
+        // Validación de Bootstrap
+        var forms = document.querySelectorAll('.needs-validation');
+        Array.prototype.slice.call(forms).forEach(function (form) {
+            form.addEventListener('submit', function (event) {
+                if (!form.checkValidity()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                form.classList.add('was-validated');
+            }, false);
+        });
+
+        calcularTotalesServicio();
+    });
+</script>
+{% endblock %}

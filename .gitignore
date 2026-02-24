@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+
+# Base de datos (No subir datos reales)
+*.db
+*.sqlite3
+
+# IDEs
+.vscode/
+.idea/

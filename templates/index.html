@@ -1,0 +1,99 @@
+{% extends 'layout.html' %}
+
+{% block title %}Inicio - MY POINT ERP{% endblock %}
+
+{% block content %}
+{# --- BLOQUE: AVISO DE CUMPLEAÑOS --- #}
+{% if cumple_hoy > 0 %}
+<div class="alert alert-danger shadow-sm border-0 d-flex justify-content-between align-items-center mb-4 p-3" role="alert" style="background: linear-gradient(45deg, #ff6b6b, #ee5253); color: white; border-radius: 15px;">
+    <div class="d-flex align-items-center">
+        <div class="bg-white rounded-circle p-2 me-3 text-danger shadow-sm d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+            <i class="bi bi-cake2-fill fs-4"></i>
+        </div>
+        <div>
+            <h5 class="alert-heading mb-0 fw-bold">¡Día de Celebración!</h5>
+            <span>Hoy hay <strong>{{ cumple_hoy }}</strong> cliente(s) de cumpleaños. ¡No olvides saludarlos! 🎉</span>
+        </div>
+    </div>
+    <a href="{{ url_for('reporte_cumpleanos') }}" class="btn btn-light btn-sm fw-bold px-4 py-2 shadow-sm text-danger rounded-pill">
+        SALUDAR AHORA <i class="bi bi-whatsapp ms-1"></i>
+    </a>
+</div>
+{% endif %}
+
+<!-- Card de Cuotas que vencen HOY y VENCIDAS -->
+{% if vencimientos_hoy > 0 or cuotas_vencidas > 0 %}
+<div class="alert alert-primary shadow-sm border-0 d-flex justify-content-between align-items-center mb-4 p-3" role="alert" style="background: linear-gradient(45deg, #6ba6ff, #52bdee); color: white; border-radius: 15px;">
+    <div class="d-flex align-items-center">
+        <div class="bg-white rounded-circle p-2 me-3 text-primary shadow-sm d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+            <i class="bi bi-receipt-cutoff fs-4"></i>
+        </div>
+        <div>
+            <h5 class="alert-heading mb-0 fw-bold">Pendientes de Cobro</h5>
+            <span>
+                Hoy vencen <strong>{{ vencimientos_hoy }}</strong> cuota(s) 
+                {% if cuotas_vencidas > 0 %}
+                    y hay <strong style="color: #ffeb3b; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);">{{ cuotas_vencidas }}</strong> cuota(s) ya vencidas.
+                {% endif %}
+                Por favor, dar aviso a los clientes de su deuda.
+            </span>
+        </div>
+    </div>
+    <a href="{{ url_for('reporte_cuotas_pendientes') }}" class="btn btn-light btn-sm fw-bold px-4 py-2 shadow-sm text-primary rounded-pill">
+        ENVIAR MENSAJES <i class="bi bi-whatsapp ms-1"></i>
+    </a>
+</div>
+{% endif %}
+
+
+<div class="container d-flex justify-content-center align-items-center" style="min-height: 75vh;">
+    <div class="text-center">
+        <!-- Logo o Nombre del Negocio -->
+        <div class="brand-display mb-4">
+            <h1 class="display-1 fw-bold text-dark mb-0" style="letter-spacing: -2px;">Sistema Integral de Gestion</h1>
+            
+            <!-- LOGO DE LA EMPRESA -->
+            <div class="logo-container my-2">
+                <img src="{{ url_for('static', filename='img/logo.png') }}" 
+                     alt="Logo My Point" 
+                     class="img-fluid" 
+                     style="max-height: 120px; width: auto; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.1));">
+            </div>
+
+            <h1 class="display-1 fw-black text-primary mt-n3" style="font-weight: 900; text-transform: uppercase; margin-top: -10px; font-size: 2rem;">-------------</h1>
+
+        <!-- Eslogan o Bienvenida -->
+        <div class="mt-4">
+            <p class="fs-4 text-muted fw-light">Gestión Profesional de Telefonía y Servicio Técnico</p>
+            <div class="badge bg-dark text-white p-2 px-3 rounded-pill shadow-sm">
+                <i class="bi bi-person-check me-2"></i>Sesión activa: {{ current_user.username }}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Estilo extra para el efecto de "Point" pegado a "My" */
+    .fw-black {
+        font-weight: 900 !important;
+    }
+    .display-1 {
+        font-size: 6rem;
+    }
+    /* Animación suave al entrar */
+    .container {
+        animation: fadeIn 1.2s ease-in-out;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Ajuste para pantallas pequeñas */
+    @media (max-width: 768px) {
+        .display-1 {
+            font-size: 3.5rem !important;
+        }
+    }
+</style>
+{% endblock %}

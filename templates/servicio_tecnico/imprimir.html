@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comprobante #{{ reparacion.id }} - MY POINT</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        /* Configuración de página A4 */
+        @page { size: A4; margin: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f0f0; margin: 0; padding: 0; }
+
+        .btn-print-action { position: fixed; top: 20px; right: 20px; z-index: 1000; }
+
+        /* Contenedor Principal A4 */
+        .a4-page {
+            width: 210mm;
+            min-height: 297mm;
+            padding: 10mm;
+            margin: 10mm auto;
+            background: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* Bloque de cada Comprobante (Mitad de hoja) */
+        .receipt-block {
+            height: 135mm; /* Ajuste para que entren 2 en una A4 */
+            position: relative;
+            overflow: hidden;
+            border: 1px solid #eee;
+            padding: 5px;
+        }
+
+        /* Línea de puntos divisoria */
+        .separator {
+            border-top: 2px dashed #bbb;
+            text-align: center;
+            position: relative;
+            margin: 5mm 0;
+        }
+        .separator::after {
+            content: "\2702"; /* Icono de tijera */
+            position: absolute;
+            top: -15px;
+            left: 50%;
+            background: white;
+            padding: 0 10px;
+            color: #bbb;
+        }
+
+        /* Encabezado Empresarial */
+        .header-grid { display: grid; grid-template-columns: 100px 1fr 200px; gap: 15px; align-items: center; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+        .logo-img { max-width: 100px; max-height: 80px; object-fit: contain; }
+        .company-data h2 { font-size: 1.5rem; font-weight: 900; color: #007bff; margin: 0; }
+        .company-data p { margin: 0; font-size: 0.75rem; color: #555; }
+        .doc-info { text-align: right; }
+        .doc-info h4 { font-size: 1rem; margin: 0; color: #333; }
+        .doc-info p { margin: 0; font-size: 0.8rem; }
+
+        /* Secciones */
+        .section-title { font-size: 0.85rem; font-weight: bold; background: #f8f9fa; border-left: 4px solid #007bff; padding: 2px 8px; margin: 8px 0 5px 0; text-transform: uppercase; }
+        
+        .details-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; font-size: 0.75rem; margin-bottom: 5px; }
+        .details-row div { line-height: 1.2; }
+
+        /* Tabla Compacta */
+        .table-custom { width: 100%; font-size: 0.7rem; border-collapse: collapse; margin-top: 5px; }
+        .table-custom th { background: #007bff; color: white; padding: 4px; text-transform: uppercase; border: 1px solid #ddd; }
+        .table-custom td { padding: 3px 6px; border: 1px solid #ddd; }
+        .text-end { text-align: right; }
+
+        .total-box { font-size: 0.9rem; font-weight: bold; color: #007bff; }
+
+        .copy-label { position: absolute; top: 0; right: 0; font-size: 0.6rem; color: #ccc; text-transform: uppercase; font-weight: bold; }
+
+        @media print {
+            body { background: none; }
+            .a4-page { margin: 0; box-shadow: none; border: none; width: 100%; }
+            .no-print { display: none; }
+            .receipt-block { border: none; }
+            .btn-print-action { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="btn-print-action no-print">
+        <button class="btn btn-lg btn-primary shadow" onclick="window.print()">
+            <i class="bi bi-printer-fill me-2"></i>IMPRIMIR COMPROBANTES
+        </button>
+        <a href="{{ url_for('view_reparacion', servicio_id=reparacion.id) }}" class="btn btn-lg btn-secondary shadow ms-2">
+            <i class="bi bi-arrow-left-circle me-1"></i>VOLVER
+        </a>
+    </div>
+
+    <div class="a4-page">
+        
+        {# MACRO PARA EL CONTENIDO DEL COMPROBANTE #}
+        {% macro render_comprobante(label) %}
+        <div class="receipt-block">
+            <div class="copy-label">{{ label }}</div>
+            
+            <div class="header-grid">
+                <img src="{{ url_for('static', filename='img/logo.png') }}" class="logo-img" alt="Logo">
+                <div class="company-data">
+                    <h2>MY POINT</h2>
+                    <p><i class="bi bi-geo-alt-fill me-1"></i>Roque Sáenz Peña 172, Junín, Buenos Aires</p>
+                    <p><i class="bi bi-whatsapp me-1"></i>+54 9 2364 53-5386</p>
+                </div>
+                <div class="doc-info">
+                    <h4 class="text-primary">{{ 'ORDEN DE SERVICIO' if reparacion.status == 'COMPLETADO' else 'PRESUPUESTO' }}</h4>
+                    <p><strong>N°:</strong> {{ "%05d" | format(reparacion.id) }}</p>
+                    <p><strong>Fecha:</strong> {{ fecha_emision | datetimeformat }}</p>
+                </div>
+            </div>
+
+            <div class="section-title">Datos del Cliente</div>
+            <div class="details-row">
+                <div><strong>Cliente:</strong> {{ reparacion.razon_social or (reparacion.nombre + ' ' + reparacion.apellido) }}</div>
+                <div><strong>CUIT/CUIL:</strong> {{ reparacion.cuit_cuil or 'N/A' }}</div>
+                <div><strong>Contacto:</strong> {{ reparacion.telefono or 'N/A' }}</div>
+            </div>
+
+            <div class="section-title">Detalle del Equipo y Falla</div>
+            <div class="details-row">
+                <div><strong>IMEI:</strong> {{ reparacion.imei_equipo or 'N/A' }}</div>
+                <div><strong>Falla:</strong> {{ reparacion.falla_reportada }}</div>
+                <div><strong>Estado:</strong> {{ reparacion.status }}</div>
+            </div>
+            <div style="font-size: 0.75rem; margin-bottom: 5px;">
+                <strong>Solución:</strong> {{ reparacion.solucion_aplicada or 'Pendiente de aplicar' }}
+            </div>
+
+            <div class="section-title">Componentes y Servicios</div>
+            <table class="table-custom">
+                <thead>
+                    <tr>
+                        <th>Descripción</th>
+                        <th class="text-center">Cant.</th>
+                        <th class="text-end">Unit. (USD)</th>
+                        <th class="text-end">Total (USD)</th>
+                        <th class="text-end">Total (ARS)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set total_repuestos_usd = 0 %}
+                    {% if items %}
+                        {% for rep in items %}
+                        <tr>
+                            <td>{{ rep.nombre_parte or rep.manual_item_nombre }}</td>
+                            <td class="text-center">{{ rep.cantidad }}</td>
+                            <td class="text-end">{{ rep.precio_venta_usd_momento|default(0)|round(2) }}</td>
+                            <td class="text-end">{{ (rep.cantidad * rep.precio_venta_usd_momento)|default(0)|round(2) }}</td>
+                            <td class="text-end">{{ (rep.cantidad * rep.precio_venta_usd_momento * valor_dolar_venta|default(0))|default(0)|round(2) }}</td>
+                            {% set total_repuestos_usd = total_repuestos_usd + (rep.cantidad * rep.precio_venta_usd_momento) %}
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="5" class="text-center">No se utilizaron repuestos</td></tr>
+                    {% endif %}
+                    <tr style="background-color: #fcfcfc;">
+                        <td>Mano de Obra Especializada</td>
+                        <td class="text-center">1</td>
+                        <td class="text-end">-</td>
+                        <td class="text-end">-</td>
+                        <td class="text-end">{{ reparacion.precio_mano_obra_ars|default(0)|round(2) }}</td>
+                    </tr>
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="4" class="text-end"><strong>SUBTOTAL</strong></td>
+                        <td class="text-end">{{ ((total_repuestos_usd * valor_dolar_venta|default(0)) + reparacion.precio_mano_obra_ars)|default(0)|round(2) }}</td>
+                    </tr>
+                    <tr class="total-box">
+                        <td colspan="4" class="text-end" style="background: #e9f5ff;">TOTAL A PAGAR (ARS)</td>
+                        <td class="text-end" style="background: #e9f5ff; border-left: 2px solid #007bff;">${{ "{:,.2f}".format(reparacion.precio_final_ars|default(0)) }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+
+            <div style="font-size: 0.65rem; color: #666; margin-top: 10px; font-style: italic;">
+                * Presupuesto válido por 7 días. Garantía de 30 días sobre la reparación efectuada.
+            </div>
+            
+            <div class="row mt-3 text-center" style="font-size: 0.7rem;">
+                <div class="col-6">
+                    <p style="margin-bottom: 25px;">___________________________</p>
+                    <p>Firma MY POINT</p>
+                </div>
+                <div class="col-6">
+                    <p style="margin-bottom: 25px;">___________________________</p>
+                    <p>Firma del Cliente</p>
+                </div>
+            </div>
+        </div>
+        {% endmacro %}
+
+        {# LLAMADA AL ORIGINAL #}
+        {{ render_comprobante('Original - Empresa') }}
+
+        {# LÍNEA DIVISORIA #}
+        <div class="separator no-print"></div>
+
+        {# LLAMADA AL DUPLICADO #}
+        {{ render_comprobante('Duplicado - Cliente') }}
+
+    </div>
+
+</body>
+</html>

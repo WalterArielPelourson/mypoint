@@ -1,0 +1,144 @@
+{% extends 'layout.html' %}
+
+{% block title %}Reporte de Estacionalidad - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-calendar-range me-2"></i>Reporte de Estacionalidad</h1>
+
+<p class="alert alert-info d-flex align-items-center"><i class="bi bi-info-circle-fill flex-shrink-0 me-2"></i>Este reporte analiza tendencias históricas de ventas y reparaciones.</p>
+
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-graph-up me-2"></i>Ventas por Mes</div>
+            <div class="card-body">
+                <canvas id="ventasPorMesChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-calendar-day me-2"></i>Ventas por Día de la Semana</div>
+            <div class="card-body">
+                <canvas id="ventasPorDiaChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-graph-up me-2"></i>Reparaciones por Mes</div>
+            <div class="card-body">
+                <canvas id="reparacionesPorMesChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><i class="bi bi-calendar-day me-2"></i>Reparaciones por Día de la Semana</div>
+            <div class="card-body">
+                <canvas id="reparacionesPorDiaChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Data passed from Flask
+        const ventasMesLabels = {{ ventas_mes_labels | safe }};
+        const ventasMesValues = {{ ventas_mes_values | safe }};
+        const ventasDiaLabels = {{ ventas_dia_labels | safe }};
+        const ventasDiaValues = {{ ventas_dia_values | safe }};
+        const reparacionesMesLabels = {{ reparaciones_mes_labels | safe }};
+        const reparacionesMesValues = {{ reparaciones_mes_values | safe }};
+        const reparacionesDiaLabels = {{ reparaciones_dia_labels | safe }};
+        const reparacionesDiaValues = {{ reparaciones_dia_values | safe }};
+
+        // Chart for Ventas por Mes
+        new Chart(document.getElementById('ventasPorMesChart'), {
+            type: 'line',
+            data: {
+                labels: ventasMesLabels,
+                datasets: [{
+                    label: 'Cantidad de Ventas',
+                    data: ventasMesValues,
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+
+        // Chart for Ventas por Día de la Semana
+        new Chart(document.getElementById('ventasPorDiaChart'), {
+            type: 'bar',
+            data: {
+                labels: ventasDiaLabels,
+                datasets: [{
+                    label: 'Cantidad de Ventas',
+                    data: ventasDiaValues,
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+
+        // Chart for Reparaciones por Mes
+        new Chart(document.getElementById('reparacionesPorMesChart'), {
+            type: 'line',
+            data: {
+                labels: reparacionesMesLabels,
+                datasets: [{
+                    label: 'Cantidad de Reparaciones',
+                    data: reparacionesMesValues,
+                    borderColor: 'rgb(100, 200, 100)',
+                    tension: 0.1,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+
+        // Chart for Reparaciones por Día de la Semana
+        new Chart(document.getElementById('reparacionesPorDiaChart'), {
+            type: 'bar',
+            data: {
+                labels: reparacionesDiaLabels,
+                datasets: [{
+                    label: 'Cantidad de Reparaciones',
+                    data: reparacionesDiaValues,
+                    backgroundColor: 'rgba(75, 192, 75, 0.5)',
+                    borderColor: 'rgba(75, 192, 75, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+    });
+</script>
+{% endblock %}

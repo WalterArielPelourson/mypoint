@@ -1,0 +1,37 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2 class="display-6"><i class="bi bi-gears"></i> Ajustes de Inventario (SuperAdmin)</h2>
+            <p class="text-muted">Gestión de stock inicial y corrección de diferencias sin afectar caja ni cuentas corrientes.</p>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Tarjeta Equipos -->
+        <div class="col-md-6">
+            <div class="card h-100 border-primary shadow-sm">
+                <div class="card-body text-center">
+                    <i class="bi bi-phone-vibrate text-primary" style="font-size: 3rem;"></i>
+                    <h4 class="card-title mt-3">Equipos con IMEI</h4>
+                    <p class="card-text">Carga inicial de celulares, tablets o smartwatches. También permite dar de baja unidades por pérdida o robo.</p>
+                    <a href="{{ url_for('ajuste_stock_equipos') }}" class="btn btn-primary w-100">Gestionar Equipos</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tarjeta Insumos -->
+        <div class="col-md-6">
+            <div class="card h-100 border-success shadow-sm">
+                <div class="card-body text-center">
+                    <i class="bi bi-tools text-success" style="font-size: 3rem;"></i>
+                    <h4 class="card-title mt-3">Repuestos y Accesorios</h4>
+                    <p class="card-text">Ajuste de cantidades por lote. Ideal para stock inicial de vidrios, fundas o repuestos de taller.</p>
+                    <a href="{{ url_for('ajuste_stock_insumos') }}" class="btn btn-success w-100">Gestionar Insumos</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

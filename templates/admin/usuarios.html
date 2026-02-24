@@ -1,0 +1,103 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-people-fill me-2"></i>Gestión de Usuarios</h2>
+        <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalNuevoUsuario">
+            <i class="bi bi-person-plus-fill me-1"></i> Nuevo Usuario
+        </button>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Usuario</th>
+                        <th>Nivel de Acceso</th>
+                        <th>Estado</th> <!-- Columna añadida para claridad -->
+                        <th class="text-end">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in usuarios %}
+                    <tr>
+                        <td class="fw-bold">{{ user.username }}</td>
+                        <td>
+                            {% if user.role == 'superadmin' %}
+                            <span class="badge bg-warning text-dark">SuperAdministrador</span>
+                            {% elif user.role == 'admin' %}
+                            <span class="badge bg-primary">Administrador</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Usuario Estándar</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.active == 1 %}
+                            <span class="badge bg-success">Activo</span>
+                            {% else %}
+                            <span class="badge bg-danger">Inactivo</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <div class="d-flex justify-content-end gap-2">
+                                <!-- BOTÓN MODIFICAR (MANTENIDO) -->
+                                <a href="{{ url_for('editar_usuario', user_id=user.id) }}" class="btn btn-sm btn-outline-warning" title="Editar datos o contraseña">
+                                    <i class="bi bi-pencil-square"></i> Modificar
+                                </a>
+
+                                <!-- BOTÓN TOGGLE (ACTIVAR/INACTIVAR) -->
+                                <form action="{{ url_for('toggle_usuario_status', user_id=user.id) }}" method="POST" onsubmit="return confirm('¿Desea cambiar el estado de este usuario?');">
+                                    {% if user.active == 1 %}
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Inactivar">
+                                            <i class="bi bi-person-x-fill"></i> Inactivar
+                                        </button>
+                                    {% else %}
+                                        <button type="submit" class="btn btn-sm btn-outline-success" title="Activar">
+                                            <i class="bi bi-person-check-fill"></i> Activar
+                                        </button>
+                                    {% endif %}
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Nuevo Usuario (Mantenido exactamente igual) -->
+<div class="modal fade" id="modalNuevoUsuario" tabindex="-1">
+    <div class="modal-dialog">
+        <form class="modal-content" action="{{ url_for('crear_usuario') }}" method="POST">
+            <div class="modal-header">
+                <h5 class="modal-title">Crear Nuevo Usuario</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    <input type="text" name="username" class="form-control" required placeholder="ej: juanperez">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password" name="password" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Rol / Nivel</label>
+                    <select name="role" class="form-select">
+                        <option value="tecnico">Técnico</option>
+                        <option value="usuario">Vendedor/Usuario (Restringido a Cuentas Virtuales)</option>
+                        <option value="admin">Administrador (Acceso Total)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn btn-primary">Guardar Usuario</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

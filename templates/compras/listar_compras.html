@@ -1,0 +1,191 @@
+{% extends 'layout.html' %}
+
+{% block title %}Listado de Compras - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<style>
+    /* Estilos para Select2 */
+    .select2-container .select2-selection--single {
+        height: calc(1.5em + .75rem + 2px) !important;
+        border: 1px solid #ced4da;
+        border-radius: .25rem;
+    }
+    .select2-container .select2-selection--single .select2-selection__rendered {
+        line-height: calc(1.5em + .75rem + 2px);
+        padding-left: .75rem;
+    }
+    .select2-container .select2-selection--single .select2-selection__arrow {
+        height: calc(1.5em + .75rem + 2px);
+        right: .75rem;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__clear {
+        margin-right: 1.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- CABECERA OPTIMIZADA: Título y Botón de Exportación -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0"><i class="bi bi-list-check me-2"></i>Listado de Compras</h1>
+    <a href="{{ url_for('exportar_compras', **request.args) }}" class="btn btn-outline-primary shadow-sm">
+        <i class="bi bi-file-earmark-spreadsheet me-1"></i>Exportar a CSV
+    </a>
+</div>
+
+{# Filtros #}
+<div class="card mb-4 shadow-sm">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-funnel me-2"></i>Filtros de Búsqueda</h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('listar_compras') }}" class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label for="start_date" class="form-label">Desde:</label>
+                <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}">
+            </div>
+            <div class="col-md-4">
+                <label for="end_date" class="form-label">Hasta:</label>
+                <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}">
+            </div>
+            <div class="col-md-4">
+                <label for="proveedor" class="form-label">Proveedor:</label>
+                <select class="form-select select2-persona" id="proveedor" name="proveedor" data-rol="proveedor">
+                    <option value="">Todos los proveedores</option>
+                    {% for prov in proveedores_disponibles %}
+                        <option value="{{ prov.id }}" {% if filtros_activos.proveedor|string == prov.id|string %}selected{% endif %}>
+                            {{ prov.razon_social or (prov.nombre + ' ' + prov.apellido) }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="tipo_item" class="form-label">Tipo de Ítem:</label>
+                <select class="form-select" id="tipo_item" name="tipo_item">
+                    <option value="">Todos los ítems</option>
+                    <option value="CELULAR" {% if filtros_activos.tipo_item == 'CELULAR' %}selected{% endif %}>Celular</option>
+                    <option value="REPUESTO" {% if filtros_activos.tipo_item == 'REPUESTO' %}selected{% endif %}>Repuesto</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="estado_pago" class="form-label">Estado de Pago:</label>
+                <select class="form-select" id="estado_pago" name="estado_pago">
+                    <option value="">Todos los estados</option>
+                    <option value="PENDIENTE" {% if filtros_activos.estado_pago == 'PENDIENTE' %}selected{% endif %}>Pendiente</option>
+                    <option value="PAGADO_PARCIAL" {% if filtros_activos.estado_pago == 'PAGADO_PARCIAL' %}selected{% endif %}>Pagado Parcialmente</option>
+                    <option value="PAGADO_TOTAL" {% if filtros_activos.estado_pago == 'PAGADO_TOTAL' %}selected{% endif %}>Pagado Totalmente</option>
+                </select>
+            </div>
+            <div class="col-md-4 text-end">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros</button>
+                <a href="{{ url_for('listar_compras') }}" class="btn btn-secondary"><i class="bi bi-x-circle me-1"></i>Limpiar</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# Tabla de Compras #}
+<div class="table-responsive mt-4">
+    <table class="table table-striped table-hover align-middle">
+        <thead class="table-dark">
+            <tr>
+                <th scope="col">ID</th>
+                <th scope="col">Fecha</th>
+                <th scope="col">Proveedor</th>
+                <th scope="col">Vendedor</th>
+                <th scope="col">Tipo Ítem</th>
+                <th scope="col">Descripción Ítem</th>
+                <th scope="col">Cant.</th>
+                <th scope="col">Costo Unit. USD</th>
+                <th scope="col">Total USD</th>
+                <th scope="col">Dólar Momento</th>
+                <th scope="col">Total ARS</th>
+                <th scope="col">Estado Pago</th>
+                <th scope="col">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for compra in compras %}
+            <tr>
+                <td>{{ compra.id }}</td>
+                <td>{{ compra.fecha_compra|datetimeformat('%d/%m/%Y %H:%M') }}</td>
+                <td>{{ compra.razon_social or (compra.nombre + ' ' + compra.apellido) }}</td>
+                <td>{{ compra.username }}</td>
+                <td>{{ compra.tipo_item }}</td>
+                <td>{{ compra.item_descripcion }}</td>
+                <td>{{ compra.cantidad }}</td>
+                <td>USD {{ compra.costo_unitario_usd|round(2) }}</td>
+                <td>USD {{ compra.costo_total_usd|round(2) }}</td>
+                <td>ARS {{ compra.valor_dolar_momento|round(2) }}</td>
+                <td>ARS {{ compra.costo_total_ars|round(2) }}</td>
+                <td>
+                    {% if compra.estado_pago == 'PENDIENTE' %}
+                        <span class="badge bg-danger">{{ compra.estado_pago }}</span>
+                    {% elif compra.estado_pago == 'PAGADO_PARCIAL' %}
+                        <span class="badge bg-warning text-dark">{{ compra.estado_pago }}</span>
+                    {% else %}
+                        <span class="badge bg-success">{{ compra.estado_pago }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if compra.estado_pago != 'PAGADO_TOTAL' %}
+                        <a href="{{ url_for('registrar_pago_proveedor', proveedor_id=compra.proveedor_id) }}" class="btn btn-sm btn-outline-primary" title="Registrar pago a este proveedor">
+                            <i class="bi bi-wallet2"></i> Pagar
+                        </a>
+                    {% else %}
+                        <button class="btn btn-sm btn-outline-secondary" disabled><i class="bi bi-check-lg"></i> Pagado</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="13" class="text-center">No se encontraron compras en el período seleccionado con los filtros aplicados.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}
+
+{% block scripts_extra %}
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const proveedorFilterSelect = $('#proveedor');
+        proveedorFilterSelect.select2({
+            placeholder: 'Buscar proveedor por nombre o CUIT/CUIL...',
+            allowClear: true,
+            ajax: {
+                url: '{{ url_for('api_buscar_personas') }}',
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return {
+                        q: params.term,
+                        rol: 'proveedor'
+                    };
+                },
+                processResults: function (data) {
+                    return { results: data };
+                },
+                cache: true
+            },
+            minimumInputLength: 0
+        });
+
+        {% if filtros_activos.proveedor %}
+            $.ajax({
+                type: 'GET',
+                url: '{{ url_for('api_buscar_personas') }}?q=&rol=proveedor&id={{ filtros_activos.proveedor }}' 
+            }).then(function (data) {
+                if (data.results && data.results.length > 0) {
+                    var option = new Option(data.results[0].text, data.results[0].id, true, true);
+                    proveedorFilterSelect.append(option).trigger('change');
+                }
+            });
+        {% endif %}
+    });
+</script>
+{% endblock %}

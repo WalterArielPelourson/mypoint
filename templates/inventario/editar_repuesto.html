@@ -1,0 +1,92 @@
+{% extends 'layout.html' %}
+
+{% block title %}Editar Producto - {{ super() }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-pencil-square me-2"></i>Editar Producto / Repuesto</h1>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('editar_repuesto', repuesto_id=repuesto.id) }}" class="needs-validation" novalidate>
+            <div class="row g-3">
+                
+                <!-- NUEVO CAMPO: Categoría -->
+                <div class="col-md-4">
+                    <label for="categoria" class="form-label">Categoría:<span class="text-danger">*</span></label>
+                    <select class="form-select" id="categoria" name="categoria" required>
+                        <option value="">Seleccione...</option>
+                        {# Recuperar valor del form si hubo error, sino usar el de la DB, sino default #}
+                        {% set current_cat = request.form.get('categoria', repuesto.categoria) %}
+                        <option value="REPUESTO" {% if current_cat == 'REPUESTO' %}selected{% endif %}>Repuesto</option>
+                        <option value="ACCESORIO" {% if current_cat == 'ACCESORIO' %}selected{% endif %}>Accesorio</option>
+                        <option value="EQUIPO" {% if current_cat == 'EQUIPO' %}selected{% endif %}>Equipo / Otro</option>
+                    </select>
+                    <div class="invalid-feedback">Seleccione una categoría.</div>
+                </div>
+
+                <div class="col-md-8">
+                    <label for="nombre_parte" class="form-label">Nombre del Producto / Parte:<span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="nombre_parte" name="nombre_parte" 
+                           value="{{ request.form.get('nombre_parte', repuesto.nombre_parte) }}" required>
+                    <div class="invalid-feedback">
+                        El nombre es obligatorio.
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <label for="modelo_compatible" class="form-label">Modelo Compatible:</label>
+                    <input type="text" class="form-control" id="modelo_compatible" name="modelo_compatible" 
+                           value="{{ request.form.get('modelo_compatible', repuesto.modelo_compatible) }}" 
+                           placeholder="Dejar vacío si es genérico/universal">
+                </div>
+
+                <div class="col-md-4">
+                    <label for="costo_usd" class="form-label">Costo por Unidad (USD):<span class="text-danger">*</span></label>
+                    <div class="input-group">
+                        <span class="input-group-text">US$</span>
+                        <input type="number" step="0.01" class="form-control" id="costo_usd" name="costo_usd" 
+                               value="{{ request.form.get('costo_usd', '%.2f'|format(repuesto.costo_usd)) }}" required min="0">
+                    </div>
+                    <div class="invalid-feedback">
+                        El costo en USD es obligatorio y no puede ser negativo.
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <label for="stock" class="form-label">Stock Actual:<span class="text-danger">*</span></label>
+                    <input type="number" class="form-control" id="stock" name="stock" 
+                           value="{{ request.form.get('stock', repuesto.stock) }}" required min="0">
+                    <div class="invalid-feedback">
+                        El stock es obligatorio y no puede ser negativo.
+                    </div>
+                </div>
+                
+                <div class="col-12 mt-4 d-flex justify-content-end">
+                    <a href="{{ url_for('inventario_repuestos') }}" class="btn btn-secondary me-2"><i class="bi bi-x-circle me-1"></i>Cancelar</a>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i>Actualizar Producto</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    // Bootstrap validation script
+    (function () {
+      'use strict'
+      var forms = document.querySelectorAll('.needs-validation')
+      Array.prototype.slice.call(forms)
+        .forEach(function (form) {
+          form.addEventListener('submit', function (event) {
+            if (!form.checkValidity()) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+            form.classList.add('was-validated');
+          }, false)
+        })
+    })()
+</script>
+{% endblock %}

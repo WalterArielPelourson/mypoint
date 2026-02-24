@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Documento para Imprimir{% endblock %}</title>
+    <!-- Bootstrap CSS CDN (solo lo esencial para el diseño) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <style>
+        /* Estilos específicos para impresión */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20mm; /* Márgenes para impresión */
+            color: #333;
+        }
+        .document-header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #ccc;
+            padding-bottom: 10px;
+        }
+        .document-header h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #000;
+        }
+        .document-header p {
+            margin: 5px 0 0;
+            font-size: 14px;
+            color: #555;
+        }
+        .section-title {
+            font-size: 18px;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .details-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .details-grid div strong {
+            display: block;
+            margin-bottom: 3px;
+            color: #666;
+            font-size: 13px;
+        }
+        .details-grid div span {
+            display: block;
+            font-size: 14px;
+            color: #333;
+        }
+        .table {
+            width: 100%;
+            margin-bottom: 20px;
+            border-collapse: collapse;
+        }
+        .table th, .table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            font-size: 13px;
+        }
+        .table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .totals-row {
+            font-weight: bold;
+            background-color: #e9ecef;
+        }
+        .text-end {
+            text-align: right;
+        }
+        .no-print {
+            display: none; /* Esto oculta el footer en pantalla, si solo debe aparecer en impresión */
+        }
+
+        /* Ocultar elementos no deseados al imprimir */
+        @media print {
+            .container {
+                width: auto;
+                max-width: none;
+                padding: 0;
+            }
+            body {
+                margin: 0;
+            }
+            .document-header {
+                padding-top: 10mm;
+            }
+            .document-footer {
+                position: fixed; /* Lo fija al final de cada página impresa */
+                bottom: 0;
+                width: 100%;
+                text-align: center;
+                font-size: 10px;
+                color: #888;
+                padding-bottom: 5mm;
+                display: block; /* Asegura que el footer se muestre al imprimir */
+            }
+            .btn-print-action {
+                display: none; /* Ocultar el botón de imprimir al imprimir */
+            }
+            .no-print {
+                display: none; /* Reafirmar para elementos específicos */
+            }
+        }
+    </style>
+    {% block head_extra %}{% endblock %}
+    
+    <!-- ¡IMPORTANTE! Esta línea es la que soluciona el error 'moment is undefined' -->
+    {{ moment.include_moment() }} 
+</head>
+<body>
+    <div class="container-fluid"> {# Use container-fluid for wider print area #}
+        {% block content %}{% endblock %}
+    </div>
+
+    <div class="document-footer"> {# Eliminamos la clase 'no-print' de aquí para que siempre se vea el footer si la CSS lo permite #}
+        <p>Generado por ERP Celulares - {{ moment().format('YYYY-MM-DD HH:mm') }}</p>
+    </div>
+
+    <script>
+        // Imprimir automáticamente al cargar la página si se desea
+        // window.onload = function() {
+        //     window.print();
+        // };
+    </script>
+    {% block scripts_extra %}{% endblock %}
+</body>
+</html>

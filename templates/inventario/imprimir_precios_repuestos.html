@@ -1,0 +1,125 @@
+{% extends 'layout.html' %}
+
+{% block head %}
+    <title>Imprimir Lista de Precios de Repuestos</title>
+    <style>
+        /* Estilos específicos para impresión */
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            body {
+                margin: 0;
+                padding: 0;
+            }
+            .container-fluid {
+                width: 100%;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            h2, h3 {
+                text-align: center;
+                margin-top: 10px;
+                margin-bottom: 10px;
+            }
+            .table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 0;
+            }
+            .table th, .table td {
+                border: 1px solid #dee2e6;
+                padding: .75rem;
+                vertical-align: top;
+            }
+            .table th {
+                background-color: #e9ecef;
+            }
+            .text-end {
+                text-align: right !important;
+            }
+            .text-center {
+                text-align: center !important;
+            }
+            .footer-info {
+                text-align: center;
+                margin-top: 20px;
+                font-size: 0.85em;
+            }
+        }
+        /* Estilos generales para vista en pantalla */
+        .header-print {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .info-dolar {
+            background-color: #f8f9fa;
+            border: 1px solid #e2e6ea;
+            padding: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .table-responsive {
+            margin-top: 20px;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="container-fluid mt-4">
+        <div class="header-print">
+            <h2 class="mb-2">Lista de Precios de Repuestos</h2>
+            <h3 class="mb-4">Fecha de Emisión: {{ fecha_impresion|datetimeformat('%d/%m/%Y %H:%M') }}</h3>
+        </div>
+
+        <div class="info-dolar">
+            <p class="mb-1"><strong>Dólar de Compra:</strong> ARS {{ valor_dolar_compra|default(0)|round(2) }}</p>
+            <p class="mb-0"><strong>Dólar de Venta:</strong> ARS {{ valor_dolar_venta|default(0)|round(2) }}</p>
+        </div>
+
+        {% if repuestos %}
+            <div class="table-responsive">
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th>Nombre Parte</th>
+                            <th>Modelo Compatible</th>
+                            <th class="text-end">Stock</th>
+                            <th class="text-end">Costo (USD)</th>
+                            <th class="text-end">Costo (ARS)</th>
+                            <th class="text-end">Precio Venta (ARS)</th>
+                            <th class="text-end">Precio Venta (USD)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for repuesto in repuestos %}
+                            <tr>
+                                <td>{{ repuesto.nombre_parte }}</td>
+                                <td>{{ repuesto.modelo_compatible or 'N/A' }}</td>
+                                <td class="text-end">{{ repuesto.stock }}</td>
+                                <td class="text-end">USD {{ repuesto.costo_usd|default(0)|round(2) }}</td>
+                                <td class="text-end">ARS {{ repuesto.costo_ars|default(0)|round(2) }}</td>
+                                <td class="text-end">ARS {{ repuesto.precio_venta_ars|default(0)|round(2) }}</td>
+                                <td class="text-end">USD {{ repuesto.precio_venta_usd|default(0)|round(2) }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+             <div class="alert alert-warning mt-4 text-center">
+                No se encontraron repuestos con precios de venta para imprimir.
+            </div>
+        {% endif %}
+
+        <div class="d-flex justify-content-center mt-4 no-print">
+            <button class="btn btn-info me-2" onclick="window.print()"><i class="bi bi-printer me-2"></i>Imprimir</button>
+            <a href="{{ url_for('lista_precios_repuestos', repuesto_ids=selected_repuesto_ids_str) }}" class="btn btn-secondary"><i class="bi bi-arrow-left me-2"></i>Volver a Lista de Precios</a>
+        </div>
+
+        <div class="footer-info no-print">
+            <p>Generado por el sistema de gestión ERP.</p>
+        </div>
+
+    </div>
+{% endblock %}

@@ -1,0 +1,23 @@
+Flask
+requests
+Flask-Login
+# Framework principal
+Flask
+
+# Gestión de autenticación de usuarios
+Flask-Login
+
+# Formateo de fechas y tiempos en plantillas
+Flask-Moment
+
+# Cliente HTTP para consultar la API del Dólar
+requests
+
+# Servidor de producción (Recomendado para despliegue)
+gunicorn
+
+Flask==3.0.0
+Flask-Login==0.6.3
+Flask-Moment==1.0.5
+requests==2.31.0
+Werkzeug==3.0.1

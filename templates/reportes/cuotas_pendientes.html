@@ -1,0 +1,142 @@
+{% extends 'layout.html' %}
+
+{% block title %}Reporte de Cuotas Pendientes - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    .status-vencida { border-left: 8px solid #dc3545 !important; background-color: #fff5f5; }
+    .status-urgente { border-left: 8px solid #ffc107 !important; background-color: #fffdf2; }
+    .status-avencer { border-left: 8px solid #198754 !important; background-color: #f4fff8; }
+    .table-v { vertical-align: middle; }
+    @media print { .no-print { display: none !important; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="bi bi-calendar-check me-2 text-primary"></i>Semáforo de Deuda de Equipos (USD)</h1>
+    <div class="no-print">
+        <button onclick="window.print()" class="btn btn-outline-dark me-2"><i class="bi bi-printer me-1"></i>Imprimir</button>
+        <a href="{{ url_for('reportes_menu') }}" class="btn btn-secondary">Volver</a>
+    </div>
+</div>
+
+<!-- TARJETAS DE RESUMEN EN DÓLARES -->
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card bg-danger text-white shadow-sm border-0">
+            <div class="card-body p-4 d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="text-uppercase fw-bold opacity-75">Total Deuda Vencida</h6>
+                    <h2 class="display-6 fw-bold mb-0">u$d {{ "{:,.2f}".format(total_vencido) }}</h2>
+                </div>
+                <i class="bi bi-exclamation-octagon fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card bg-success text-white shadow-sm border-0">
+            <div class="card-body p-4 d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="text-uppercase fw-bold opacity-75">Total a Cobrar (A Vencer)</h6>
+                    <h2 class="display-6 fw-bold mb-0">u$d {{ "{:,.2f}".format(total_proximo) }}</h2>
+                </div>
+                <i class="bi bi-cash-stack fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- BUSCADOR -->
+<div class="card mb-4 shadow-sm no-print">
+    <div class="card-body">
+        <div class="input-group">
+            <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+            <input type="text" id="filtroCliente" class="form-control border-start-0" placeholder="Filtrar por nombre de cliente o venta #...">
+        </div>
+    </div>
+</div>
+
+<!-- LISTADO SEMÁFORO -->
+<div class="card shadow-sm border-0 overflow-hidden">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 table-v" id="tablaCuotas">
+            <thead class="table-dark">
+                <tr>
+                    <th class="ps-4">Estado / Vencimiento</th>
+                    <th>Cliente / Teléfono</th>
+                    <th class="text-center">Venta / Cuota</th>
+                    <th class="text-end">Monto Cuota (USD)</th>
+                    <th class="text-center no-print">Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in cuotas %}
+                {% set clase_estado = 'status-vencida' if c.estado_venc == 'VENCIDA' else ('status-urgente' if c.estado_venc == 'URGENTE' else 'status-avencer') %}
+                <tr class="cuota-fila {{ clase_estado }}">
+                    <td class="ps-4">
+                        <div class="fw-bold fs-6">{{ c.vencimiento.strftime('%d/%m/%Y') }}</div>
+                        {% if c.estado_venc == 'VENCIDA' %}
+                            <span class="badge bg-danger">VENCIDA ({{ c.dias_atraso }} días)</span>
+                        {% elif c.estado_venc == 'URGENTE' %}
+                            <span class="badge bg-warning text-dark">VENCE PRONTO</span>
+                        {% else %}
+                            <span class="badge bg-success">A TIEMPO</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="fw-bold">{{ c.cliente_nombre }}</div>
+                        {% if c.telefono %}
+                            <small class="text-muted"><i class="bi bi-whatsapp text-success"></i> {{ c.telefono }}</small>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <span class="badge bg-dark">Venta #{{ c.venta_id }}</span>
+                        <div class="small mt-1 text-muted">Cuota {{ c.cuota_nro }}</div>
+                    </td>
+                    <td class="text-end fw-bold fs-5 text-primary">
+                        u$d {{ "{:,.2f}".format(c.monto_usd) }}
+                    </td>
+                    <td class="text-center no-print">
+                        <div class="btn-group shadow-sm">
+                            <a href="{{ url_for('cobrar_cliente', cliente_id=c.cliente_id, imputacion='EQUIPOS') }}" class="btn btn-sm btn-primary" title="Cobrar cuota">
+                                <i class="bi bi-cash-coin"></i>
+                            </a>
+                            {% if c.telefono %}
+                                {# BOTÓN WHATSAPP 1: Lógica de mensaje según estado #}
+                                {% if c.estado_venc == 'VENCIDA' %}
+                                    {% set msj_simple = "Hola " + c.cliente_nombre + ", ¿cómo estás? Te escribimos de My Point. Notamos que tu cuota presenta un atraso de " + c.dias_atraso|string + " días. Te invitamos cordialmente a acercarte a nuestro local para regularizar tu deuda de USD " + "{:,.2f}".format(c.monto_usd) + " y así mantener tu cuenta al día. ¡Te esperamos!" %}
+                                {% else %}
+                                    {% set msj_simple = "Hola " + c.cliente_nombre + ", te recordamos cordialmente que tu cuota vence hoy por un importe de u$d " + "{:,.2f}".format(c.monto_usd) + ". ¡Que tengas un excelente día!" %}
+                                {% endif %}
+                                
+                                <a href="https://wa.me/{{ c.telefono|replace('+', '')|replace(' ', '') }}?text={{ msj_simple|urlencode }}" target="_blank" class="btn btn-sm btn-success" title="Enviar recordatorio cordial">
+                                    <i class="bi bi-whatsapp"></i>
+                                </a>
+                                
+                                {# BOTÓN WHATSAPP 2: Detalle completo del plan (con link al PDF/Imprimible) #}
+                                <a href="https://wa.me/{{ c.telefono|replace('+', '')|replace(' ', '') }}?text={{ c.mensaje_whatsapp_full|urlencode }}" target="_blank" class="btn btn-sm btn-info text-white" title="Enviar plan completo con link a PDF">
+                                    <i class="bi bi-file-earmark-pdf"></i>
+                                </a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    // Buscador en tiempo real
+    document.getElementById('filtroCliente').addEventListener('keyup', function() {
+        let filter = this.value.toLowerCase();
+        let rows = document.querySelectorAll('.cuota-fila');
+        rows.forEach(row => {
+            let texto = row.innerText.toLowerCase();
+            row.style.display = texto.includes(filter) ? "" : "none";
+        });
+    });
+</script>
+{% endblock %}

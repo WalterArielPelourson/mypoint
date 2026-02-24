@@ -1,0 +1,63 @@
+{# Este archivo es un fragmento para ser incluido dinámicamente o por Jinja #}
+<div class="celular-item">
+    <button type="button" class="btn btn-danger btn-sm remove-celular"><i class="bi bi-trash"></i></button>
+    <h5>Celular #<span class="celular-number">{{ loop.index if loop is defined else 1 }}</span></h5>
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label for="marca_{{ loop.index0 if loop is defined else 0 }}" class="form-label">Marca <span class="text-danger">*</span>:</label>
+            <input type="text" class="form-control" id="marca_{{ loop.index0 if loop is defined else 0 }}" name="marca[]" value="{{ form_data.get('marca[]', [])[loop.index0] if form_data.get('marca[]') and loop is defined and loop.index0 < form_data.get('marca[]')|length else '' }}" required>
+        </div>
+        <div class="col-md-4">
+            <label for="modelo_{{ loop.index0 if loop is defined else 0 }}" class="form-label">Modelo <span class="text-danger">*</span>:</label>
+            <input type="text" class="form-control" id="modelo_{{ loop.index0 if loop is defined else 0 }}" name="modelo[]" value="{{ form_data.get('modelo[]', [])[loop.index0] if form_data.get('modelo[]') and loop is defined and loop.index0 < form_data.get('modelo[]')|length else '' }}" required>
+        </div>
+        <div class="col-md-4">
+            <label for="imei_{{ loop.index0 if loop is defined else 0 }}" class="form-label">IMEI <span class="text-danger">*</span>:</label>
+            <input type="text" class="form-control imei-input" id="imei_{{ loop.index0 if loop is defined else 0 }}" name="imei[]" value="{{ form_data.get('imei[]', [])[loop.index0] if form_data.get('imei[]') and loop is defined and loop.index0 < form_data.get('imei[]')|length else '' }}" required pattern="\d{15}" title="El IMEI debe contener 15 dígitos numéricos." maxlength="15">
+        </div>
+        <div class="col-md-4">
+            <label for="condicion_{{ loop.index0 if loop is defined else 0 }}" class="form-label">Condición <span class="text-danger">*</span>:</label>
+            <select class="form-select condicion-select" id="condicion_{{ loop.index0 if loop is defined else 0 }}" name="condicion[]" required>
+                <option value="">Seleccione...</option>
+                {# ## NUEVAS MODIFICACIONES: Condición "Parte de Pago" solo si el checkbox está marcado o precargado ## #}
+                {% set is_parte_pago_checked = form_data.get('es_parte_pago_checkbox') %}
+                {% set current_condicion = form_data.get('condicion[]', [])[loop.index0] if form_data.get('condicion[]') and loop is defined and loop.index0 < form_data.get('condicion[]')|length else '' %}
+                
+                {% if is_parte_pago_checked %}
+                    <option value="Entregado como parte de pago" selected>Entregado como parte de pago</option>
+                {% else %}
+                    <option value="Nuevo" {% if current_condicion == 'Nuevo' %}selected{% endif %}>Nuevo</option>
+                    <option value="Usado" {% if current_condicion == 'Usado' %}selected{% endif %}>Usado</option>
+                    <option value="Reacondicionado" {% if current_condicion == 'Reacondicionado' %}selected{% endif %}>Reacondicionado</option>
+                {% endif %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label for="almacenamiento_gb_{{ loop.index0 if loop is defined else 0 }}" class="form-label">Almacenamiento (GB) <span class="text-danger">*</span>:</label>
+            <input type="number" class="form-control" id="almacenamiento_gb_{{ loop.index0 if loop is defined else 0 }}" name="almacenamiento_gb[]" value="{{ form_data.get('almacenamiento_gb[]', [])[loop.index0] if form_data.get('almacenamiento_gb[]') and loop is defined and loop.index0 < form_data.get('almacenamiento_gb[]')|length else '' }}" required min="1" >
+        </div>
+        <div class="col-md-4">
+            <label for="ram_gb_{{ loop.index0 if loop is defined else 0 }}" class="form-label">RAM (GB) <span class="text-danger">*</span>:</label>
+            <input type="number" class="form-control" id="ram_gb_{{ loop.index0 if loop is defined else 0 }}" name="ram_gb[]" value="{{ form_data.get('ram_gb[]', [])[loop.index0] if form_data.get('ram_gb[]') and loop is defined and loop.index0 < form_data.get('ram_gb[]')|length else '' }}" required min="1">
+        </div>
+        <div class="col-md-4">
+            <label for="color_{{ loop.index0 if loop is defined else 0 }}" class="form-label">Color <span class="text-danger">*</span>:</label>
+            <input type="text" class="form-control" id="color_{{ loop.index0 if loop is defined else 0 }}" name="color[]" value="{{ form_data.get('color[]', [])[loop.index0] if form_data.get('color[]') and loop is defined and loop.index0 < form_data.get('color[]')|length else '' }}" required>
+        </div>
+        {# Mostrar/ocultar basado en el valor de la condición actual o si es parte de pago #}
+        {# ## NUEVAS MODIFICACIONES: Condición "Entregado como parte de pago" oculta salud de batería ## #}
+        <div class="col-md-4 bateria-salud-group" {% if current_condicion != 'Usado' and current_condicion != 'Entregado como parte de pago' %}style="display: none;"{% endif %}>
+            <label for="bateria_salud_{{ loop.index0 if loop is defined else 0 }}" class="form-label">Salud de Batería (%) (Solo Usado):</label>
+            <input type="number" class="form-control" id="bateria_salud_{{ loop.index0 if loop is defined else 0 }}" name="bateria_salud[]" value="{{ form_data.get('bateria_salud[]', [])[loop.index0] if form_data.get('bateria_salud[]') and loop is defined and loop.index0 < form_data.get('bateria_salud[]')|length else '' }}" min="0" max="100">
+        </div>
+        {# ## FIN NUEVAS MODIFICACIONES ## #}
+        <div class="col-md-4">
+            <label for="costo_usd_{{ loop.index0 if loop is defined else 0 }}" class="form-label">Costo (USD) <span class="text-danger">*</span>:</label>
+            <input type="number" class="form-control costo-usd-input" id="costo_usd_{{ loop.index0 if loop is defined else 0 }}" name="costo_usd[]" value="{{ form_data.get('costo_usd[]', [])[loop.index0] if form_data.get('costo_usd[]') and loop is defined and loop.index0 < form_data.get('costo_usd[]')|length else '' }}" step="0.01" min="0.01" required>
+        </div>
+        <div class="col-12">
+            <label for="observaciones_celular_{{ loop.index0 if loop is defined else 0 }}" class="form-label">Observaciones:</label>
+            <textarea class="form-control" id="observaciones_celular_{{ loop.index0 if loop is defined else 0 }}" name="observaciones_celular[]" rows="2">{{ form_data.get('observaciones_celular[]', [])[loop.index0] if form_data.get('observaciones_celular[]') and loop is defined and loop.index0 < form_data.get('observaciones_celular[]')|length else '' }}</textarea>
+        </div>
+    </div>
+</div>

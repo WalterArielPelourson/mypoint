@@ -1,0 +1,425 @@
+{% extends 'layout.html' %}
+
+{% block title %}Cotizar Venta - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    /* Estilos para Select2 */
+    .select2-container .select2-selection--single {
+        height: calc(1.5em + .75rem + 2px) !important;
+        border: 1px solid #ced4da;
+        border-radius: .25rem;
+    }
+    .select2-container .select2-selection--single .select2-selection__rendered {
+        line-height: calc(1.5em + .75rem + 2px);
+        padding-left: .75rem;
+    }
+    .select2-container .select2-selection--single .select2-selection__arrow {
+        height: calc(1.5em + .75rem + 2px);
+        right: .75rem;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__clear {
+        margin-right: 1.5rem;
+    }
+    .form-group-hidden {
+        display: none;
+    }
+    .bg-warning-light {
+        background-color: #fffdf0;
+        border: 2px solid #ffc107;
+        font-weight: bold;
+        color: #856404;
+    }
+    /* Estilos para los renglones */
+    .renglon-promo, .renglon-adicional {
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 10px;
+    }
+    .renglon-promo {
+        background-color: #f0faff;
+        border-left: 4px solid #0dcaf0;
+    }
+    .renglon-adicional {
+        background-color: #f5f3ff;
+        border-left: 4px solid #6610f2;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="bi bi-cash-stack me-2"></i>Cotizar Venta de Celular</h1>
+
+{# SECCIÓN: SELECTOR DE DÓLAR DINÁMICO #}
+<div class="card mb-4 border-primary shadow-sm">
+    <div class="card-header bg-primary text-white fw-bold">
+        <i class="bi bi-currency-exchange me-2"></i>Configuración de Cotización
+    </div>
+    <div class="card-body bg-light">
+        <div class="row align-items-center">
+            <div class="col-md-6">
+                <label class="form-label fw-bold text-primary">Cotización de Venta a aplicar para esta operación:</label>
+                <select name="tipo_dolar" id="tipo_dolar" class="form-select form-select-lg border-primary fw-bold" onchange="toggleManualDolar()">
+                    <option value="blue" data-val="{{ valor_blue_venta|default(0) }}">
+                        Usar Dólar Blue (Hoy): ${{ valor_blue_venta|round(2) }}
+                    </option>
+                    <option value="oficial" data-val="{{ valor_bcra_venta|default(0) }}">
+                        Usar Dólar Oficial (BCRA): ${{ valor_bcra_venta|round(2) }}
+                    </option>
+                    <option value="manual">Ingresar Cotización Manual</option>
+                </select>
+            </div>
+            <div class="col-md-6" id="manual_dolar_group" style="display:none;">
+                <label class="form-label fw-bold text-danger">Valor del Dólar Manual:</label>
+                <div class="input-group input-group-lg">
+                    <span class="input-group-text bg-danger text-white">$</span>
+                    <input type="number" step="0.01" name="valor_dolar_manual" id="valor_dolar_manual" class="form-control border-danger" placeholder="0.00">
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Tarjeta con los detalles del celular #}
+<div class="card mb-4 shadow-sm border-0">
+    <div class="card-header bg-dark text-white">
+        <h5 class="mb-0">Detalles del Equipo Seleccionado</h5>
+    </div>
+    <div class="card-body border">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Marca:</strong> {{ celular.marca }}</p>
+                <p><strong>Modelo:</strong> {{ celular.modelo }}</p>
+                <p><strong>IMEI:</strong> <span class="text-monospace">{{ celular.imei }}</span></p>
+                <p><strong>Condición:</strong> 
+                    {% if celular.condicion == 'Nuevo' %}
+                        <span class="badge bg-success">{{ celular.condicion }}</span>
+                    {% elif celular.condicion == 'Usado' %}
+                        <span class="badge bg-warning text-dark">{{ celular.condicion }} (Batería: {{ celular.bateria_salud }}%)</span>
+                    {% else %}
+                        <span class="badge bg-secondary">{{ celular.condicion }}</span>
+                    {% endif %}
+                </p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Capacidad:</strong> {{ celular.almacenamiento_gb }}GB / {{ celular.ram_gb }}GB RAM</p>
+                <p><strong>Color:</strong> {{ celular.color }}</p>
+                <p class="fs-5"><strong>Costo Adquisición:</strong> <span class="text-danger fw-bold">USD {{ celular.costo_usd|round(2) }}</span></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Formulario para configurar el presupuesto #}
+<div class="card shadow-sm">
+    <div class="card-body">
+        <h5 class="mb-3 text-primary border-bottom pb-2"><i class="bi bi-file-earmark-bar-graph me-2"></i>Configurar Presupuesto de Venta</h5>
+        <form method="POST" action="{{ url_for('cotizar_venta', celular_id=celular.id) }}" id="form-cotizacion" class="needs-validation" novalidate>
+            <input type="hidden" name="tipo_dolar" id="hidden_tipo_dolar">
+            <input type="hidden" name="valor_dolar_manual" id="hidden_valor_dolar_manual">
+
+            <div class="row g-3">
+                <div class="col-md-12 mb-2">
+                    <label for="cliente_id" class="form-label fw-bold">Cliente:<span class="text-danger">*</span></label>
+                    <select class="form-select select2-persona" id="cliente_id" name="cliente_id" data-rol="cliente" required>
+                        <option value="">Seleccione un cliente...</option>
+                        {% for cli in clientes %}
+                        <option value="{{ cli.id }}" {% if form_data.get('cliente_id')|int == cli.id %}selected{% endif %}>
+                            {{ cli.razon_social or (cli.nombre + ' ' + cli.apellido) }} (CUIT/CUIL: {{ cli.cuit_cuil }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-8">
+                    <label class="form-label fw-bold">Margen de Ganancia del Celular (Sobre Costo USD):<span class="text-danger">*</span></label>
+                    <div class="d-flex p-2 bg-light rounded border">
+                        <div class="form-check me-4">
+                            <input class="form-check-input" type="radio" name="ganancia_tipo" id="ganancia_tipo_pct" value="porcentaje" 
+                                {% if form_data.get('ganancia_tipo', 'porcentaje') == 'porcentaje' %}checked{% endif %} required>
+                            <label class="form-check-label fw-bold" for="ganancia_tipo_pct">Porcentaje (%)</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="ganancia_tipo" id="ganancia_tipo_fijo" value="monto_fijo"
+                                {% if form_data.get('ganancia_tipo') == 'monto_fijo' %}checked{% endif %} required>
+                            <label class="form-check-label fw-bold" for="ganancia_tipo_fijo">Monto Fijo (Suma USD/ARS)</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4 ganancia-fields" id="ganancia_pct_group">
+                    <label for="ganancia_pct" class="form-label fw-bold">Ganancia %:</label>
+                    <div class="input-group">
+                        <input type="number" step="0.01" class="form-control" id="ganancia_pct" name="ganancia_pct" value="{{ form_data.get('ganancia_pct', '30.00') }}" min="0">
+                        <span class="input-group-text">%</span>
+                    </div>
+                </div>
+
+                <div class="col-md-4 ganancia-fields form-group-hidden" id="monto_fijo_group">
+                    <label for="monto_agregado" class="form-label fw-bold">Suma al Costo:</label>
+                    <input type="number" step="0.01" class="form-control" id="monto_agregado" name="monto_agregado" value="{{ form_data.get('monto_agregado', '') }}" min="0">
+                </div>
+                <div class="col-md-4 ganancia-fields form-group-hidden" id="monto_fijo_moneda_group">
+                    <label for="monto_agregado_moneda" class="form-label fw-bold">Moneda del Monto:</label>
+                    <select class="form-select" id="monto_agregado_moneda" name="monto_agregado_moneda">
+                        <option value="USD">USD (Dólares)</option>
+                        <option value="ARS">ARS (Pesos)</option>
+                    </select>
+                </div>
+
+                {# --- SECCIÓN: ACCESORIOS A LA VENTA --- #}
+                <div class="col-12 mt-4">
+                    <div class="card border-primary shadow-sm">
+                        <div class="card-header bg-primary text-white fw-bold">
+                            <i class="bi bi-cart-plus me-2"></i>Accesorios y Adicionales (A la Venta)
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted small">Añada accesorios que el cliente desea comprar. El precio se sumará al total de la venta.</p>
+                            <div id="contenedor-adicionales">
+                                <!-- Renglones de venta adicionales aparecerán aquí -->
+                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="agregarRenglonAdicional()">
+                                <i class="bi bi-plus-circle me-1"></i>Vender Accesorio / Repuesto
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {# --- SECCIÓN: REGALOS (SIN CARGO) --- #}
+                <div class="col-12 mt-4">
+                    <div class="card border-info shadow-sm">
+                        <div class="card-header bg-info text-white fw-bold">
+                            <i class="bi bi-gift me-2"></i>Promociones e Insumos de Regalo (Sin Cargo)
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted small">Añada accesorios de regalo. Se descuentan de stock pero NO suman al precio.</p>
+                            <div id="contenedor-promociones"></div>
+                            <button type="button" class="btn btn-outline-info btn-sm" onclick="agregarRenglonPromo()">
+                                <i class="bi bi-plus-circle me-1"></i>Añadir Regalo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <label for="impuestos_pct" class="form-label fw-bold">Impuestos / Comisiones Global (%):</label>
+                    <input type="number" step="0.01" class="form-control" id="impuestos_pct" name="impuestos_pct" value="{{ form_data.get('impuestos_pct', '0.00') }}" min="0">
+                </div>
+
+                <div class="col-md-8">
+                    <label for="observaciones" class="form-label fw-bold">Observaciones de la Venta:</label>
+                    <textarea class="form-control" id="observaciones" name="observaciones" rows="2">{{ form_data.get('observaciones', '') }}</textarea>
+                </div>
+
+                {# Resumen de Precios Finales #}
+                <div class="col-md-12 mt-4">
+                    <div class="p-3 border rounded shadow-sm" style="background-color: #f8f9fa;">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label text-muted small fw-bold">Subtotal Acumulado USD:</label>
+                                <input type="text" class="form-control form-control-sm bg-white" id="subtotal_usd_display" readonly>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold text-primary">PRECIO FINAL ARS:</label>
+                                <input type="text" class="form-control form-control-lg bg-warning-light text-center" id="precio_final_ars_display" readonly>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold text-dark">PRECIO FINAL USD:</label>
+                                <input type="text" class="form-control form-control-lg bg-white text-center" id="precio_final_usd_display" readonly>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 mt-4 d-flex justify-content-end gap-2">
+                    <a href="{{ url_for('inventario_celulares') }}" class="btn btn-secondary btn-lg">Cancelar</a>
+                    <button type="submit" class="btn btn-success btn-lg px-5 shadow"><i class="bi bi-check-circle me-2"></i>Generar Presupuesto</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# TEMPLATES PARA DINÁMICOS #}
+<template id="template-adicional">
+    <div class="row mb-2 align-items-end renglon-adicional gx-2">
+        <div class="col-md-6">
+            <label class="small fw-bold">Accesorio a la Venta:</label>
+            <select name="add_item_id[]" class="form-select select2-repuestos-adicional" required></select>
+        </div>
+        <div class="col-md-2">
+            <label class="small fw-bold">Cant:</label>
+            <input type="number" name="add_cantidad[]" class="form-control input-cantidad-adicional" value="1" min="1">
+        </div>
+        <div class="col-md-3">
+            <label class="small fw-bold">Precio Unit. USD:</label>
+            <div class="input-group">
+                <span class="input-group-text">$</span>
+                <input type="number" step="0.01" name="add_precio_usd[]" class="form-control input-precio-adicional" value="0.00">
+            </div>
+        </div>
+        <div class="col-md-1">
+            <button type="button" class="btn btn-outline-danger border-0 btn-eliminar-adicional">
+                <i class="bi bi-trash fs-5"></i>
+            </button>
+        </div>
+    </div>
+</template>
+
+<template id="template-promo">
+    <div class="row mb-2 align-items-end renglon-promo gx-2">
+        <div class="col-md-8">
+            <label class="small fw-bold text-info">Regalo (Sin Cargo):</label>
+            <select name="promo_item_id[]" class="form-select select2-repuestos-promo" required></select>
+        </div>
+        <div class="col-md-3">
+            <label class="small fw-bold text-info">Cant:</label>
+            <input type="number" name="promo_cantidad[]" class="form-control" value="1" min="1">
+        </div>
+        <div class="col-md-1">
+            <button type="button" class="btn btn-outline-danger border-0" onclick="this.closest('.renglon-promo').remove()">
+                <i class="bi bi-trash fs-5"></i>
+            </button>
+        </div>
+    </div>
+</template>
+
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    // 1. Manejo visual de cotización
+    function toggleManualDolar() {
+        const tipo = $('#tipo_dolar').val();
+        if (tipo === 'manual') {
+            $('#manual_dolar_group').fadeIn();
+        } else {
+            $('#manual_dolar_group').fadeOut();
+        }
+        calcularPrecioFinal();
+    }
+
+    // 2. Agregar renglón de regalos
+    function agregarRenglonPromo() {
+        const contenedor = document.getElementById('contenedor-promociones');
+        const template = document.getElementById('template-promo').content.cloneNode(true);
+        const nuevoRenglon = template.querySelector('.renglon-promo');
+        contenedor.appendChild(nuevoRenglon);
+
+        $(nuevoRenglon).find('.select2-repuestos-promo').select2({
+            placeholder: "Buscar regalo...",
+            ajax: {
+                url: "{{ url_for('api_buscar_repuestos') }}",
+                dataType: 'json',
+                processResults: data => ({ results: data.results })
+            }
+        });
+    }
+
+    // 3. Agregar renglón de accesorios a la venta
+    function agregarRenglonAdicional() {
+        const contenedor = document.getElementById('contenedor-adicionales');
+        const template = document.getElementById('template-adicional').content.cloneNode(true);
+        const nuevoRenglon = template.querySelector('.renglon-adicional');
+        contenedor.appendChild(nuevoRenglon);
+
+        const $select = $(nuevoRenglon).find('.select2-repuestos-adicional');
+        $select.select2({
+            placeholder: "Seleccionar producto...",
+            ajax: {
+                url: "{{ url_for('api_buscar_repuestos') }}",
+                dataType: 'json',
+                processResults: data => ({ results: data.results })
+            }
+        }).on('select2:select', function (e) {
+            const data = e.params.data;
+            $(nuevoRenglon).find('.input-precio-adicional').val(data.precio_venta_usd || 0);
+            calcularPrecioFinal(); // Recalcular al seleccionar
+        });
+
+        calcularPrecioFinal();
+    }
+
+    // 4. Función de Cálculo MAESTRA
+    function calcularPrecioFinal() {
+        const costoUsdCelular = parseFloat("{{ celular.costo_usd }}") || 0;
+        const tipoDolar = $('#tipo_dolar').val();
+        
+        let cotizacion = 1;
+        if (tipoDolar === 'manual') {
+            cotizacion = parseFloat($('#valor_dolar_manual').val()) || 0;
+        } else {
+            cotizacion = parseFloat($('#tipo_dolar option:selected').data('val')) || 1;
+        }
+
+        // Sincronizar campos ocultos para el POST
+        $('#hidden_tipo_dolar').val(tipoDolar);
+        $('#hidden_valor_dolar_manual').val($('#valor_dolar_manual').val());
+
+        const gananciaTipo = $('input[name="ganancia_tipo"]:checked').val();
+        const impuestosPct = parseFloat($('#impuestos_pct').val()) || 0;
+        
+        // A. Calcular base Celular
+        let totalAcumuladoUsd = 0;
+        if (gananciaTipo === 'porcentaje') {
+            const pct = parseFloat($('#ganancia_pct').val()) || 0;
+            totalAcumuladoUsd = costoUsdCelular * (1 + (pct / 100));
+        } else {
+            const monto = parseFloat($('#monto_agregado').val()) || 0;
+            if ($('#monto_agregado_moneda').val() === 'USD') {
+                totalAcumuladoUsd = costoUsdCelular + monto;
+            } else {
+                totalAcumuladoUsd = costoUsdCelular + (cotizacion > 0 ? (monto / cotizacion) : 0);
+            }
+        }
+
+        // B. SUMAR ADICIONALES (Bucle sobre los renglones dinámicos)
+        $('.renglon-adicional').each(function() {
+            const cant = parseFloat($(this).find('.input-cantidad-adicional').val()) || 0;
+            const precio = parseFloat($(this).find('.input-precio-adicional').val()) || 0;
+            totalAcumuladoUsd += (cant * precio);
+        });
+
+        // C. Actualizar UI
+        $('#subtotal_usd_display').val('USD ' + totalAcumuladoUsd.toFixed(2));
+        
+        let precioFinalArs = totalAcumuladoUsd * cotizacion;
+        if (impuestosPct > 0) {
+            precioFinalArs = precioFinalArs * (1 + (impuestosPct / 100));
+        }
+        const precioFinalUsd = cotizacion > 0 ? (precioFinalArs / cotizacion) : 0;
+
+        $('#precio_final_ars_display').val('ARS ' + precioFinalArs.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+        $('#precio_final_usd_display').val('USD ' + precioFinalUsd.toFixed(2));
+    }
+
+    // 5. Inicialización y DELEGACIÓN DE EVENTOS
+    $(document).ready(function() {
+        $('.select2-persona').select2({ placeholder: 'Buscar cliente...', allowClear: true });
+
+        // Escuchar cambios en CUALQUIER input/select (incluso los agregados dinámicamente)
+        $(document).on('input change', 'input, select', function() {
+            calcularPrecioFinal();
+        });
+
+        // Manejar eliminación de adicionales
+        $(document).on('click', '.btn-eliminar-adicional', function() {
+            $(this).closest('.renglon-adicional').remove();
+            calcularPrecioFinal();
+        });
+
+        // Cambio de tipo de ganancia
+        $('input[name="ganancia_tipo"]').on('change', function() {
+            $('.ganancia-fields').addClass('form-group-hidden');
+            if (this.value === 'porcentaje') {
+                $('#ganancia_pct_group').removeClass('form-group-hidden');
+            } else {
+                $('#monto_fijo_group, #monto_fijo_moneda_group').removeClass('form-group-hidden');
+            }
+            calcularPrecioFinal();
+        });
+
+        calcularPrecioFinal();
+    });
+</script>
+{% endblock %}

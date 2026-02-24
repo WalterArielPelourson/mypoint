@@ -1,0 +1,181 @@
+{% extends 'layout.html' %}
+
+{% block title %}Estado de Cuenta - {{ cliente.razon_social or (cliente.nombre + ' ' + cliente.apellido) }}{% endblock %}
+
+{# MACRO: Renderiza la tabla con lógica bimonetaria y enlace a Plan de Cuotas #}
+{% macro render_tabla_cliente(lista) %}
+<div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 table-v">
+        <thead class="table-light">
+            <tr>
+                <th class="ps-4">Fecha / Vencimiento</th>
+                <th>Concepto / Referencia</th>
+                <th class="text-center">Operación Física</th>
+                <th class="text-end">Debe (+)</th>
+                <th class="text-end">Haber (-)</th>
+                <th class="text-end pe-4">Saldo Acumulado</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for mov in lista %}
+            {# Moneda según rubro: Equipos en USD, Servicios en ARS #}
+            {% set simbolo = 'u$d' if mov.rubro == 'EQUIPOS' else '$' %}
+            
+            <tr class="mov-fila {% if mov.vencida %}table-danger{% endif %}">
+                <td class="ps-4 small {% if mov.vencida %}fw-bold text-danger{% else %}text-muted{% endif %}">
+                    {{ mov.fecha|datetimeformat('%d/%m/%Y') }}
+                    {% if mov.vencida %}
+                        <i class="bi bi-exclamation-triangle-fill ms-1" title="VENCIDA"></i>
+                    {% endif %}
+                </td>
+
+                <td>
+                    <div class="fw-bold {% if mov.vencida %}text-danger{% endif %}">
+                        {{ mov.descripcion }}
+                    </div>
+                    
+                    {# --- ACCESO AL PLAN DE CUOTAS (CORREGIDO) --- #}
+                    {% if mov.es_cuota %}
+                        <a href="{{ url_for('ver_plan_cuotas', venta_id=mov.ref) }}" class="btn btn-link btn-sm p-0 text-decoration-none small fw-bold">
+                            <i class="bi bi-calendar3 me-1"></i>Ver Plan de Pagos
+                        </a>
+                    {% else %}
+                        <small class="text-muted">ID Ref: #{{ mov.ref }}</small>
+                    {% endif %}
+                </td>
+
+                <td class="text-center">
+                    {% if mov.monto_usd_ref and mov.monto_usd_ref > 0 %}
+                        <div class="badge bg-success text-white px-2">u$d {{ "{:,.2f}".format(mov.monto_usd_ref) }} entregados</div>
+                        <div class="text-muted" style="font-size: 0.7rem;">Cotiz: ${{ "{:,.2f}".format(mov.cotizacion) }}</div>
+                    {% elif mov.rubro == 'EQUIPOS' and mov.tipo == 'HABER' %}
+                        <div class="text-muted" style="font-size: 0.7rem;">Convertido a cotiz: ${{ "{:,.2f}".format(mov.cotizacion) }}</div>
+                    {% else %}
+                        <span class="text-muted small">-</span>
+                    {% endif %}
+                </td>
+
+                {# COLUMNA DEBE #}
+                <td class="text-end text-danger fw-semibold">
+                    {% if mov.tipo == 'DEBE' %}
+                        {{ simbolo }} {{ "{:,.2f}".format(mov.monto_reg) }}
+                    {% else %}-{% endif %}
+                </td>
+
+                {# COLUMNA HABER #}
+                <td class="text-end text-success fw-semibold">
+                    {% if mov.tipo == 'HABER' %}
+                        {{ simbolo }} {{ "{:,.2f}".format(mov.monto_reg) }}
+                    {% else %}-{% endif %}
+                </td>
+
+                {# COLUMNA SALDO ACUMULADO #}
+                <td class="text-end pe-4 fw-bold">
+                    {{ simbolo }} {{ "{:,.2f}".format(mov.saldo_rubro_acum) }}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" class="text-center py-5 text-muted">No hay movimientos registrados en esta categoría.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endmacro %}
+
+{% block head_extra %}
+<style>
+    .card-resumen { border-radius: 15px; border: none; transition: transform 0.2s; }
+    .card-resumen:hover { transform: translateY(-5px); }
+    .nav-pills .nav-link.active { box-shadow: 0 4px 10px rgba(0,0,0,0.15); font-weight: bold; color: white !important; }
+    #pills-equipos-tab.active { background-color: #0d6efd !important; }
+    #pills-servicios-tab.active { background-color: #0dcaf0 !important; color: #000 !important; }
+    .text-deuda { font-size: 2rem; font-weight: 800; }
+    .table-v { vertical-align: middle; }
+    .table-danger { --bs-table-bg: #fff5f5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- ENCABEZADO -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-1">
+                <li class="breadcrumb-item"><a href="{{ url_for('listar_clientes_cc') }}">Cuentas Corrientes</a></li>
+                <li class="breadcrumb-item active">Detalle Cliente</li>
+            </ol>
+        </nav>
+        <h1 class="h2 fw-bold text-dark">
+            <i class="bi bi-person-vcard-fill me-2 text-primary"></i>
+            {{ cliente.razon_social or (cliente.nombre + ' ' + cliente.apellido) }}
+        </h1>
+        <p class="text-muted mb-0">CUIT/CUIL: {{ cliente.cuit_cuil }} | Tel: {{ cliente.telefono or 'N/A' }}</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button onclick="window.print()" class="btn btn-outline-dark">
+            <i class="bi bi-printer me-2"></i>Imprimir
+        </button>
+        <a href="{{ url_for('cobrar_cliente', cliente_id=cliente.id) }}" class="btn btn-success fw-bold px-4">
+            <i class="bi bi-cash-coin me-2"></i>REGISTRAR COBRO
+        </a>
+    </div>
+</div>
+
+<!-- TARJETAS DE SALDOS -->
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card card-resumen shadow-sm bg-primary text-white">
+            <div class="card-body p-4 text-center">
+                <h6 class="text-uppercase fw-bold mb-1 opacity-75">Saldo Pendiente Equipos</h6>
+                <div class="text-deuda">USD {{ "{:,.2f}".format(saldo_equipos) }}</div>
+                <small class="opacity-75">Deuda gestionada en Dólares</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 text-end">
+        <div class="card card-resumen shadow-sm border-start border-info border-5 h-100">
+            <div class="card-body p-4 text-center text-dark">
+                <h6 class="text-uppercase fw-bold text-muted mb-1">Saldo Pendiente Servicios</h6>
+                <div class="text-deuda">$ {{ "{:,.2f}".format(saldo_servicios) }}</div>
+                <span class="badge bg-info text-dark text-uppercase">Gestión en Pesos</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PESTAÑAS DE HISTORIAL -->
+<div class="card shadow-sm border-0 mb-4">
+    <div class="card-header bg-white py-3">
+        <ul class="nav nav-pills card-header-pills" id="pills-tab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active px-4" id="pills-equipos-tab" data-bs-toggle="pill" data-bs-target="#pills-equipos" type="button" role="tab">
+                    <i class="bi bi-phone me-2"></i>HISTORIAL EQUIPOS (USD)
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link px-4" id="pills-servicios-tab" data-bs-toggle="pill" data-bs-target="#pills-servicios" type="button" role="tab">
+                    <i class="bi bi-tools me-2"></i>HISTORIAL SERVICIOS (ARS)
+                </button>
+            </li>
+        </ul>
+    </div>
+
+    <div class="card-body p-0">
+        <div class="tab-content" id="pills-tabContent">
+            
+            <div class="tab-pane fade show active" id="pills-equipos" role="tabpanel">
+                {% set movs_equipos = movimientos | selectattr('rubro', 'equalto', 'EQUIPOS') | list %}
+                {{ render_tabla_cliente(movs_equipos) }}
+            </div>
+
+            <div class="tab-pane fade" id="pills-servicios" role="tabpanel">
+                {% set movs_servicios = movimientos | selectattr('rubro', 'equalto', 'SERVICIOS') | list %}
+                {{ render_tabla_cliente(movs_servicios) }}
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endblock %}

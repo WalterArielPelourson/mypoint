@@ -1,0 +1,283 @@
+{% extends 'layout.html' %}
+
+{% block head %}
+    <title>Lista de Precios de Repuestos</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+    <style>
+        .pricing-option {
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 15px;
+            background-color: #f9f9f9;
+        }
+        .pricing-option h5 {
+            margin-top: 0;
+            color: #007bff;
+        }
+        #percentageOptionsContainer, #fixedOptionsContainer {
+            display: none; 
+        }
+        #strategyPercentage:checked ~ #percentageOptionsContainer {
+            display: block;
+        }
+        #strategyFixed:checked ~ #fixedOptionsContainer {
+            display: block;
+        }
+
+        .table-responsive {
+            margin-top: 20px;
+        }
+
+        .table thead th {
+            position: sticky;
+            top: 0;
+            background-color: #f8f9fa; 
+            z-index: 10; 
+        }
+
+        .table .form-control-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            height: auto; 
+        }
+
+        .select2-container .select2-selection--multiple {
+            min-height: 38px; 
+            border-color: #ced4da; 
+        }
+        .select2-container--default .select2-selection--multiple .select2-selection__choice {
+            background-color: #007bff;
+            border-color: #0056b3;
+            color: white;
+        }
+        .bg-usd-logic {
+            background-color: #fff3cd;
+            border-left: 5px solid #ffc107;
+        }
+        .badge-historic {
+            font-size: 0.65rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="container-fluid mt-4">
+        <h2 class="mb-4">Generar y Modificar Precios de Venta</h2>
+
+        {# Valores del Dólar #}
+        <div class="alert alert-info bg-usd-logic shadow-sm">
+            <h6 class="alert-heading fw-bold"><i class="bi bi-shield-check me-2"></i>Lógica de Protección de Margen Activa</h6>
+            <p class="mb-1"><strong>Dólar de Venta Actual:</strong> ARS {{ valor_dolar_venta|default(0)|round(2) }}</p>
+            <small class="text-muted">Nota: Los precios sugeridos se calculan sumando el margen al costo USD y convirtiendo a pesos al valor de venta actual para asegurar la reposición de stock.</small>
+        </div>
+        
+        <input type="hidden" id="valorDolarVentaJs" value="{{ valor_dolar_venta|default(0)|round(2) }}">
+
+        {# Formulario de Filtro #}
+        <form method="GET" action="{{ url_for('lista_precios_repuestos') }}" class="mb-4 p-3 bg-light border rounded shadow-sm">
+            <h5 class="mb-3">Filtrar por Producto / Accesorio</h5>
+            <div class="row">
+                <div class="col-md-8">
+                    <div class="form-group">
+                        <label for="select_repuestos" class="form-label fw-bold">Seleccionar Ítems (Vacío para listar todos con stock)</label>
+                        <select class="form-control select2-multiple" id="select_repuestos" multiple="multiple">
+                            {% if form_data.selected_repuesto_ids %}
+                                {% for rep_id_str in form_data.selected_repuesto_ids.split(',') %}
+                                    {% if rep_id_str and rep_id_str.isdigit() %}
+                                        {% set rep_id = rep_id_str | int %}
+                                        {% set repuesto_data = all_repuestos_for_select2 | selectattr('id', 'equalto', rep_id) | list %}
+                                        {% if repuesto_data %}
+                                            <option value="{{ rep_id }}" selected>
+                                                {{ repuesto_data[0].nombre_parte }} ({{ repuesto_data[0].modelo_compatible or 'Genérico' }})
+                                            </option>
+                                        {% endif %}
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        </select>
+                        <input type="hidden" id="selected_repuesto_ids_hidden_filter" name="repuesto_ids" value="{{ form_data.selected_repuesto_ids }}">
+                    </div>
+                </div>
+                <div class="col-md-4 d-flex align-items-end gap-2">
+                    <button type="submit" class="btn btn-info w-100 text-white fw-bold"><i class="bi bi-funnel me-2"></i>Aplicar Filtro</button>
+                    {% if form_data.selected_repuesto_ids %}
+                        <a href="{{ url_for('lista_precios_repuestos') }}" class="btn btn-outline-secondary w-100">
+                            <i class="bi bi-arrow-clockwise me-2"></i>Limpiar
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+        </form>
+
+        {# Formulario de Cálculo #}
+        <form method="POST" action="{{ url_for('lista_precios_repuestos') }}" class="mb-5">
+            <input type="hidden" name="selected_repuesto_ids_hidden" value="{{ form_data.selected_repuesto_ids }}">
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="pricing-option shadow-sm">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="pricing_strategy" id="strategyPercentage" value="porcentaje" {% if form_data.pricing_strategy == 'porcentaje' %}checked{% endif %}>
+                            <label class="form-check-label" for="strategyPercentage">
+                                <h5 class="mb-0">Margen Porcentual</h5>
+                            </label>
+                        </div>
+                        <div class="form-group mt-3" id="percentageOptionsContainer">
+                            <label for="ganancia_pct" class="small fw-bold">Porcentaje a sumar (%)</label>
+                            <input type="number" step="0.01" class="form-control" id="ganancia_pct" name="ganancia_pct" value="{{ form_data.ganancia_pct }}">
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="pricing-option shadow-sm">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="pricing_strategy" id="strategyFixed" value="monto_fijo" {% if form_data.pricing_strategy == 'monto_fijo' %}checked{% endif %}>
+                            <label class="form-check-label" for="strategyFixed">
+                                <h5 class="mb-0">Margen de Monto Fijo</h5>
+                            </label>
+                        </div>
+                        <div class="form-group mt-2" id="fixedOptionsContainer">
+                            <div class="row g-2">
+                                <div class="col-8">
+                                    <label for="monto_fijo" class="small fw-bold">Monto a Añadir</label>
+                                    <input type="number" step="0.01" class="form-control" id="monto_fijo" name="monto_fijo" value="{{ form_data.monto_fijo }}">
+                                </div>
+                                <div class="col-4">
+                                    <label class="small fw-bold">Moneda</label>
+                                    <select class="form-control" name="monto_fijo_moneda">
+                                        <option value="USD" {% if form_data.monto_fijo_moneda == 'USD' %}selected{% endif %}>USD</option>
+                                        <option value="ARS" {% if form_data.monto_fijo_moneda == 'ARS' %}selected{% endif %}>ARS</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sticky-top bg-white p-3 border-bottom shadow-sm d-flex gap-2" style="top: 0; z-index: 1020;">
+                <button type="submit" name="action_type" value="generate_suggestions" class="btn btn-primary fw-bold"><i class="bi bi-calculator me-2"></i>Calcular Sugeridos</button>
+                <button type="submit" name="action_type" value="save_prices" class="btn btn-success fw-bold"><i class="bi bi-save me-2"></i>Guardar Cambios</button>
+                {% if repuestos %}
+                    <a href="{{ url_for('imprimir_precios_repuestos', repuesto_ids=form_data.selected_repuesto_ids) }}" target="_blank" class="btn btn-dark fw-bold"><i class="bi bi-printer me-2"></i>Imprimir Lista</a>
+                {% endif %}
+            </div>
+
+            {% if repuestos %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle border shadow-sm mt-4">
+                        <thead class="table-secondary">
+                            <tr>
+                                <th>Descripción del Ítem</th>
+                                <th class="text-end">Costo Unit. (USD)</th>
+                                <th class="text-end">Costo Real Pagado (ARS)</th>
+                                <th class="text-end bg-primary-subtle">Precio Venta (ARS)</th> 
+                                <th class="text-end">Precio Venta (USD)</th> 
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for repuesto in repuestos %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-bold text-dark">{{ repuesto.nombre_parte }}</div>
+                                        <div class="d-flex gap-2 align-items-center mt-1">
+                                            <span class="badge bg-secondary badge-historic">{{ repuesto.modelo_compatible or 'Universal' }}</span>
+                                            <span class="badge bg-light text-muted border badge-historic">Stock: {{ repuesto.stock }}</span>
+                                            {% if repuesto.dolar_compra_historico %}
+                                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle badge-historic">
+                                                    <i class="bi bi-info-circle me-1"></i>Dólar Compra: ${{ repuesto.dolar_compra_historico|round(2) }}
+                                                </span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td class="text-end fw-bold">USD {{ repuesto.costo_usd|default(0)|round(2) }}</td>
+                                    <td class="text-end text-muted">
+                                        ARS {{ repuesto.costo_ars|default(0)|round(2) }}
+                                    </td>
+                                    <td class="text-end bg-primary-subtle">
+                                        <input type="number" step="0.01" class="form-control form-control-sm text-end precio-ars-input fw-bold border-primary shadow-sm"
+                                               name="precio_venta_ars_{{ repuesto.id }}"
+                                               value="{{ repuesto.precio_venta_sugerido_ars|default(0)|round(2) }}"
+                                               data-repuesto-id="{{ repuesto.id }}">
+                                    </td>
+                                    <td class="text-end">
+                                        <input type="number" step="0.01" class="form-control form-control-sm text-end precio-usd-output bg-white border-0 text-muted"
+                                               name="precio_venta_usd_{{ repuesto.id }}"
+                                               value="{{ repuesto.precio_venta_sugerido_usd|default(0)|round(2) }}"
+                                               data-repuesto-id="{{ repuesto.id }}" readonly>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        </form>
+    </div>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const strategyPercentageRadio = document.getElementById('strategyPercentage');
+            const strategyFixedRadio = document.getElementById('strategyFixed');
+            const percentageOptionsContainer = document.getElementById('percentageOptionsContainer');
+            const fixedOptionsContainer = document.getElementById('fixedOptionsContainer');
+            const valorDolarVenta = parseFloat(document.getElementById('valorDolarVentaJs').value) || 1.0;
+
+            function togglePricingOptions() {
+                if (strategyPercentageRadio.checked) {
+                    percentageOptionsContainer.style.display = 'block';
+                    fixedOptionsContainer.style.display = 'none';
+                } else if (strategyFixedRadio.checked) {
+                    percentageOptionsContainer.style.display = 'none';
+                    fixedOptionsContainer.style.display = 'block';
+                }
+            }
+
+            strategyPercentageRadio.addEventListener('change', togglePricingOptions);
+            strategyFixedRadio.addEventListener('change', togglePricingOptions);
+            togglePricingOptions();
+
+            function updateUsdPrice(event) {
+                const arsInput = event.target;
+                const repuestoId = arsInput.dataset.repuestoId;
+                const usdOutput = document.querySelector(`.precio-usd-output[data-repuesto-id="${repuestoId}"]`);
+                const arsValue = parseFloat(arsInput.value);
+
+                if (!isNaN(arsValue) && arsValue >= 0 && valorDolarVenta > 0) {
+                    const usdValue = arsValue / valorDolarVenta;
+                    usdOutput.value = usdValue.toFixed(2);
+                } else {
+                    usdOutput.value = (0).toFixed(2);
+                }
+            }
+
+            document.querySelectorAll('.precio-ars-input').forEach(input => {
+                input.addEventListener('input', updateUsdPrice);
+            });
+
+            $('#select_repuestos').select2({
+                placeholder: 'Buscar productos...',
+                allowClear: true,
+                ajax: {
+                    url: '{{ url_for("api_buscar_repuestos") }}',
+                    dataType: 'json',
+                    delay: 250,
+                    data: function (params) { return { q: params.term }; },
+                    processResults: function (data) { return { results: data.results }; },
+                    cache: true
+                }
+            });
+
+            $('#select_repuestos').on('change', function() {
+                const selectedIds = $(this).val();
+                $('#selected_repuesto_ids_hidden_filter').val(selectedIds ? selectedIds.join(',') : '');
+            });
+        });
+    </script>
+{% endblock %}
