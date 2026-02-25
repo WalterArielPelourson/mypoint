@@ -28,8 +28,13 @@
                             <span class="badge bg-warning text-dark">SuperAdministrador</span>
                             {% elif user.role == 'admin' %}
                             <span class="badge bg-primary">Administrador</span>
+
+                            {% elif user.role == 'tecnico' %}
+                            <span class="badge bg-info text-dark">Técnico</span>
+
                             {% else %}
                             <span class="badge bg-secondary">Usuario Estándar</span>
+                            
                             {% endif %}
                         </td>
                         <td>
@@ -89,7 +94,7 @@
                     <label class="form-label">Rol / Nivel</label>
                     <select name="role" class="form-select">
                         <option value="tecnico">Técnico</option>
-                        <option value="usuario">Vendedor/Usuario (Restringido a Cuentas Virtuales)</option>
+                        <option value="usuario">Vendedor/Usuario </option>
                         <option value="admin">Administrador (Acceso Total)</option>
                     </select>
                 </div>

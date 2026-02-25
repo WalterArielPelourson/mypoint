@@ -2214,12 +2214,42 @@ def ver_detalle_cc_cliente(cliente_id):
     cotiz_actual = float(dolar_info['compra_blue'] or 1.0)
 
     # 1. DEBE: Ventas y sus CUOTAS (Moneda base: USD)
+    # Actualizamos el SQL para traer TODOS los campos de montos iniciales
     ventas = db_query("""
-        SELECT id, fecha_venta, precio_final_ars, precio_final_usd, valor_dolar_momento, cantidad_cuotas 
+        SELECT id, fecha_venta, precio_final_ars, precio_final_usd, valor_dolar_momento, 
+               cantidad_cuotas, monto_cobrado_ars, monto_cobrado_usd, 
+               monto_transferencia_ars, monto_mp_ars, monto_debito_ars, 
+               monto_credito_ars, valor_celular_parte_pago
         FROM ventas WHERE cliente_id = ? AND status = 'COMPLETADA'
     """, (cliente_id,))
     
     for v in ventas:
+        cotiz_v = v['valor_dolar_momento'] or 1.0
+        
+        # --- A. Registramos la "Entrega Inicial" en el DEBE (lo que no es crédito) ---
+        total_pago_inicial_ars = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
+                                 (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
+                                 (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
+        
+        total_pago_inicial_usd = (v['monto_cobrado_usd'] or 0) + (total_pago_inicial_ars / cotiz_v)
+
+        # Si hubo un pago al momento de la venta, lo ponemos en el debe para que luego el pago en el haber lo anule
+        if total_pago_inicial_usd > 0.01:
+            movimientos.append({
+                'fecha': v['fecha_venta'],
+                'tipo': 'DEBE',
+                'monto_ars': total_pago_inicial_ars + ((v['monto_cobrado_usd'] or 0) * cotiz_v),
+                'monto_reg': total_pago_inicial_usd,
+                'moneda_display': 'USD',
+                'descripcion': f"Venta #{v['id']} - Entrega Inicial Acordada", 
+                'rubro': 'EQUIPOS',
+                'cotizacion': cotiz_v,
+                'vencida': False,
+                'es_cuota': False,
+                'ref': v['id']
+            })
+
+        # --- B. Registramos las CUOTAS en el DEBE ---
         if v['cantidad_cuotas'] > 1:
             cuotas = db_query("SELECT * FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
             for c in cuotas:
@@ -2233,29 +2263,19 @@ def ver_detalle_cc_cliente(cliente_id):
                     'fecha': c['fecha_vencimiento'] + " 09:00:00",
                     'tipo': 'DEBE', 
                     'monto_ars': c['monto_ars'],
-                    'monto_reg': c['monto_ars'] / (v['valor_dolar_momento'] or 1.0), # Valor en USD
+                    'monto_reg': c['monto_ars'] / cotiz_v,
                     'moneda_display': 'USD',
                     'descripcion': f"Venta #{v['id']} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
                     'rubro': 'EQUIPOS',
-                    'cotizacion': v['valor_dolar_momento'], 
+                    'cotizacion': cotiz_v,
                     'vencida': es_vencida,
-                    'es_cuota': True,  # <--- CRÍTICO para el link en el HTML
-                    'ref': v['id']     # <--- ID de la venta para el url_for
+                    'es_cuota': True,
+                    'ref': v['id']
                 })
         else:
-            movimientos.append({
-                'fecha': v['fecha_venta'], 
-                'tipo': 'DEBE', 
-                'monto_ars': v['precio_final_ars'], 
-                'monto_reg': v['precio_final_usd'], # Valor en USD
-                'moneda_display': 'USD',
-                'descripcion': f"Venta #{v['id']} (Equipo)", 
-                'rubro': 'EQUIPOS',
-                'cotizacion': v['valor_dolar_momento'], 
-                'vencida': False,
-                'es_cuota': True,  # <--- Habilitamos link también para venta única
-                'ref': v['id']
-            })
+            # Si fue una venta sin cuotas (pago total), ya se cubrió con la "Entrega Inicial" de arriba.
+            # No hace falta duplicar el registro.
+            pass
 
     # 2. DEBE: Servicios (Moneda base: ARS)
     servicios = db_query("SELECT id, fecha_servicio as fecha, precio_final_ars as monto, falla_reportada as descripcion FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'", (cliente_id,))
@@ -2264,7 +2284,7 @@ def ver_detalle_cc_cliente(cliente_id):
             'fecha': s['fecha'], 
             'tipo': 'DEBE', 
             'monto_ars': s['monto'], 
-            'monto_reg': s['monto'], # Valor en ARS
+            'monto_reg': s['monto'], 
             'moneda_display': 'ARS',
             'descripcion': f"Servicio #{s['id']} - {s['descripcion']}", 
             'rubro': 'SERVICIOS',
@@ -2274,7 +2294,7 @@ def ver_detalle_cc_cliente(cliente_id):
             'ref': s['id']
         })
 
-    # 3. HABER: Cobros de Cuenta Corriente
+    # 3. HABER: Cobros de Cuenta Corriente (Pagos realizados después de la venta)
     cobros = db_query("SELECT id, fecha_cobro as fecha, monto_ars, monto_usd, metodo_pago, observaciones, imputacion FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
     for p in cobros:
         if p['imputacion'] == 'EQUIPOS':
@@ -2311,29 +2331,31 @@ def ver_detalle_cc_cliente(cliente_id):
                 'ref': p['id']
             })
 
-    # 4. HABER: Pagos Iniciales de Ventas
-    pagos_ventas = db_query("""
-        SELECT id, fecha_venta, monto_cobrado_ars, monto_cobrado_usd, valor_dolar_momento
-        FROM ventas WHERE cliente_id = ? AND status = 'COMPLETADA'
-    """, (cliente_id,))
-
-    for pv in pagos_ventas:
-        cotiz_h = pv['valor_dolar_momento'] or 1.0
-        monto_reg_usd = pv['monto_cobrado_usd'] + (pv['monto_cobrado_ars'] / cotiz_h)
-        monto_ars_total = pv['monto_cobrado_ars'] + (pv['monto_cobrado_usd'] * cotiz_h)
+    # 4. HABER: Pagos Iniciales de Ventas (CORREGIDO PARA REFLEJAR LA DEUDA REAL)
+    # Recorremos nuevamente las ventas para asentar el ingreso de dinero inicial
+    for v in ventas:
+        cotiz_h = v['valor_dolar_momento'] or 1.0
         
-        if monto_reg_usd > 0:
+        # Sumamos todos los componentes del pago inicial
+        total_ars = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
+                    (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
+                    (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
+        
+        monto_reg_usd = (v['monto_cobrado_usd'] or 0) + (total_ars / cotiz_h)
+        monto_ars_total = total_ars + ((v['monto_cobrado_usd'] or 0) * cotiz_h)
+        
+        if monto_reg_usd > 0.01:
             movimientos.append({
-                'fecha': pv['fecha_venta'], 
+                'fecha': v['fecha_venta'], 
                 'tipo': 'HABER', 
                 'monto_ars': monto_ars_total, 
                 'monto_reg': monto_reg_usd, 
                 'moneda_display': 'USD',
-                'descripcion': f"Pago Inicial Venta #{pv['id']}", 
+                'descripcion': f"Pago Inicial Recibido - Venta #{v['id']}", 
                 'rubro': 'EQUIPOS', 
                 'cotizacion': cotiz_h,
-                'es_cuota': True, # Permitimos ver el plan desde el pago inicial
-                'ref': pv['id']
+                'es_cuota': True, 
+                'ref': v['id']
             })
 
     # --- LÓGICA DE CÁLCULO DE SALDOS ---
@@ -2356,10 +2378,9 @@ def ver_detalle_cc_cliente(cliente_id):
                            cliente=cliente, 
                            movimientos=movimientos, 
                            saldo_equipos=saldo_equipos_usd_acum,
-                           saldo_servicios=saldo_servicios_ars_acum)
+                           saldo_servicios=saldo_servicios_ars_acum)     
     
-       
-
+    
 @app.route('/ventas/plan_cuotas/<int:venta_id>')
 @login_required
 def ver_plan_cuotas(venta_id):
@@ -5689,7 +5710,6 @@ def exportar_personas():
 @app.route('/cuentas/virtuales', methods=['GET', 'POST'])
 @login_required
 @admin_required  # Primero verificamos que sea al menos admin o superadmin
-@restriction_usuario # Luego verificamos que NO sea 'usuario'
 def gestion_cuentas_virtuales():
     # 1. Obtener filtros de fecha y el filtro de cuenta
     start_date, end_date_display, end_date_query = get_date_filters()
@@ -6139,8 +6159,8 @@ if __name__ == '__main__':
         # ==========================================
         
         # Cuentas Virtuales Iniciales
-        db_conn.execute("INSERT OR IGNORE INTO cuentas_entidades (nombre, titular) VALUES ('BANCO', 'General')")
-        db_conn.execute("INSERT OR IGNORE INTO cuentas_entidades (nombre, titular) VALUES ('MERCADO_PAGO', 'General')")
+        db_conn.execute("INSERT OR IGNORE INTO cuentas_entidades (nombre, titular) VALUES ('BANCO', 'MY POINT')")
+        db_conn.execute("INSERT OR IGNORE INTO cuentas_entidades (nombre, titular) VALUES ('MERCADO_PAGO', 'MY POINT')")
 
         # SuperUsuario
         if not db_query("SELECT id FROM users WHERE username = 'superadmin'"):

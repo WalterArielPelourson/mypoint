@@ -111,7 +111,7 @@
                         </ul>
                     </li>
 
-                    {# --- CAJA: Agregado rol 'usuario' --- #}
+                    {# --- CAJA: Agregado rol 'usuario' con acceso a Cuentas Virtuales --- #}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle {% if request.endpoint.startswith('caja') or request.endpoint == 'gestion_cuentas_virtuales' %}active{% endif %}" href="#" id="navbarDropdownCaja" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="bi bi-cash-stack me-1"></i>Caja
@@ -121,15 +121,13 @@
                             <li><a class="dropdown-item" href="{{ url_for('movimientos_caja') }}"><i class="bi bi-arrow-down-up me-1"></i>Movimientos Manuales</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('arqueos_historial') }}"><i class="bi bi-clock-history me-1"></i>Historial de Arqueos</a></li>
                             
-                            {# Restricción específica: El rol 'usuario' no ve Cuentas Virtuales Bancarias #}
-                            {% if current_user.role != 'usuario' %}
+                            {# Cambio: Se habilita el acceso a Cuentas Virtuales para el rol 'usuario' #}
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('gestion_cuentas_virtuales') }}"><i class="bi bi-bank me-1"></i>Cuentas Virtuales (Banco/MP)</a></li>
-                            {% endif %}
                         </ul>
                     </li>
 
-                    {# --- REPORTES: Visible para 'usuario', el filtro de reportes específicos se hace en la vista menu --- #}
+                    {# --- REPORTES: Visible para 'usuario' --- #}
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint.startswith('reportes') %}active{% endif %}" href="{{ url_for('reportes_menu') }}">
                             <i class="bi bi-graph-up-arrow me-1"></i>Reportes
