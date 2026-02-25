@@ -14,9 +14,26 @@ import os
 from database import inicializar_db, db_query as db_query_func, db_execute as db_execute_func
 from itertools import zip_longest 
 
+
+
+
+
+
+
+# --- CONFIGURACIÓN DE RUTAS ---
+# Esto detecta la carpeta donde está este archivo app.py
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+# Unimos la carpeta con el nombre del archivo para tener la ruta completa
+DB_NAME = os.path.join(BASE_DIR, "negocio_erp.db")
+
+
+
+
 # --- INICIALIZACIÓN DE LA APP Y GESTIÓN DE DB ---
 app = Flask(__name__)
-app.secret_key = 'clave_final_super_secreta_cambiar_en_produccion'
+#app.secret_key = 'clave_final_super_secreta_cambiar_en_produccion'
+app.secret_key = os.environ.get('SECRET_KEY', 'desarrollo_local_clave_9911')
 DB_NAME = "negocio_erp.db"
 
 moment = Moment(app)
@@ -5952,8 +5969,11 @@ def crear_item_base():
 
 
 
-# --- BLOQUE DE EJECUCIÓN ---
-if __name__ == '__main__':
+def ejecutar_migraciones_y_configuracion():
+    """
+    Esta función contiene toda la lógica de creación de tablas y 
+    migraciones. Se ejecuta cada vez que la app inicia.
+    """
     inicializar_db()
     with app.app_context():
         db_conn = get_db()
@@ -5962,21 +5982,18 @@ if __name__ == '__main__':
         # 1. CREACIÓN DE TABLAS NUEVAS (IF NOT EXISTS)
         # ==========================================
         
-        # Tabla para ítems promocionales (regalos) en ventas
         db_conn.execute("""
             CREATE TABLE IF NOT EXISTS items_promocionales_venta (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 venta_id INTEGER NOT NULL,
                 repuesto_id INTEGER NOT NULL,
                 cantidad INTEGER DEFAULT 1,
+                costo_usd_momento REAL DEFAULT 0.0,
                 FOREIGN KEY (venta_id) REFERENCES ventas(id),
                 FOREIGN KEY (repuesto_id) REFERENCES repuestos(id)
             )
         """)
         
-        
-        
-        # Tabla para Cobros de Clientes
         db_conn.execute("""
             CREATE TABLE IF NOT EXISTS cobros_clientes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5994,7 +6011,6 @@ if __name__ == '__main__':
             )
         """)
 
-        # Tabla para Plan de Cuotas
         db_conn.execute("""
             CREATE TABLE IF NOT EXISTS ventas_cuotas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6007,7 +6023,6 @@ if __name__ == '__main__':
             )
         """)
 
-        # Tabla para Cuentas/Entidades
         db_conn.execute("""
             CREATE TABLE IF NOT EXISTS cuentas_entidades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6017,20 +6032,18 @@ if __name__ == '__main__':
             )
         """)
         
-        # Dentro de if __name__ == '__main__': en la sección de creación de tablas
         db_conn.execute("""
             CREATE TABLE IF NOT EXISTS items_adicionales_venta (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 venta_id INTEGER NOT NULL,
                 repuesto_id INTEGER NOT NULL,
                 cantidad INTEGER DEFAULT 1,
-                precio_vendido_usd REAL,  -- El precio al que se vendió cada unidad
-                costo_usd_momento REAL,   -- El costo para calcular rentabilidad después
+                precio_vendido_usd REAL,
+                costo_usd_momento REAL,
                 FOREIGN KEY (venta_id) REFERENCES ventas(id),
                 FOREIGN KEY (repuesto_id) REFERENCES repuestos(id)
             )
         """)
-        
 
         # ==========================================
         # 2. MIGRACIONES DE COLUMNAS (ALTER TABLE)
@@ -6039,14 +6052,10 @@ if __name__ == '__main__':
         def agregar_columna(tabla, columna, definicion):
             try:
                 db_conn.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {definicion}")
-                print(f"Columna '{columna}' añadida a '{tabla}'.")
             except sqlite3.OperationalError:
-                pass # La columna ya existe
+                pass 
 
-        # --- Tabla: Celulares ---
         agregar_columna("celulares", "es_parte_pago", "BOOLEAN DEFAULT 0")
-
-        # --- Tabla: Ventas ---
         agregar_columna("ventas", "celular_parte_pago_id", "INTEGER")
         agregar_columna("ventas", "valor_celular_parte_pago", "REAL")
         agregar_columna("ventas", "monto_transferencia_ars", "REAL DEFAULT 0.0")
@@ -6056,8 +6065,6 @@ if __name__ == '__main__':
         agregar_columna("ventas", "saldo_pendiente", "REAL DEFAULT 0.0")
         agregar_columna("ventas", "cantidad_cuotas", "INTEGER DEFAULT 1")
         agregar_columna("ventas", "observaciones", "TEXT")
-
-        # --- Tabla: Servicios Reparación ---
         agregar_columna("servicios_reparacion", "tipo_servicio", "TEXT DEFAULT 'REPARACION'")
         agregar_columna("servicios_reparacion", "saldo_pendiente", "REAL DEFAULT 0.0")
         agregar_columna("servicios_reparacion", "tecnico_id", "INTEGER")
@@ -6066,61 +6073,33 @@ if __name__ == '__main__':
         agregar_columna("servicios_reparacion", "pago_tecnico_estado", "TEXT DEFAULT 'PENDIENTE'")
         agregar_columna("servicios_reparacion", "comision_pct", "REAL DEFAULT 0.0")
         agregar_columna("servicios_reparacion", "comision_pagada_ars", "REAL DEFAULT 0.0")
-
-        # --- Tabla: Repuestos ---
         agregar_columna("repuestos", "precio_venta_ars", "REAL DEFAULT 0.0")
         agregar_columna("repuestos", "precio_venta_usd", "REAL DEFAULT 0.0")
         agregar_columna("repuestos", "categoria", "TEXT DEFAULT 'REPUESTO'")
-
-        # --- Tabla: Caja Movimientos ---
         agregar_columna("caja_movimientos", "sub_categoria", "TEXT")
         agregar_columna("caja_movimientos", "metodo_pago", "TEXT DEFAULT 'EFECTIVO'")
-
-        # --- Tabla: Pagos Proveedores ---
         agregar_columna("pagos_proveedores", "valor_dolar_momento", "REAL DEFAULT 1.0")
         agregar_columna("pagos_proveedores", "imputacion", "TEXT DEFAULT 'EQUIPOS'")
-
-        # --- Tabla: Personas ---
         agregar_columna("personas", "fecha_nacimiento", "DATE")
-
-        # --- Tabla: Users ---
         agregar_columna("users", "active", "INTEGER DEFAULT 1")
-
-        # --- Tabla: Items Promocionales (Regalos) ---
-        agregar_columna("items_promocionales_venta", "costo_usd_momento", "REAL DEFAULT 0.0")
-        
-        # === AGREGA ESTA LÍNEA AQUÍ ===
         agregar_columna("repuestos_usados", "manual_item_nombre", "TEXT")
-        # ==============================
-        
-               
-        db_conn.commit()
 
-      # ==========================================
+        # ==========================================
         # 3. MIGRACIÓN DEFINITIVA: RECREAR REPUESTOS_USADOS
         # ==========================================
         try:
-            # Forzamos la desactivación de llaves foráneas para poder manipular la tabla
             db_conn.execute("PRAGMA foreign_keys = OFF")
-            
-            # Verificamos si la columna 'repuesto_id' es obligatoria actualmente
             cursor = db_conn.execute("PRAGMA table_info(repuestos_usados)")
             columnas = cursor.fetchall()
             repuesto_id_info = next((c for c in columnas if c['name'] == 'repuesto_id'), None)
             
-            # Si la columna es NOT NULL (valor 1), recreamos la tabla
             if repuesto_id_info and repuesto_id_info['notnull'] == 1:
-                print("--- INICIANDO REPARACIÓN DE TABLA REPUESTOS_USADOS ---")
-                
-                # 1. Renombrar la tabla vieja
                 db_conn.execute("ALTER TABLE repuestos_usados RENAME TO repuestos_usados_old")
-                
-                # 2. Crear la tabla nueva con la estructura CORRECTA (repuesto_id permite NULL)
                 db_conn.execute("""
                     CREATE TABLE repuestos_usados (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         servicio_id INTEGER NOT NULL,
-                        repuesto_id INTEGER, -- AQUÍ: Ya no es NOT NULL
+                        repuesto_id INTEGER,
                         manual_item_nombre TEXT,
                         cantidad INTEGER NOT NULL,
                         costo_usd_momento REAL NOT NULL,
@@ -6128,48 +6107,40 @@ if __name__ == '__main__':
                         FOREIGN KEY (repuesto_id) REFERENCES repuestos(id)
                     )
                 """)
-                
-                # 3. Migrar los datos viejos a la nueva
-                # Nota: usamos NULL para la columna manual_item_nombre que no existía
                 db_conn.execute("""
                     INSERT INTO repuestos_usados (id, servicio_id, repuesto_id, manual_item_nombre, cantidad, costo_usd_momento)
                     SELECT id, servicio_id, repuesto_id, NULL, cantidad, costo_usd_momento FROM repuestos_usados_old
                 """)
-                
-                # 4. Eliminar la tabla vieja
                 db_conn.execute("DROP TABLE repuestos_usados_old")
-                
-                db_conn.commit()
-                print("--- TABLA REPUESTOS_USADOS REPARADA EXITOSAMENTE ---")
-            else:
-                # Si ya permitía NULL, solo nos aseguramos de que tenga la columna de texto manual
-                has_manual_col = any(c['name'] == 'manual_item_nombre' for c in columnas)
-                if not has_manual_col:
-                    db_conn.execute("ALTER TABLE repuestos_usados ADD COLUMN manual_item_nombre TEXT")
-                    db_conn.commit()
-                    print("Columna 'manual_item_nombre' agregada correctamente.")
-
         except Exception as e:
-            print(f"Error crítico en migración: {e}")
+            app.logger.error(f"Error crítico en migración: {e}")
         finally:
             db_conn.execute("PRAGMA foreign_keys = ON")
                 
         # ==========================================
         # 4. DATOS INICIALES Y SEEDING
         # ==========================================
-        
-        # Cuentas Virtuales Iniciales
         db_conn.execute("INSERT OR IGNORE INTO cuentas_entidades (nombre, titular) VALUES ('BANCO', 'MY POINT')")
         db_conn.execute("INSERT OR IGNORE INTO cuentas_entidades (nombre, titular) VALUES ('MERCADO_PAGO', 'MY POINT')")
 
-        # SuperUsuario
         if not db_query("SELECT id FROM users WHERE username = 'superadmin'"):
-            print("Creando SuperUser por defecto...")
             hashed_pw = generate_password_hash('superadmin', method='pbkdf2:sha256')
             db_execute("INSERT INTO users (username, password, role, active) VALUES (?, ?, ?, 1)", 
                       ('superadmin', hashed_pw, 'superadmin'))
         
         db_conn.commit()
-        print("Base de datos actualizada y verificada.")
 
-    app.run(host='0.0.0.0', port=5000, debug=True)
+# --- EJECUCIÓN INICIAL ---
+# Llamamos a la función aquí para que corra tanto en local como en el servidor
+ejecutar_migraciones_y_configuracion()
+
+# --- BLOQUE DE DESARROLLO LOCAL ---
+if __name__ == '__main__':
+    # Detectamos si estamos en producción (esto lo configurarás en el servidor)
+    es_produccion = os.environ.get('FLASK_ENV') == 'production'
+    
+    app.run(
+        host='0.0.0.0', 
+        port=5000, 
+        debug=not es_produccion
+    )
