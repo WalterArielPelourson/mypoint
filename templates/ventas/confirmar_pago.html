@@ -23,6 +23,8 @@
     .bg-usd-input { background-color: #fafff0; border-left: 5px solid #198754; }
     .bg-usd-virtual { background-color: #f5f0ff; border-left: 5px solid #6f42c1; }
     .text-información { font-size: 0.85rem; opacity: 0.8; }
+    /* Estilo para el detalle inferior */
+    .detalle-toma-box { background-color: #ffffff; border: 1px dashed #0dcaf0; border-radius: 8px; }
 </style>
 {% endblock %}
 
@@ -139,42 +141,63 @@
                                     <label class="form-label small fw-bold">Deposito (ARS):</label>
                                     <input type="number" step="0.01" name="monto_transferencia_ars" id="monto_transferencia_ars" class="form-control pago-input" value="0.00">
                                 </div>
-                                <!--<div class="col-6">
-                                    <label class="form-label small fw-bold">Tarjetas / Otros (ARS):</label>
-                                    <input type="number" step="0.01" name="monto_debito_ars" id="monto_debito_ars" class="form-control pago-input" value="0.00">
-                                </div>-->
                                 <div class="col-12 mt-3">
                                     <label class="form-label fw-bold text-purple" style="color: #6f42c1;">Deposito (USD):</label>
                                     <input type="number" step="0.01" name="monto_virtual_usd" id="monto_virtual_usd" class="form-control pago-input bg-usd-virtual fw-bold" style="color: #6f42c1;" value="0.00">
                                 </div>
                             </div>
-                            <!-- Inputs ocultos para no romper la lógica del backend que los espera -->
                             <input type="hidden" name="monto_mp_ars" value="0">
                             <input type="hidden" name="monto_credito_ars" value="0">
                         </div>
                     </div>
                 </div>
 
-                <!-- SECCIÓN PARTE DE PAGO (SIN CAMBIOS) -->
+                <!-- SECCIÓN PARTE DE PAGO REESTRUCTURADA -->
                 <div class="col-md-12">
-                    <div class="form-check form-switch bg-light p-3 rounded border">
+                    <div class="form-check form-switch bg-light p-3 rounded border border-info">
                         <input class="form-check-input ms-0 me-2" type="checkbox" id="usar_parte_pago" name="usar_parte_pago">
-                        <label class="form-check-label fw-bold text-primary" for="usar_parte_pago">¿Tomar celular como parte de pago?</label>
+                        <label class="form-check-label fw-bold text-info" for="usar_parte_pago">¿Toma equipo como parte de pago?</label>
                     </div>
                 </div>
 
-                <div class="col-md-6 parte-pago-fields form-group-hidden" id="celular_parte_pago_group">
-                    <label class="form-label">Celular Recibido:</label>
-                    <select class="form-select select2-celulares-parte-pago" id="celular_parte_pago_id" name="celular_parte_pago_id">
-                        <option value="">Seleccione equipo...</option>
-                    </select>
-                </div>
-                <div class="col-md-6 parte-pago-fields form-group-hidden" id="valor_parte_pago_group">
-                    <label class="form-label fw-bold">Valor asignado (ARS):</label> 
-                    <input type="number" step="0.01" class="form-control pago-input border-info" id="valor_celular_parte_pago" name="valor_celular_parte_pago" value="0.00">
+                <div class="col-md-12 parte-pago-fields form-group-hidden" id="container_parte_pago">
+                    <div class="card border-info shadow-sm">
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <!-- Línea Superior: Buscador -->
+                                <div class="col-12">
+                                    <label class="form-label fw-bold"><i class="bi bi-search me-1"></i>1. Buscar Equipo Registrado (IMEI o Modelo):</label>
+                                    <select class="form-select select2-celulares-parte-pago" id="celular_parte_pago_id" name="celular_parte_pago_id">
+                                        <option value="">Escriba para buscar...</option>
+                                    </select>
+                                </div>
+
+                                <!-- Línea Inferior: Detalle y Valor -->
+                                <div class="col-12 mt-3 p-3 detalle-toma-box">
+                                    <div class="row align-items-center">
+                                        <div class="col-md-7 border-end">
+                                            <small class="text-muted d-block text-uppercase fw-bold">Equipo Seleccionado:</small>
+                                            <div id="detalle_equipo_info" class="fw-bold text-dark fs-5">
+                                                <span class="text-muted small">Ningún equipo seleccionado</span>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-5 ps-md-4">
+                                            <label class="form-label fw-bold text-primary">2. Valor de Toma (u$d):</label>
+                                            <div class="input-group">
+                                                <span class="input-group-text bg-primary text-white">u$d</span>
+                                                <input type="number" step="0.01" class="form-control form-control-lg border-primary pago-input fw-bold" 
+                                                       id="valor_celular_parte_pago_usd" name="valor_celular_parte_pago_usd" value="0.00">
+                                            </div>
+                                            <div id="preview_ars_pp" class="text-muted small mt-1">≈ $ 0.00 ARS</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- SECCIÓN CRÉDITO (SIN CAMBIOS) -->
+                <!-- SECCIÓN CRÉDITO -->
                 <div class="col-md-12" id="seccion_credito" style="display: none;">
                     <div class="card border-primary shadow-sm">
                         <div class="card-header bg-primary text-white fw-bold py-2 text-center text-uppercase">
@@ -261,12 +284,13 @@
 
             let totalUSD = 0;
             
-            // Sumar Dólares Directos
+            // Sumar Dólares Directos (Incluyendo ahora la Parte de Pago en USD)
             totalUSD += parseFloat($('#monto_efectivo_usd').val()) || 0;
             totalUSD += parseFloat($('#monto_virtual_usd').val()) || 0;
+            totalUSD += parseFloat($('#valor_celular_parte_pago_usd').val()) || 0; // NUEVO: Se suma como USD directo
             
             // Sumar Pesos convertidos a Dólares
-            const idsARS = ['#monto_efectivo_ars', '#monto_transferencia_ars', '#monto_debito_ars', '#valor_celular_parte_pago'];
+            const idsARS = ['#monto_efectivo_ars', '#monto_transferencia_ars'];
             idsARS.forEach(id => {
                 totalUSD += (parseFloat($(id).val()) || 0) / cotiz;
             });
@@ -282,6 +306,10 @@
             $('#info_pagando_ars').text(fmtARS(totalUSD));
             $('#info_restante_ars').text(fmtARS(restanteUSD));
             $('#resumen_pago_ars').text(fmtARS(totalUSD));
+
+            // Preview de ARS para la parte de pago
+            let valUSD_PP = parseFloat($('#valor_celular_parte_pago_usd').val()) || 0;
+            $('#preview_ars_pp').text('≈ $ ' + (valUSD_PP * cotiz).toLocaleString('es-AR', {minimumFractionDigits: 2}) + ' ARS');
 
             const btn = $('#btn-confirmar');
             const cardMonitor = $('#card_financiar_monitor');
@@ -328,9 +356,13 @@
         };
 
         $('.pago-input, .cuotas-trigger').on('input', calcularTotalPagado);
+        
         $('#usar_parte_pago').on('change', function() {
             $('.parte-pago-fields').toggleClass('form-group-hidden', !this.checked);
-            if(!this.checked) $('#valor_celular_parte_pago').val(0);
+            if(!this.checked) {
+                $('#valor_celular_parte_pago_usd').val(0);
+                $('#detalle_equipo_info').html('<span class="text-muted small">Ningún equipo seleccionado</span>');
+            }
             calcularTotalPagado();
         });
 
@@ -339,12 +371,16 @@
                 url: '{{ url_for("api_buscar_celulares_parte_pago") }}',
                 dataType: 'json',
                 processResults: data => ({ results: data.results })
-            }
+            },
+            placeholder: "Buscar equipo por IMEI o Modelo..."
         }).on('select2:select', function(e) {
             const data = e.params.data;
+            // Actualizar el detalle inferior
+            $('#detalle_equipo_info').html('<i class="bi bi-phone-vibrate text-info me-2"></i>' + data.text);
+            
             if (data.costo_usd) {
-                const cotizCompra = parseFloat("{{ valor_blue_compra }}") || 1;
-                $('#valor_celular_parte_pago').val((data.costo_usd * cotizCompra).toFixed(2)).trigger('input');
+                // Seteamos el costo en USD directamente
+                $('#valor_celular_parte_pago_usd').val(parseFloat(data.costo_usd).toFixed(2)).trigger('input');
             }
         });
 

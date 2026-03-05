@@ -1935,7 +1935,7 @@ def cobrar_cliente(cliente_id):
     items_pendientes = []
     
     if imputacion_elegida == 'EQUIPOS':
-        # Buscamos CUOTAS: Convertimos el monto_ars a USD usando el valor_dolar_momento de la venta original
+        # Buscamos CUOTAS: El saldo real es 'monto_ars' (lo que falta pagar)
         items_pendientes = db_query("""
             SELECT 'CUOTA' as tipo, vc.id, vc.venta_id, vc.numero_cuota, 
                    vc.monto_ars, v.valor_dolar_momento,
@@ -1972,7 +1972,7 @@ def cobrar_cliente(cliente_id):
     if request.method == 'POST':
         db_conn = get_db()
         try:
-            # --- SELECCIÓN DE DÓLAR ACTUAL (Para el dinero que entra hoy) ---
+            # --- SELECCIÓN DE DÓLAR PARA LA ENTRADA DE DINERO ---
             tipo_dolar_elegido = request.form.get('tipo_dolar', 'blue')
             if tipo_dolar_elegido == 'oficial':
                 cotiz_hoy = float(dolar_info['compra'] or 1.0)
@@ -1995,9 +1995,8 @@ def cobrar_cliente(cliente_id):
                 flash("El monto a cobrar debe ser positivo.", "danger")
                 return redirect(url_for('cobrar_cliente', cliente_id=cliente_id, imputacion=imputacion_elegida))
             
-            # Calculamos el valor real en USD de lo que el cliente entregó
+            # Valor contable para el Haber
             monto_ingresado_en_usd = monto_fisico_entregado if moneda_pago == 'USD' else (monto_fisico_entregado / cotiz_hoy)
-            # Valor contable en ARS para registros
             monto_ars_contable = monto_fisico_entregado if moneda_pago == 'ARS' else (monto_fisico_entregado * cotiz_hoy)
             monto_usd_fisico = monto_fisico_entregado if moneda_pago == 'USD' else 0.0
 
@@ -2014,41 +2013,40 @@ def cobrar_cliente(cliente_id):
                     tipo_ref = tipos_comprobantes[i]
                     
                     if tipo_ref == 'CUOTA':
-                        # El usuario ingresó USD para equipos
+                        # El monto_especifico_input viene en USD
                         total_impacto_usd_aplicado += monto_especifico_input
                         
-                        # Obtenemos cotización original de la venta para descontar ARS correctamente
+                        # Obtenemos datos de la venta original para descontar PESOS correctamente del saldo
                         venta = db_query_func(db_conn, "SELECT v.valor_dolar_momento, v.id as v_id FROM ventas_cuotas vc JOIN ventas v ON vc.venta_id = v.id WHERE vc.id = ?", (id_ref,))[0]
                         monto_ars_a_restar = monto_especifico_input * venta['valor_dolar_momento']
                         
+                        # ACTUALIZACIÓN DEL SALDO PENDIENTE (Semaforo)
+                        # Restamos de monto_ars (el saldo), pero NUNCA tocamos monto_original_ars
                         db_execute_func(db_conn, "UPDATE ventas_cuotas SET monto_ars = monto_ars - ? WHERE id = ?", (monto_ars_a_restar, id_ref))
+                        
+                        # Si el saldo es casi cero, marcar como PAGADO para que salga del semáforo
                         db_execute_func(db_conn, "UPDATE ventas_cuotas SET estado = 'PAGADO' WHERE id = ? AND monto_ars <= 1.0", (id_ref,))
+                        
+                        # Actualizar saldo global de la venta
                         db_execute_func(db_conn, "UPDATE ventas SET saldo_pendiente = saldo_pendiente - ? WHERE id = ?", (monto_ars_a_restar, venta['v_id']))
                         
                         items_pagados_detalle.append(f"Cuota ID:{id_ref} (u$d {monto_especifico_input})")
                     
                     else:
-                        # El usuario ingresó ARS para servicios
+                        # Servicios (ARS)
                         impacto_en_usd = monto_especifico_input / cotiz_hoy
                         total_impacto_usd_aplicado += impacto_en_usd
                         
                         db_execute_func(db_conn, "UPDATE servicios_reparacion SET saldo_pendiente = saldo_pendiente - ? WHERE id = ?", (monto_especifico_input, id_ref))
                         items_pagados_detalle.append(f"Servicio #{id_ref} (-${monto_especifico_input})")
 
-            # VALIDACIÓN FINAL EN DÓLARES
-            if total_impacto_usd_aplicado > monto_ingresado_en_usd + 0.05:
-                db_conn.rollback()
-                flash(f"Error: La suma aplicada (u$d {total_impacto_usd_aplicado:.2f}) supera al ingreso (u$d {monto_ingresado_en_usd:.2f}).", "danger")
-                return redirect(url_for('cobrar_cliente', cliente_id=cliente_id, imputacion=imputacion_elegida))
-
-            # Registro de cobro
+            # Registro de cobro (Este es el HABER que cancelará el DEBE original en el historial)
             referencia = ", ".join(items_pagados_detalle)
-            metodo_label = f"{cuenta_destino} ({moneda_pago})"
             cobro_id = db_execute_func(db_conn, """
                 INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                  monto_ars_contable, monto_usd_fisico, metodo_label, referencia, observaciones, imputacion_elegida), return_id=True)
+                  monto_ars_contable, monto_usd_fisico, cuenta_destino, referencia, observaciones, imputacion_elegida), return_id=True)
 
             # Impacto en Caja
             if moneda_pago == 'USD':
@@ -2057,8 +2055,6 @@ def cobrar_cliente(cliente_id):
             else:
                 registrar_movimiento_caja(current_user.id, 'INGRESO_COBRO_DEUDA_ARS', monto_ars_contable, 0, 
                                           f"Cobro {imputacion_elegida} - {cliente['nombre']}", cobro_id, None, cuenta_destino)
-
-            registrar_movimiento(current_user.id, 'COBRO_CLIENTE', 'CUENTA_CORRIENTE', cobro_id, {'imputacion': imputacion_elegida, 'aplicacion': items_pagados_detalle})
 
             db_conn.commit()
             flash(f"Cobro registrado y saldos actualizados correctamente.", "success")
@@ -2226,36 +2222,33 @@ def ver_detalle_cc_cliente(cliente_id):
     movimientos = []
     hoy = datetime.now().date() 
     
-    # Obtenemos el dólar actual para cobros que se hicieron en ARS pero imputan a EQUIPOS (USD)
     dolar_info = obtener_cotizacion_dolar()
     cotiz_actual = float(dolar_info['compra_blue'] or 1.0)
 
     # 1. DEBE: Ventas y sus CUOTAS (Moneda base: USD)
-    # Actualizamos el SQL para traer TODOS los campos de montos iniciales
     ventas = db_query("""
         SELECT id, fecha_venta, precio_final_ars, precio_final_usd, valor_dolar_momento, 
                cantidad_cuotas, monto_cobrado_ars, monto_cobrado_usd, 
                monto_transferencia_ars, monto_mp_ars, monto_debito_ars, 
-               monto_credito_ars, valor_celular_parte_pago
+               monto_credito_ars, monto_virtual_usd, valor_celular_parte_pago
         FROM ventas WHERE cliente_id = ? AND status = 'COMPLETADA'
     """, (cliente_id,))
     
     for v in ventas:
         cotiz_v = v['valor_dolar_momento'] or 1.0
         
-        # --- A. Registramos la "Entrega Inicial" en el DEBE (lo que no es crédito) ---
+        # --- A. Entrega Inicial ---
         total_pago_inicial_ars = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
                                  (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
                                  (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
         
-        total_pago_inicial_usd = (v['monto_cobrado_usd'] or 0) + (total_pago_inicial_ars / cotiz_v)
+        total_pago_inicial_usd = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + (total_pago_inicial_ars / cotiz_v)
 
-        # Si hubo un pago al momento de la venta, lo ponemos en el debe para que luego el pago en el haber lo anule
         if total_pago_inicial_usd > 0.01:
             movimientos.append({
                 'fecha': v['fecha_venta'],
                 'tipo': 'DEBE',
-                'monto_ars': total_pago_inicial_ars + ((v['monto_cobrado_usd'] or 0) * cotiz_v),
+                'monto_ars': total_pago_inicial_usd * cotiz_v,
                 'monto_reg': total_pago_inicial_usd,
                 'moneda_display': 'USD',
                 'descripcion': f"Venta #{v['id']} - Entrega Inicial Acordada", 
@@ -2266,8 +2259,8 @@ def ver_detalle_cc_cliente(cliente_id):
                 'ref': v['id']
             })
 
-        # --- B. Registramos las CUOTAS en el DEBE ---
-        if v['cantidad_cuotas'] > 1:
+        # --- B. CUOTAS EN EL DEBE (AQUÍ ESTÁ LA CORRECCIÓN) ---
+        if v['cantidad_cuotas'] >= 1:
             cuotas = db_query("SELECT * FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
             for c in cuotas:
                 try:
@@ -2276,11 +2269,15 @@ def ver_detalle_cc_cliente(cliente_id):
                     fecha_venc = hoy
                 es_vencida = fecha_venc < hoy and c['estado'] == 'PENDIENTE'
                 
+                # CLAVE: Si existe monto_original_ars lo usamos, sino usamos monto_ars (para ventas viejas)
+                # Esto garantiza que el DEBE no se mueva aunque se cobre la cuota.
+                monto_deuda_original = c['monto_original_ars'] if (c['monto_original_ars'] and c['monto_original_ars'] > 0) else c['monto_ars']
+
                 movimientos.append({
                     'fecha': c['fecha_vencimiento'] + " 09:00:00",
                     'tipo': 'DEBE', 
-                    'monto_ars': c['monto_ars'],
-                    'monto_reg': c['monto_ars'] / cotiz_v,
+                    'monto_ars': monto_deuda_original,
+                    'monto_reg': monto_deuda_original / cotiz_v, # El debe siempre usa el valor original
                     'moneda_display': 'USD',
                     'descripcion': f"Venta #{v['id']} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
                     'rubro': 'EQUIPOS',
@@ -2289,101 +2286,58 @@ def ver_detalle_cc_cliente(cliente_id):
                     'es_cuota': True,
                     'ref': v['id']
                 })
-        else:
-            # Si fue una venta sin cuotas (pago total), ya se cubrió con la "Entrega Inicial" de arriba.
-            # No hace falta duplicar el registro.
-            pass
 
-    # 2. DEBE: Servicios (Moneda base: ARS)
+    # 2. DEBE: Servicios (Inamovible porque precio_final_ars no se toca)
     servicios = db_query("SELECT id, fecha_servicio as fecha, precio_final_ars as monto, falla_reportada as descripcion FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'", (cliente_id,))
     for s in servicios:
         movimientos.append({
-            'fecha': s['fecha'], 
-            'tipo': 'DEBE', 
-            'monto_ars': s['monto'], 
-            'monto_reg': s['monto'], 
-            'moneda_display': 'ARS',
-            'descripcion': f"Servicio #{s['id']} - {s['descripcion']}", 
-            'rubro': 'SERVICIOS',
-            'cotizacion': None, 
-            'vencida': False,
-            'es_cuota': False,
-            'ref': s['id']
+            'fecha': s['fecha'], 'tipo': 'DEBE', 'monto_ars': s['monto'], 'monto_reg': s['monto'], 
+            'moneda_display': 'ARS', 'descripcion': f"Servicio #{s['id']} - {s['descripcion']}", 
+            'rubro': 'SERVICIOS', 'cotizacion': None, 'vencida': False, 'es_cuota': False, 'ref': s['id']
         })
 
-    # 3. HABER: Cobros de Cuenta Corriente (Pagos realizados después de la venta)
+    # 3. HABER: Cobros (Aquí es donde se descuenta el saldo realmente)
     cobros = db_query("SELECT id, fecha_cobro as fecha, monto_ars, monto_usd, metodo_pago, observaciones, imputacion FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
     for p in cobros:
         if p['imputacion'] == 'EQUIPOS':
-            if p['monto_usd'] > 0:
-                monto_reg = p['monto_usd']
-                cotiz_pago = p['monto_ars'] / p['monto_usd'] if p['monto_ars'] > 0 else cotiz_actual
-            else:
-                monto_reg = p['monto_ars'] / cotiz_actual
-                cotiz_pago = cotiz_actual
-
+            # Calculamos el impacto en USD del cobro realizado
+            monto_reg = p['monto_usd'] if p['monto_usd'] > 0 else (p['monto_ars'] / cotiz_actual)
             movimientos.append({
-                'fecha': p['fecha'], 
-                'tipo': 'HABER', 
-                'monto_ars': p['monto_ars'],
-                'monto_reg': monto_reg, 
-                'moneda_display': 'USD',
-                'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
-                'rubro': 'EQUIPOS',
-                'cotizacion': cotiz_pago,
-                'es_cuota': False,
-                'ref': p['id']
+                'fecha': p['fecha'], 'tipo': 'HABER', 'monto_ars': p['monto_ars'], 'monto_reg': monto_reg, 
+                'moneda_display': 'USD', 'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
+                'rubro': 'EQUIPOS', 'cotizacion': cotiz_actual, 'es_cuota': False, 'ref': p['id']
             })
         else:
             movimientos.append({
-                'fecha': p['fecha'], 
-                'tipo': 'HABER', 
-                'monto_ars': p['monto_ars'],
-                'monto_reg': p['monto_ars'], 
-                'moneda_display': 'ARS',
-                'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
-                'rubro': 'SERVICIOS',
-                'cotizacion': None,
-                'es_cuota': False,
-                'ref': p['id']
+                'fecha': p['fecha'], 'tipo': 'HABER', 'monto_ars': p['monto_ars'], 'monto_reg': p['monto_ars'], 
+                'moneda_display': 'ARS', 'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
+                'rubro': 'SERVICIOS', 'cotizacion': None, 'es_cuota': False, 'ref': p['id']
             })
 
-    # 4. HABER: Pagos Iniciales de Ventas (CORREGIDO PARA REFLEJAR LA DEUDA REAL)
-    # Recorremos nuevamente las ventas para asentar el ingreso de dinero inicial
+    # 4. HABER: Pagos Iniciales de Ventas
     for v in ventas:
         cotiz_h = v['valor_dolar_momento'] or 1.0
+        total_ars_h = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
+                      (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
+                      (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
         
-        # Sumamos todos los componentes del pago inicial
-        total_ars = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
-                    (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
-                    (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
-        
-        monto_reg_usd = (v['monto_cobrado_usd'] or 0) + (total_ars / cotiz_h)
-        monto_ars_total = total_ars + ((v['monto_cobrado_usd'] or 0) * cotiz_h)
+        monto_reg_usd = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + (total_ars_h / cotiz_h)
         
         if monto_reg_usd > 0.01:
             movimientos.append({
-                'fecha': v['fecha_venta'], 
-                'tipo': 'HABER', 
-                'monto_ars': monto_ars_total, 
-                'monto_reg': monto_reg_usd, 
-                'moneda_display': 'USD',
+                'fecha': v['fecha_venta'], 'tipo': 'HABER', 'monto_ars': monto_reg_usd * cotiz_h, 
+                'monto_reg': monto_reg_usd, 'moneda_display': 'USD', 
                 'descripcion': f"Pago Inicial Recibido - Venta #{v['id']}", 
-                'rubro': 'EQUIPOS', 
-                'cotizacion': cotiz_h,
-                'es_cuota': True, 
-                'ref': v['id']
+                'rubro': 'EQUIPOS', 'cotizacion': cotiz_h, 'es_cuota': False, 'ref': v['id']
             })
 
-    # --- LÓGICA DE CÁLCULO DE SALDOS ---
+    # Ordenar y calcular saldo acumulado
     movimientos.sort(key=lambda x: x['fecha'])
-    
     saldo_equipos_usd_acum = 0
     saldo_servicios_ars_acum = 0
 
     for mov in movimientos:
         imp_reg = mov['monto_reg'] if mov['tipo'] == 'DEBE' else -mov['monto_reg']
-        
         if mov['rubro'] == 'EQUIPOS':
             saldo_equipos_usd_acum += imp_reg
             mov['saldo_rubro_acum'] = saldo_equipos_usd_acum
@@ -2392,10 +2346,10 @@ def ver_detalle_cc_cliente(cliente_id):
             mov['saldo_rubro_acum'] = saldo_servicios_ars_acum
 
     return render_template('cuentas_corrientes/detalle_cliente.html', 
-                           cliente=cliente, 
-                           movimientos=movimientos, 
+                           cliente=cliente, movimientos=movimientos, 
                            saldo_equipos=saldo_equipos_usd_acum,
-                           saldo_servicios=saldo_servicios_ars_acum)     
+                           saldo_servicios=saldo_servicios_ars_acum)
+    
     
     
 @app.route('/ventas/plan_cuotas/<int:venta_id>')
@@ -3199,7 +3153,9 @@ def procesar_pago(venta_id):
         
         usar_parte_pago = 'usar_parte_pago' in request.form
         celular_parte_pago_id = request.form.get('celular_parte_pago_id') if usar_parte_pago else None
-        valor_celular_parte_pago_ars = float(request.form.get('valor_celular_parte_pago', 0) or 0) if usar_parte_pago else 0
+        
+        # MODIFICACIÓN: Capturamos el valor directamente en USD desde el nuevo input del HTML
+        valor_pp_usd = float(request.form.get('valor_celular_parte_pago_usd', 0) or 0) if usar_parte_pago else 0
         
         if usar_parte_pago and not celular_parte_pago_id:
             flash("Debe seleccionar un celular para la parte de pago.", "danger")
@@ -3208,18 +3164,21 @@ def procesar_pago(venta_id):
         # --- CÁLCULOS FINANCIEROS EN DÓLARES ---
         total_a_cobrar_usd = venta['precio_final_usd']
         
-        total_pagado_usd = monto_efectivo_usd + monto_virtual_usd
+        # Sumamos los montos que ya vienen en USD (Efectivo, Virtual y Parte de Pago)
+        total_pagado_usd = monto_efectivo_usd + monto_virtual_usd + valor_pp_usd
+        
+        # Sumamos los montos en ARS convertidos a USD según la cotización elegida
         total_pagado_usd += (monto_efectivo_ars / valor_dolar_pago)
         total_pagado_usd += (monto_transferencia_ars / valor_dolar_pago)
         total_pagado_usd += (monto_debito_ars / valor_dolar_pago)
         total_pagado_usd += (monto_credito_ars / valor_dolar_pago)
         total_pagado_usd += (monto_mp_ars / valor_dolar_pago)
-        total_pagado_usd += (valor_celular_parte_pago_ars / valor_dolar_pago)
         
+        # Calculamos la diferencia
         diferencia_usd = total_pagado_usd - total_a_cobrar_usd
         saldo_pendiente_usd = 0.0
 
-        if diferencia_usd > 0.02: 
+        if diferencia_usd > 0.05: # Margen pequeño por redondeo
             flash(f"Error: El monto pagado (u$d {total_pagado_usd:.2f}) excede el total (u$d {total_a_cobrar_usd:.2f}).", "danger")
             return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id, **request.form.to_dict(flat=True)))
         elif diferencia_usd < -0.01:
@@ -3237,38 +3196,72 @@ def procesar_pago(venta_id):
             fecha_actual = datetime.now()
             for i in range(1, cantidad_cuotas + 1):
                 fecha_vencimiento = (fecha_actual + timedelta(days=i * intervalo_dias)).strftime('%Y-%m-%d')
+                
+                # Busca la parte donde haces el INSERT en ventas_cuotas y cámbialo por esto:
                 db_execute_func(db_conn, """
-                    INSERT INTO ventas_cuotas (venta_id, numero_cuota, monto_ars, fecha_vencimiento, estado)
-                    VALUES (?, ?, ?, ?, 'PENDIENTE')
-                """, (venta_id, i, monto_cuota_ars, fecha_vencimiento))
+                    INSERT INTO ventas_cuotas (venta_id, numero_cuota, monto_ars, monto_original_ars, fecha_vencimiento, estado)
+                    VALUES (?, ?, ?, ?, ?, 'PENDIENTE')
+                """, (venta_id, i, monto_cuota_ars, monto_cuota_ars, fecha_vencimiento)) 
+                # Guardamos lo mismo en monto_ars (que será el saldo que baja) 
+                # y en monto_original_ars (que no se toca)
+                
+                #db_execute_func(db_conn, """
+                #    INSERT INTO ventas_cuotas (venta_id, numero_cuota, monto_ars, fecha_vencimiento, estado)
+                #    VALUES (?, ?, ?, ?, 'PENDIENTE')
+                #""", (venta_id, i, monto_cuota_ars, fecha_vencimiento))
 
         # --- Procesar el celular en parte de pago ---
         if usar_parte_pago and celular_parte_pago_id:
-            valor_dolar_compra_actual = dolar_info['compra_blue'] or 1.0
-            nuevo_costo_usd_parte_pago = valor_celular_parte_pago_ars / valor_dolar_compra_actual
+            # MODIFICACIÓN: El costo_usd del equipo que reingresa es directamente el valor acordado en USD
             db_execute_func(db_conn, """
                 UPDATE celulares SET 
                     stock = 1, es_parte_pago = 1, costo_usd = ?, 
                     observaciones = COALESCE(observaciones, '') || ? 
                 WHERE id = ?
-            """, (nuevo_costo_usd_parte_pago, f", Reingreso Venta ID {venta_id}", celular_parte_pago_id))
+            """, (valor_pp_usd, f", Reingreso Venta ID {venta_id}", celular_parte_pago_id))
 
         # --- Actualizar la venta ---
+        # Calculamos los equivalentes en ARS para las columnas de la tabla ventas (referencia histórica)
+        valor_pp_ars_historico = valor_pp_usd * valor_dolar_pago
         saldo_pendiente_ars = saldo_pendiente_usd * valor_dolar_pago
+
         db_execute_func(db_conn, """
             UPDATE ventas 
-            SET status = 'COMPLETADA', monto_cobrado_ars = ?, monto_cobrado_usd = ?,
-                monto_transferencia_ars = ?, monto_debito_ars = ?, monto_credito_ars = ?, monto_mp_ars = ?,
-                celular_parte_pago_id = ?, valor_celular_parte_pago = ?, saldo_pendiente = ?,
-                valor_dolar_momento = ?, cantidad_cuotas = ?
+            SET status = 'COMPLETADA', 
+                monto_cobrado_ars = ?, 
+                monto_cobrado_usd = ?,
+                monto_transferencia_ars = ?, 
+                monto_debito_ars = ?, 
+                monto_credito_ars = ?, 
+                monto_mp_ars = ?,
+                monto_virtual_usd = ?, 
+                celular_parte_pago_id = ?, 
+                valor_celular_parte_pago = ?, 
+                saldo_pendiente = ?,
+                valor_dolar_momento = ?, 
+                cantidad_cuotas = ?
             WHERE id = ?
-        """, (monto_efectivo_ars, monto_efectivo_usd, monto_transferencia_ars, monto_debito_ars, monto_credito_ars, monto_mp_ars,
-              celular_parte_pago_id, valor_celular_parte_pago_ars, saldo_pendiente_ars, valor_dolar_pago, cantidad_cuotas, venta_id))
+        """, (
+            monto_efectivo_ars, 
+            monto_efectivo_usd, 
+            monto_transferencia_ars, 
+            monto_debito_ars, 
+            monto_credito_ars, 
+            monto_mp_ars,
+            monto_virtual_usd, # <-- Campo agregado
+            celular_parte_pago_id, 
+            valor_pp_ars_historico, 
+            saldo_pendiente_ars, 
+            valor_dolar_pago, 
+            cantidad_cuotas, 
+            venta_id
+        ))
         
         db_execute_func(db_conn, "UPDATE celulares SET stock = 0 WHERE id = ?", (venta['celular_id'],))
         
+        
         # ==========================================================
-        # === NUEVO: DESCUENTO DE ÍTEMS ADICIONALES (Venta Accesorios) ===
+        # === DESCUENTO DE ÍTEMS ADICIONALES (Venta Accesorios) ===
         # ==========================================================
         adicionales = db_query_func(db_conn, "SELECT repuesto_id, cantidad FROM items_adicionales_venta WHERE venta_id = ?", (venta_id,))
         for item in adicionales:
@@ -3284,23 +3277,18 @@ def procesar_pago(venta_id):
                 
                 db_execute_func(db_conn, "UPDATE repuestos SET stock = stock - ? WHERE id = ?", (item['cantidad'], item['repuesto_id']))
 
-        # --- DESCUENTO DE REGALOS / PROMOCIONES (CORREGIDO) ---
+        # --- DESCUENTO DE REGALOS / PROMOCIONES ---
         regalos = db_query_func(db_conn, "SELECT repuesto_id, cantidad FROM items_promocionales_venta WHERE venta_id = ?", (venta_id,))
         for reg in regalos:
-            # 1. Obtenemos stock actual y nombre del repuesto
             repuesto_data = db_query_func(db_conn, "SELECT stock, nombre_parte FROM repuestos WHERE id = ?", (reg['repuesto_id'],))
-            
             if repuesto_data:
                 stock_actual = repuesto_data[0]['stock']
                 nombre_repuesto = repuesto_data[0]['nombre_parte']
-                
-                # 2. Verificamos si hay stock suficiente
                 if stock_actual < reg['cantidad']:
-                    db_conn.rollback() # Cancelamos toda la operación para evitar inconsistencias
-                    flash(f"Error: No hay stock suficiente de '{nombre_repuesto}' para el regalo (Disponible: {stock_actual}).", "danger")
+                    db_conn.rollback()
+                    flash(f"Error: No hay stock suficiente de '{nombre_repuesto}' para el regalo.", "danger")
                     return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id))
         
-                # 3. Descontamos el stock (DENTRO del bucle para que afecte a todos los items)
                 db_execute_func(db_conn, "UPDATE repuestos SET stock = stock - ? WHERE id = ?", (reg['cantidad'], reg['repuesto_id']))
         
         # --- REGISTROS DE CAJA SEPARADOS ---
@@ -3320,11 +3308,12 @@ def procesar_pago(venta_id):
         registrar_movimiento(current_user.id, 'VENTA_COBRADA', 'VENTA', venta_id, {
             'total_usd': total_a_cobrar_usd,
             'saldo_pendiente_usd': saldo_pendiente_usd,
-            'cotizacion_venta': valor_dolar_pago
+            'cotizacion_venta': valor_dolar_pago,
+            'valor_toma_usd': valor_pp_usd
         })
         
         db_conn.commit()
-        flash(f"Venta confirmada por u$d {total_a_cobrar_usd:.2f}.", "success")
+        flash(f"Venta confirmada. Saldo a financiar: u$d {saldo_pendiente_usd:.2f}.", "success")
         return redirect(url_for('listar_presupuestos_venta'))
 
     except Exception as e:
@@ -6065,6 +6054,8 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("ventas", "saldo_pendiente", "REAL DEFAULT 0.0")
         agregar_columna("ventas", "cantidad_cuotas", "INTEGER DEFAULT 1")
         agregar_columna("ventas", "observaciones", "TEXT")
+        agregar_columna("ventas", "monto_virtual_usd", "REAL DEFAULT 0.0") # <--- AÑADE ESTA LÍNEA
+        agregar_columna("ventas_cuotas", "monto_original_ars", "REAL")
         agregar_columna("servicios_reparacion", "tipo_servicio", "TEXT DEFAULT 'REPARACION'")
         agregar_columna("servicios_reparacion", "saldo_pendiente", "REAL DEFAULT 0.0")
         agregar_columna("servicios_reparacion", "tecnico_id", "INTEGER")

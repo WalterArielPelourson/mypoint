@@ -7,13 +7,9 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
-        /* Configuración de página A4 */
         @page { size: A4; margin: 0; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f0f0; margin: 0; padding: 0; }
-
         .btn-print-action { position: fixed; top: 20px; right: 20px; z-index: 1000; }
-
-        /* Contenedor Principal A4 */
         .a4-page {
             width: 210mm;
             min-height: 297mm;
@@ -25,17 +21,13 @@
             flex-direction: column;
             justify-content: space-between;
         }
-
-        /* Bloque de cada Comprobante (Mitad de hoja aprox) */
         .receipt-block {
-            height: 132mm; 
+            height: 135mm; 
             position: relative;
             overflow: hidden;
             border: 1px solid #eee;
             padding: 5px;
         }
-
-        /* Línea de puntos divisoria */
         .separator {
             border-top: 2px dashed #bbb;
             text-align: center;
@@ -44,15 +36,9 @@
         }
         .separator::after {
             content: "\2702"; 
-            position: absolute;
-            top: -15px;
-            left: 50%;
-            background: white;
-            padding: 0 10px;
-            color: #bbb;
+            position: absolute; top: -15px; left: 50%;
+            background: white; padding: 0 10px; color: #bbb;
         }
-
-        /* Encabezado Empresarial */
         .header-grid { display: grid; grid-template-columns: 100px 1fr 200px; gap: 15px; align-items: center; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
         .logo-img { max-width: 100px; max-height: 80px; object-fit: contain; }
         .company-data h2 { font-size: 1.5rem; font-weight: 900; color: #007bff; margin: 0; }
@@ -60,19 +46,13 @@
         .doc-info { text-align: right; }
         .doc-info h4 { font-size: 1rem; margin: 0; color: #333; }
         .doc-info p { margin: 0; font-size: 0.8rem; }
-
-        /* Secciones */
         .section-title { font-size: 0.8rem; font-weight: bold; background: #f8f9fa; border-left: 4px solid #007bff; padding: 2px 8px; margin: 6px 0 4px 0; text-transform: uppercase; }
-        
         .details-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.75rem; margin-bottom: 5px; }
-
-        /* Tablas Compactas */
         .table-custom { width: 100%; font-size: 0.7rem; border-collapse: collapse; margin-top: 2px; }
         .table-custom th { background: #007bff; color: white; padding: 3px; text-transform: uppercase; border: 1px solid #ddd; }
         .table-custom td { padding: 2px 5px; border: 1px solid #ddd; }
         .text-end { text-align: right; }
-
-        .total-box { font-size: 0.85rem; font-weight: bold; color: #007bff; }
+        .total-box { font-size: 0.9rem; font-weight: bold; color: #007bff; }
         .copy-label { position: absolute; top: 0; right: 0; font-size: 0.6rem; color: #ccc; text-transform: uppercase; font-weight: bold; }
 
         @media print {
@@ -97,7 +77,6 @@
 
     <div class="a4-page">
         
-        {# MACRO PARA REPETIR EL CONTENIDO #}
         {% macro render_comprobante_venta(label) %}
         <div class="receipt-block">
             <div class="copy-label">{{ label }}</div>
@@ -113,6 +92,7 @@
                     <h4 class="text-primary">{{ 'COMPROBANTE DE VENTA' if venta.status == 'COMPLETADA' else 'PRESUPUESTO' }}</h4>
                     <p><strong>N°:</strong> {{ "%05d" | format(venta.id) }}</p>
                     <p><strong>Fecha:</strong> {{ venta.fecha_venta }}</p>
+                    <p><small>Cotiz: ${{ venta.valor_dolar_momento }}</small></p>
                 </div>
             </div>
 
@@ -121,61 +101,60 @@
                 <div><strong>CUIT/CUIL:</strong> {{ venta.cuit_cuil or 'N/A' }}</div>
             </div>
 
-            <div class="section-title">Detalle de Operación</div>
+            <div class="section-title">Detalle de Operación (Valores en USD)</div>
             <table class="table-custom">
                 <thead>
                     <tr>
                         <th>Descripción</th>
                         <th>Cant.</th>
                         <th>Detalle Adicional</th>
-                        <th class="text-end">Importe (USD)</th>
-                        <th class="text-end">Total (ARS)</th>
+                        <th class="text-end">Precio Unit.</th>
+                        <th class="text-end">Subtotal (USD)</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {# 1. EL EQUIPO PRINCIPAL #}
+                    {# CÁLCULO DE EQUIPO BASE EN USD #}
+                    {% set precio_accesorios_usd = adicionales | sum(attribute='precio_vendido_usd') if adicionales else 0 %}
+                    {% set precio_base_usd = (venta.precio_final_usd / (1 + (venta.impuestos_pct / 100))) - precio_accesorios_usd %}
                     <tr>
                         <td><strong>Celular:</strong> {{ venta.marca }} {{ venta.modelo }}</td>
                         <td>1</td>
                         <td>IMEI: {{ venta.imei }} ({{ venta.condicion }})</td>
-                        {# Calculamos el precio del equipo restando accesorios del precio_final_usd_pre_tax si es necesario, pero por simplicidad mostramos el total base del equipo proporcional #}
-                        <td class="text-end">USD {{ "{:,.2f}".format(venta.precio_final_usd / (1 + (venta.impuestos_pct / 100)) - (adicionales | sum(attribute='precio_vendido_usd') if adicionales else 0)) }}</td>
-                        <td class="text-end">ARS {{ "{:,.2f}".format((venta.precio_final_usd / (1 + (venta.impuestos_pct / 100)) - (adicionales | sum(attribute='precio_vendido_usd') if adicionales else 0)) * venta.valor_dolar_momento) }}</td>
+                        <td class="text-end">u$d {{ "{:,.2f}".format(precio_base_usd) }}</td>
+                        <td class="text-end">u$d {{ "{:,.2f}".format(precio_base_usd) }}</td>
                     </tr>
 
-                    {# 2. ACCESORIOS VENDIDOS #}
                     {% for item in adicionales %}
                     <tr>
                         <td>{{ item.nombre_parte }}</td>
                         <td>{{ item.cantidad }}</td>
                         <td>{{ item.modelo_compatible or 'Universal' }}</td>
-                        <td class="text-end">USD {{ "{:,.2f}".format(item.precio_vendido_usd) }}</td>
-                        <td class="text-end">ARS {{ "{:,.2f}".format(item.precio_vendido_usd * item.cantidad * venta.valor_dolar_momento) }}</td>
+                        <td class="text-end">u$d {{ "{:,.2f}".format(item.precio_vendido_usd) }}</td>
+                        <td class="text-end">u$d {{ "{:,.2f}".format(item.precio_vendido_usd * item.cantidad) }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="4" class="text-end">Subtotal (Sin Impuestos)</td>
-                        <td class="text-end">ARS {{ "{:,.2f}".format(venta.precio_final_ars / (1 + venta.impuestos_pct / 100) if venta.impuestos_pct else venta.precio_final_ars) }}</td>
+                        <td colspan="4" class="text-end">Subtotal (Neto USD)</td>
+                        <td class="text-end">u$d {{ "{:,.2f}".format(venta.precio_final_usd / (1 + venta.impuestos_pct / 100) if venta.impuestos_pct else venta.precio_final_usd) }}</td>
                     </tr>
                     {% if venta.impuestos_pct and venta.impuestos_pct > 0 %}
                     <tr>
-                        <td colspan="4" class="text-end">Impuestos / Comisiones ({{ venta.impuestos_pct|round(1) }}%)</td>
-                        <td class="text-end">ARS {{ "{:,.2f}".format(venta.precio_final_ars - (venta.precio_final_ars / (1 + venta.impuestos_pct / 100))) }}</td>
+                        <td colspan="4" class="text-end">Impuestos / Tasas ({{ venta.impuestos_pct|round(1) }}%)</td>
+                        <td class="text-end">u$d {{ "{:,.2f}".format(venta.precio_final_usd - (venta.precio_final_usd / (1 + venta.impuestos_pct / 100))) }}</td>
                     </tr>
                     {% endif %}
                     <tr class="total-box">
                         <td colspan="4" class="text-end" style="background: #f8f9fa;">TOTAL OPERACIÓN</td>
                         <td class="text-end" style="background: #e9f5ff; border-left: 2px solid #007bff;">
-                            ARS {{ "{:,.2f}".format(venta.precio_final_ars) }}<br>
-                            <small class="text-muted" style="font-size: 0.6rem;">USD {{ "{:,.2f}".format(venta.precio_final_usd) }}</small>
+                            u$d {{ "{:,.2f}".format(venta.precio_final_usd) }}<br>
+                            <small class="text-muted" style="font-size: 0.6rem;">Eq. ARS {{ "{:,.2f}".format(venta.precio_final_ars) }}</small>
                         </td>
                     </tr>
                 </tfoot>
             </table>
             
-            {# --- SECCIÓN DE REGALOS / PROMOS --- #}
             {% if regalos %}
             <div class="section-title">Promociones / Regalos Incluidos (Sin Cargo)</div>
             <table class="table-custom">
@@ -200,42 +179,47 @@
             </table>
             {% endif %}
 
-            <div class="section-title">Resumen de Pagos</div>
+            <div class="section-title">Resumen de Pagos / Liquidación (USD)</div>
             <table class="table-custom">
                 <thead>
                     <tr>
                         <th>Medio de Pago / Entrega</th>
-                        <th class="text-end">Importe</th>
+                        <th class="text-end">Importe USD</th>
+                        <th class="text-end">Ref. ARS</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% if venta.monto_cobrado_ars and venta.monto_cobrado_ars > 0 %}
-                    <tr><td>Efectivo (ARS)</td><td class="text-end">ARS {{ "{:,.2f}".format(venta.monto_cobrado_ars) }}</td></tr>
-                    {% endif %}
+                    {% set cotiz = venta.valor_dolar_momento if venta.valor_dolar_momento > 0 else 1 %}
+                    
                     {% if venta.monto_cobrado_usd and venta.monto_cobrado_usd > 0 %}
-                    <tr><td>Efectivo (USD) <small>(Cot. {{ venta.valor_dolar_momento }})</small></td><td class="text-end">USD {{ "{:,.2f}".format(venta.monto_cobrado_usd) }}</td></tr>
+                    <tr><td>Efectivo (USD Billete)</td><td class="text-end">u$d {{ "{:,.2f}".format(venta.monto_cobrado_usd) }}</td><td class="text-end">-</td></tr>
                     {% endif %}
+                    
+                    {% if venta.monto_virtual_usd and venta.monto_virtual_usd > 0 %}
+                    <tr><td>Deposito Virtual (USD)</td><td class="text-end">u$d {{ "{:,.2f}".format(venta.monto_virtual_usd) }}</td><td class="text-end">-</td></tr>
+                    {% endif %}
+
+                    {% if venta.monto_cobrado_ars and venta.monto_cobrado_ars > 0 %}
+                    <tr><td>Efectivo (ARS)</td><td class="text-end">u$d {{ "{:,.2f}".format(venta.monto_cobrado_ars / cotiz) }}</td><td class="text-end">${{ "{:,.2f}".format(venta.monto_cobrado_ars) }}</td></tr>
+                    {% endif %}
+                    
                     {% if venta.monto_transferencia_ars and venta.monto_transferencia_ars > 0 %}
-                    <tr><td>Transferencia Bancaria</td><td class="text-end">ARS {{ "{:,.2f}".format(venta.monto_transferencia_ars) }}</td></tr>
-                    {% endif %}
-                    {% if venta.monto_mp_ars and venta.monto_mp_ars > 0 %}
-                    <tr><td>Mercado Pago</td><td class="text-end">ARS {{ "{:,.2f}".format(venta.monto_mp_ars) }}</td></tr>
-                    {% endif %}
-                    {% if (venta.monto_debito_ars or 0) + (venta.monto_credito_ars or 0) > 0 %}
-                    <tr><td>Tarjetas</td><td class="text-end">ARS {{ "{:,.2f}".format((venta.monto_debito_ars or 0) + (venta.monto_credito_ars or 0)) }}</td></tr>
+                    <tr><td>Transferencia / Digital (ARS)</td><td class="text-end">u$d {{ "{:,.2f}".format(venta.monto_transferencia_ars / cotiz) }}</td><td class="text-end">${{ "{:,.2f}".format(venta.monto_transferencia_ars) }}</td></tr>
                     {% endif %}
                     
                     {% if venta.valor_celular_parte_pago and venta.valor_celular_parte_pago > 0 %}
-                    <tr style="background-color: #e9f5ff;">
+                    <tr style="background-color: #f0f7ff;">
                         <td><strong>Equipo Parte de Pago:</strong> {{ venta.pp_marca }} {{ venta.pp_modelo }}</td>
-                        <td class="text-end">ARS {{ "{:,.2f}".format(venta.valor_celular_parte_pago) }}</td>
+                        <td class="text-end"><strong>u$d {{ "{:,.2f}".format(venta.valor_celular_parte_pago / cotiz) }}</strong></td>
+                        <td class="text-end">${{ "{:,.2f}".format(venta.valor_celular_parte_pago) }}</td>
                     </tr>
                     {% endif %}
 
                     {% if venta.saldo_pendiente and venta.saldo_pendiente > 0 %}
                     <tr style="background-color: #fff3f3; color: #dc3545;">
-                        <td><strong>Saldo Pendiente (Cta. Cte.)</strong></td>
-                        <td class="text-end"><strong>ARS {{ "{:,.2f}".format(venta.saldo_pendiente) }}</strong></td>
+                        <td><strong>Saldo Pendiente (Financiado Cta. Cte.)</strong></td>
+                        <td class="text-end"><strong>u$d {{ "{:,.2f}".format(venta.saldo_pendiente / cotiz) }}</strong></td>
+                        <td class="text-end">${{ "{:,.2f}".format(venta.saldo_pendiente) }}</td>
                     </tr>
                     {% endif %}
                 </tbody>
@@ -247,22 +231,19 @@
             
             <div class="row mt-2 text-center" style="font-size: 0.7rem;">
                 <div class="col-6">
-                    <p style="margin-bottom: 10px;">___________________________</p>
+                    <p style="margin-bottom: 5px;">___________________________</p>
                     <p>Firma MY POINT</p>
                 </div>
                 <div class="col-6">
-                    <p style="margin-bottom: 10px;">___________________________</p>
+                    <p style="margin-bottom: 5px;">___________________________</p>
                     <p>Firma del Cliente</p>
                 </div>
             </div>
         </div>
         {% endmacro %}
 
-        {# LLAMADAS A ORIGINAL Y DUPLICADO #}
         {{ render_comprobante_venta('Original - Empresa') }}
-
         <div class="separator no-print"></div>
-
         {{ render_comprobante_venta('Duplicado - Cliente') }}
 
     </div>
