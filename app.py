@@ -1551,7 +1551,6 @@ def eliminar_repuesto(repuesto_id):
 ## NUEVAS MODIFICACIONES ##
 @app.route('/compras')
 @login_required
-#@admin_required
 @tecnico_required
 def listar_compras():
     start_date, end_date_display, end_date_query = get_date_filters()
@@ -1559,18 +1558,30 @@ def listar_compras():
     filtro_tipo_item = request.args.get('tipo_item', '')
     filtro_estado_pago = request.args.get('estado_pago', '')
 
-    query = """
+    # Definimos los grupos de categorías para que el JOIN sepa a qué tabla ir
+    categorias_celulares = "('CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO')"
+    categorias_repuestos = "('REPUESTO', 'ACCESORIO', 'PRODUCTO', 'OTRO')"
+
+    query = f"""
         SELECT co.*, p.razon_social, p.nombre, p.apellido, u.username,
                CASE
-                   WHEN co.tipo_item = 'CELULAR' THEN c.marca || ' ' || c.modelo || ' (IMEI: ' || COALESCE(c.imei, 'N/A') || ')'
-                   WHEN co.tipo_item = 'REPUESTO' THEN r.nombre_parte || ' (' || COALESCE(r.modelo_compatible, 'Genérico') || ')'
-                   ELSE 'Desconocido'
+                   -- Si el tipo está en el grupo de equipos/celulares
+                   WHEN co.tipo_item IN {categorias_celulares} THEN 
+                        COALESCE(c.marca, 'Equipo') || ' ' || COALESCE(c.modelo, '') || ' (IMEI: ' || COALESCE(c.imei, 'N/A') || ')'
+                   
+                   -- Si el tipo está en el grupo de repuestos/accesorios
+                   WHEN co.tipo_item IN {categorias_repuestos} THEN 
+                        COALESCE(r.nombre_parte, 'Insumo') || ' (' || COALESCE(r.modelo_compatible, 'Genérico') || ')'
+                   
+                   ELSE 'Tipo: ' || co.tipo_item
                END AS item_descripcion
         FROM compras co
         JOIN personas p ON co.proveedor_id = p.id
         JOIN users u ON co.user_id = u.id
-        LEFT JOIN celulares c ON co.item_id = c.id AND co.tipo_item = 'CELULAR'
-        LEFT JOIN repuestos r ON co.item_id = r.id AND co.tipo_item = 'REPUESTO'
+        -- Unimos con celulares si el tipo_item pertenece al grupo de equipos
+        LEFT JOIN celulares c ON co.item_id = c.id AND co.tipo_item IN {categorias_celulares}
+        -- Unimos con repuestos si el tipo_item pertenece al grupo de insumos
+        LEFT JOIN repuestos r ON co.item_id = r.id AND co.tipo_item IN {categorias_repuestos}
         WHERE co.fecha_compra BETWEEN ? AND ?
     """
     params = [start_date, end_date_query]
@@ -1593,7 +1604,7 @@ def listar_compras():
     return render_template('compras/listar_compras.html', compras=compras, start_date=start_date, end_date=end_date_display,
                            filtros_activos={'proveedor': filtro_proveedor, 'tipo_item': filtro_tipo_item, 'estado_pago': filtro_estado_pago},
                            proveedores_disponibles=proveedores_disponibles)
-
+    
 # --- Rutas para Cuentas Corrientes de Proveedores ---
 ## NUEVAS MODIFICACIONES (Punto 3 de Requerimientos) ##
 @app.route('/cuentas_corrientes/proveedores')
