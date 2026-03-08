@@ -2769,9 +2769,7 @@ def editar_presupuesto_reparacion(servicio_id):
 def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
     """
     Función auxiliar para manejar la lógica de creación y edición de presupuestos de reparación.
-    Reutiliza el mismo formulario para ambos casos e integra la gestión del Técnico (Tipeado)
-    y la selección de cotización de dólar para insumos. 
-    (Se eliminó el manejo de comisión en esta etapa por requerimiento).
+    Ahora soporta elección de moneda (ARS/USD) y precios editables.
     """
     dolar_info_from_context = inject_dolar_values()
     # Fallback del dólar de venta general
@@ -2786,18 +2784,16 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
     
     form_data = {} # Inicializar form_data para la plantilla
 
-    # Lógica para GET request (cargar el formulario, ya sea nuevo o para edición)
+    # Lógica para GET request
     if request.method == 'GET':
         if is_edit:
-            # Asegurarse de que el servicio_id exista y esté en estado 'PRESUPUESTO'
             servicio_data = db_query("SELECT * FROM servicios_reparacion WHERE id = ? AND status = 'PRESUPUESTO'", (servicio_id,))
             if not servicio_data:
-                flash("Presupuesto de servicio no encontrado o no puede ser editado en su estado actual (solo se editan 'PRESUPUESTOS').", "danger")
+                flash("Presupuesto de servicio no encontrado o no editable.", "danger")
                 return redirect(url_for('listar_presupuestos_reparacion'))
             
-            servicio = servicio_data[0] # Tomar la primera (y única) fila
+            servicio = servicio_data[0]
             
-            # Traemos los ítems vinculados (Stock y Manuales) usando un LEFT JOIN para obtener nombres de stock
             items_usados = db_query("""
                 SELECT ru.repuesto_id, ru.manual_item_nombre, ru.cantidad, ru.costo_usd_momento,
                        r.nombre_parte, r.modelo_compatible
@@ -2806,7 +2802,6 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 WHERE ru.servicio_id = ?
             """, (servicio_id,))
             
-            # Rellenar form_data con los datos del servicio existente
             form_data = {
                 'servicio_id': servicio['id'], 
                 'cliente_id': servicio['cliente_id'],
@@ -2820,54 +2815,53 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 'repuesto_nombre_display[]': [],
                 'cantidad_stock[]': [],
                 'precio_venta_usd_stock[]': [], 
-                'manual_item_nombre[]': [],      # Lista para nombres de ítems manuales
-                'cantidad_manual[]': [],         # Lista para cantidades manuales
-                'precio_venta_usd_manual[]': []  # Lista para precios de venta manuales
+                'manual_item_nombre[]': [],
+                'cantidad_manual[]': [],
+                'precio_venta_usd_manual[]': []
             }
             
             for item in items_usados:
-                if item['repuesto_id']: # SI TIENE ID, ES UN ÍTEM DE STOCK
+                if item['repuesto_id']:
                     form_data['repuesto_stock_id[]'].append(item['repuesto_id'])
-                    # Construimos el nombre descriptivo para mostrar en el formulario
                     nombre_repuesto = f"{item['nombre_parte']} ({item['modelo_compatible'] or 'Genérico'})"
                     form_data['repuesto_nombre_display[]'].append(nombre_repuesto)
                     form_data['cantidad_stock[]'].append(item['cantidad'])
                     form_data['precio_venta_usd_stock[]'].append(f"{item['costo_usd_momento']:.2f}") 
-                else: # SI NO TIENE ID, ES UN ÍTEM INGRESADO MANUALMENTE
-                    # Verificamos que el nombre manual no sea None
+                else:
                     nombre_manual = item['manual_item_nombre'] if item['manual_item_nombre'] else "Ítem manual"
                     form_data['manual_item_nombre[]'].append(nombre_manual)
                     form_data['cantidad_manual[]'].append(item['cantidad'])
                     form_data['precio_venta_usd_manual[]'].append(f"{item['costo_usd_momento']:.2f}")
         else:
-            # Rellenar form_data para un presupuesto NUEVO
             form_data = {
                 'precio_mano_obra_ars': '0.00', 
                 'tipo_servicio': '', 
                 'tecnico_nombre': '',
-                'manual_item_nombre[]': [], # Inicializamos listas vacías para evitar errores de Jinja2
+                'manual_item_nombre[]': [],
                 'cantidad_manual[]': [],
                 'precio_venta_usd_manual[]': []
             }
             if request.args.get('cliente_id'):
                 form_data['cliente_id'] = int(request.args.get('cliente_id'))
                 
-    # Lógica para POST request (procesar el formulario enviado)
+    # Lógica para POST request
     elif request.method == 'POST':
         db_conn = get_db()
         try:
             form_data_raw = request.form.to_dict(flat=False) 
 
-            # --- NUEVA LÓGICA DE SELECCIÓN DE DÓLAR PARA LOS INSUMOS ---
+            # --- SELECCIÓN DE DÓLAR ---
             tipo_dolar_elegido = request.form.get('tipo_dolar', 'blue')
             if tipo_dolar_elegido == 'oficial':
                 valor_dolar_servicio = float(dolar_info_from_context.get('valor_bcra_venta') or 1.0)
             elif tipo_dolar_elegido == 'manual':
                 valor_dolar_servicio = float(request.form.get('valor_dolar_manual') or 1.0)
-            else: # blue
+            else:
                 valor_dolar_servicio = float(dolar_info_from_context.get('valor_blue_venta') or 1.0)
 
-            # Captura de campos principales del formulario
+            # --- NUEVA LÓGICA: MONEDA DEL PRESUPUESTO ---
+            moneda_presupuesto = request.form.get('moneda_presupuesto', 'USD')
+
             cliente_id = int(form_data_raw.get('cliente_id', [''])[0]) if form_data_raw.get('cliente_id', [''])[0] else None
             tecnico_nombre = form_data_raw.get('tecnico_nombre', [''])[0].strip()
             tipo_servicio = form_data_raw.get('tipo_servicio', [''])[0].strip()
@@ -2876,14 +2870,10 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             solucion_aplicada = form_data_raw.get('solucion_aplicada', [''])[0].strip() if form_data_raw.get('solucion_aplicada') else ''
             precio_mano_obra_ars_str = form_data_raw.get('precio_mano_obra_ars', ['0.00'])[0]
             precio_mano_obra_ars = float(precio_mano_obra_ars_str) if precio_mano_obra_ars_str else 0.0
-            
-            # --- SE ELIMINÓ LA CAPTURA DE COMISIÓN ---
 
-            # --- Validaciones de Backend ---
-            clientes = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY apellido, nombre, razon_social")
             if not cliente_id or not tecnico_nombre or not tipo_servicio or not falla_reportada:
-                flash("Todos los campos obligatorios deben ser completados.", "danger")
-                return render_template('servicio_tecnico/form_reparacion.html', clientes=clientes, sugerencias_tecnicos=sugerencias_tecnicos, repuestos=json.dumps(repuestos_for_json), form_data=form_data_raw, is_edit=is_edit, servicio_id=servicio_id)
+                flash("Campos obligatorios incompletos.", "danger")
+                return render_template('servicio_tecnico/form_reparacion.html', clientes=db_query("SELECT * FROM personas WHERE es_cliente = 1"), sugerencias_tecnicos=sugerencias_tecnicos, repuestos=json.dumps(repuestos_for_json), form_data=form_data_raw, is_edit=is_edit, servicio_id=servicio_id)
 
             items_para_registrar = []
             total_precio_venta_items_usd = 0.0 
@@ -2894,46 +2884,54 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             # --- Procesar ítems de STOCK ---
             repuesto_stock_ids = form_data_raw.get('repuesto_stock_id[]', [])
             cantidades_stock = form_data_raw.get('cantidad_stock[]', [])
-            precios_venta_usd_stock = form_data_raw.get('precio_venta_usd_stock[]', []) 
+            precios_venta_input_stock = form_data_raw.get('precio_venta_usd_stock[]', []) 
 
             for i in range(len(repuesto_stock_ids)):
                 r_id_str = repuesto_stock_ids[i]
                 r_id = int(r_id_str) if r_id_str and r_id_str.isdigit() else None
                 cant = int(cantidades_stock[i]) if i < len(cantidades_stock) and cantidades_stock[i].isdigit() else 0
-                pv_usd = float(precios_venta_usd_stock[i]) if i < len(precios_venta_usd_stock) and precios_venta_usd_stock[i] else 0.0 
+                
+                # El valor que viene del input (puede ser el de lista o el editado)
+                pv_input = float(precios_venta_input_stock[i]) if i < len(precios_venta_input_stock) and precios_venta_input_stock[i] else 0.0 
 
                 if r_id and cant > 0:
-                    items_para_registrar.append({'repuesto_id': r_id, 'manual_item_nombre': None, 'cantidad': cant, 'costo_usd_momento': pv_usd})
-                    total_precio_venta_items_usd += pv_usd * cant
+                    # Si el presupuesto se hizo en ARS, convertimos el precio editado a USD para la DB
+                    pv_usd_momento = pv_input / valor_dolar_servicio if moneda_presupuesto == 'ARS' else pv_input
+                    
+                    items_para_registrar.append({'repuesto_id': r_id, 'manual_item_nombre': None, 'cantidad': cant, 'costo_usd_momento': pv_usd_momento})
+                    total_precio_venta_items_usd += pv_usd_momento * cant
                     has_any_valid_item = True
             
             # --- Procesar ítems MANUALES ---
             manual_nombres = form_data_raw.get('manual_item_nombre[]', [])
             manual_cantidades = form_data_raw.get('cantidad_manual[]', [])
-            manual_precios = form_data_raw.get('precio_venta_usd_manual[]', []) 
+            manual_precios_input = form_data_raw.get('precio_venta_usd_manual[]', []) 
 
             for i in range(len(manual_nombres)):
                 n = manual_nombres[i].strip()
                 c = int(manual_cantidades[i]) if i < len(manual_cantidades) and manual_cantidades[i].isdigit() else 0
-                p = float(manual_precios[i]) if i < len(manual_precios) and manual_precios[i] else 0.0
+                p_input = float(manual_precios_input[i]) if i < len(manual_precios_input) and manual_precios_input[i] else 0.0
                 
                 if n and c > 0:
-                    items_para_registrar.append({'repuesto_id': None, 'manual_item_nombre': n, 'cantidad': c, 'costo_usd_momento': p})
-                    total_precio_venta_items_usd += p * c
+                    # Conversión si es necesario
+                    p_usd_momento = p_input / valor_dolar_servicio if moneda_presupuesto == 'ARS' else p_input
+                    
+                    items_para_registrar.append({'repuesto_id': None, 'manual_item_nombre': n, 'cantidad': c, 'costo_usd_momento': p_usd_momento})
+                    total_precio_venta_items_usd += p_usd_momento * c
                     has_any_valid_item = True
 
             if not has_any_valid_item:
-                flash("Debe añadir al menos un ítem (Repuesto o Insumo).", "danger")
+                flash("Debe añadir al menos un ítem.", "danger")
                 db_conn.rollback()
-                return render_template('servicio_tecnico/form_reparacion.html', clientes=clientes, sugerencias_tecnicos=sugerencias_tecnicos, repuestos=json.dumps(repuestos_for_json), form_data=form_data_raw, is_edit=is_edit, servicio_id=servicio_id)
+                return redirect(url_for('crear_presupuesto_reparacion'))
 
-            # --- CÁLCULO FINAL USANDO LA COTIZACIÓN ELEGIDA ---
+            # --- CÁLCULO FINAL ARS ---
+            # Independientemente de la moneda del presupuesto, el final a cobrar se guarda en ARS calculando USD * Cotización + MO
             precio_final_ars = (total_precio_venta_items_usd * valor_dolar_servicio) + precio_mano_obra_ars
             
             fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             if is_edit:
-                # SE QUITÓ comision_pct DEL UPDATE
                 db_execute_func(db_conn,
                     """UPDATE servicios_reparacion SET 
                         cliente_id = ?, tecnico_nombre = ?, imei_equipo = ?, falla_reportada = ?, solucion_aplicada = ?, 
@@ -2946,7 +2944,6 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 )
                 db_execute_func(db_conn, "DELETE FROM repuestos_usados WHERE servicio_id = ?", (servicio_id,))
             else:
-                # SE QUITÓ comision_pct DEL INSERT
                 servicio_id = db_execute_func(db_conn,
                     """INSERT INTO servicios_reparacion 
                        (cliente_id, tecnico_nombre, imei_equipo, falla_reportada, solucion_aplicada, 
@@ -2957,13 +2954,12 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                     return_id=True
                 )
 
-            # Guardar ítems asociados
             for item in items_para_registrar:
                 db_execute_func(db_conn, "INSERT INTO repuestos_usados (servicio_id, repuesto_id, manual_item_nombre, cantidad, costo_usd_momento) VALUES (?, ?, ?, ?, ?)", 
                                 (servicio_id, item['repuesto_id'], item['manual_item_nombre'], item['cantidad'], item['costo_usd_momento']))
             
             db_conn.commit()
-            flash(f'Servicio guardado exitosamente. Cotización aplicada: ${valor_dolar_servicio}', 'success')
+            flash(f'Presupuesto guardado exitosamente.', 'success')
             return redirect(url_for('listar_presupuestos_reparacion'))
         
         except Exception as e:
@@ -2972,7 +2968,6 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             flash(f'Ocurrió un error: {e}', 'danger')
             return redirect(url_for('crear_presupuesto_reparacion'))
     
-    # Render final para GET o errores de validación
     clientes = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY apellido, nombre, razon_social")
     title = "Editar Presupuesto de Servicio" if is_edit else "Nuevo Presupuesto de Servicio"
     
@@ -2983,8 +2978,7 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                            form_data=form_data, 
                            is_edit=is_edit,
                            servicio_id=servicio_id,
-                           title=title)
-    
+                           title=title)  
       
         
     # ... (el resto de tu archivo app.py continúa aquí) ...

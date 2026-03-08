@@ -78,7 +78,7 @@
 <div class="alert alert-info d-flex align-items-center bg-usd-logic shadow-sm" role="alert">
     <i class="bi bi-shield-check flex-shrink-0 me-2" style="font-size: 1.5rem;"></i>
     <div>
-        <strong>Cotización de Insumos:</strong> Seleccione a continuación el tipo de dólar para convertir los repuestos. La Mano de Obra se suma directamente en Pesos.
+        <strong>Presupuesto Flexible:</strong> Ahora puede elegir si presupuestar los insumos en Pesos o Dólares. El precio se carga automáticamente de la lista pero es editable.
     </div>
 </div>
 
@@ -146,13 +146,21 @@
 
             <!-- SECCIÓN COTIZACIÓN -->
             <div class="card my-4 border-warning bg-light shadow-sm">
-                <div class="card-header bg-warning text-dark fw-bold py-2">
-                    <i class="bi bi-currency-exchange me-2"></i>Cotización aplicada a los Repuestos/Insumos
+                <div class="card-header bg-warning text-dark fw-bold py-2 d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-currency-exchange me-2"></i>Cotización y Moneda</span>
+                    <!-- NUEVO SELECTOR DE MONEDA -->
+                    <div class="d-flex align-items-center gap-2">
+                        <label class="small mb-0">Moneda Insumos:</label>
+                        <select name="moneda_presupuesto" id="moneda_presupuesto" class="form-select form-select-sm w-auto border-dark fw-bold">
+                            <option value="USD" selected>USD (Dólares)</option>
+                            <option value="ARS">ARS (Pesos)</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="card-body py-3">
                     <div class="row g-3 align-items-center">
                         <div class="col-md-6">
-                            <label class="form-label small fw-bold">Tipo de Dólar:</label>
+                            <label class="form-label small fw-bold">Tipo de Dólar para Conversión:</label>
                             <select name="tipo_dolar" id="tipo_dolar" class="form-select border-primary" onchange="toggleManualDolar()">
                                 <option value="blue" data-val="{{ valor_blue_venta|default(1.0) }}" selected>Dólar Blue Venta: ${{ valor_blue_venta|round(2) }}</option>
                                 <option value="oficial" data-val="{{ valor_bcra_venta|default(1.0) }}">Dólar Oficial Venta: ${{ valor_bcra_venta|round(2) }}</option>
@@ -207,7 +215,7 @@
                 </div>
 
                 <div class="col-md-3">
-                    <label class="form-label fw-bold">Subtotal Items (USD):</label>
+                    <label class="form-label fw-bold" id="label_subtotal_items">Subtotal Items (USD):</label>
                     <input type="text" class="form-control bg-white" id="precio_venta_total_items_usd_display" readonly value="USD 0.00">
                 </div>
                 <div class="col-md-3">
@@ -218,7 +226,7 @@
                 <div class="col-md-12 mt-3">
                     <label class="form-label fw-bold fs-5">PRECIO FINAL A COBRAR (ARS):</label>
                     <input type="text" class="form-control form-control-lg bg-success text-white fw-bold text-center shadow-sm" id="precio_final_ars_display" readonly value="ARS 0.00">
-                    <small class="text-muted d-block text-center mt-1">Cálculo: (Items USD * Cotización) + Mano Obra ARS</small>
+                    <small class="text-muted d-block text-center mt-1">Cálculo: (Items Convertidos) + Mano Obra ARS</small>
                 </div>
             </div>
 
@@ -256,6 +264,30 @@
 
         let itemCounter = 0;
 
+        // --- FUNCIÓN PARA ACTUALIZAR ETIQUETAS DINÁMICAMENTE (ARS/USD) ---
+        function actualizarEtiquetasMoneda() {
+            const moneda = $('#moneda_presupuesto').val();
+            // Recorremos todas las filas de ítems para cambiar los labels de precio
+            $('.item-row').each(function() {
+                $(this).find('label').each(function() {
+                    if ($(this).text().includes('Precio Venta')) {
+                        $(this).html(`Precio Venta (${moneda}) <span class="text-danger">*</span>:`);
+                    }
+                });
+            });
+        }
+
+        // --- Obtener cotización actual del select ---
+        function getCotizacion() {
+            const tipoDolar = $('#tipo_dolar').val();
+            if (tipoDolar === 'manual') {
+                return parseFloat($('#valor_dolar_manual').val()) || 1.0;
+            } else {
+                const select = document.getElementById('tipo_dolar');
+                return parseFloat(select.options[select.selectedIndex].getAttribute('data-val')) || 1.0;
+            }
+        }
+
         window.toggleManualDolar = function() {
             const tipo = $('#tipo_dolar').val();
             if (tipo === 'manual') {
@@ -267,43 +299,72 @@
         };
 
         window.calcularTotalesServicio = function() {
-            let totalPrecioVentaItemsUsd = 0; 
-            const tipoDolar = $('#tipo_dolar').val();
-            let cotizacion = 1.0;
-
-            if (tipoDolar === 'manual') {
-                cotizacion = parseFloat($('#valor_dolar_manual').val()) || 0;
-            } else {
-                const select = document.getElementById('tipo_dolar');
-                cotizacion = parseFloat(select.options[select.selectedIndex].getAttribute('data-val')) || 1.0;
-            }
+            const moneda = $('#moneda_presupuesto').val();
+            const cotizacion = getCotizacion();
+            
+            let totalItemsEnMonedaElegida = 0; 
 
             $('#cotiz_aplicada_display').val('$ ' + cotizacion.toFixed(2));
+            $('#label_subtotal_items').text(`Subtotal Items (${moneda}):`);
 
             itemsContainer.find('.item-row').each(function() {
                 const itemType = $(this).data('item-type');
                 let cantidad = 0;
-                let precioUnitarioUsd = 0; 
+                let precioUnitario = 0; 
 
                 if (itemType === 'stock') {
                     if ($(this).find('.select2-item-stock').val()) {
                         cantidad = parseFloat($(this).find('.item-cantidad-stock').val()) || 0;
-                        precioUnitarioUsd = parseFloat($(this).find('.item-precio-venta-usd-stock').val()) || 0; 
+                        precioUnitario = parseFloat($(this).find('.item-precio-venta-usd-stock').val()) || 0; 
                     }
                 } else if (itemType === 'manual') {
                     if ($(this).find('.manual-item-nombre').val().trim() !== '') {
                         cantidad = parseFloat($(this).find('.item-cantidad-manual').val()) || 0;
-                        precioUnitarioUsd = parseFloat($(this).find('.item-precio-venta-usd-manual').val()) || 0; 
+                        precioUnitario = parseFloat($(this).find('.item-precio-venta-usd-manual').val()) || 0; 
                     }
                 }
-                totalPrecioVentaItemsUsd += (cantidad * precioUnitarioUsd);
+                totalItemsEnMonedaElegida += (cantidad * precioUnitario);
             });
 
-            $('#precio_venta_total_items_usd_display').val('USD ' + totalPrecioVentaItemsUsd.toFixed(2));
+            $('#precio_venta_total_items_usd_display').val(moneda + ' ' + totalItemsEnMonedaElegida.toFixed(2));
+            
             const manoObraArs = parseFloat(precioManoObraArsInput.val()) || 0;
-            const precioTotalServicioArs = (totalPrecioVentaItemsUsd * cotizacion) + manoObraArs;
+            
+            let precioTotalServicioArs = 0;
+            if (moneda === 'USD') {
+                precioTotalServicioArs = (totalItemsEnMonedaElegida * cotizacion) + manoObraArs;
+            } else {
+                // Si la moneda ya es ARS, simplemente sumamos
+                precioTotalServicioArs = totalItemsEnMonedaElegida + manoObraArs;
+            }
+
             $('#precio_final_ars_display').val('ARS ' + precioTotalServicioArs.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+            
+            // Forzar actualización de etiquetas de texto cada vez que se calcula
+            actualizarEtiquetasMoneda();
         }
+
+        // --- Lógica de cambio de moneda ---
+        $('#moneda_presupuesto').on('change', function() {
+            const nuevaMoneda = $(this).val();
+            const cotizacion = getCotizacion();
+
+            $('.item-row').each(function() {
+                const inputPrecio = $(this).find('.item-precio-venta-usd-stock, .item-precio-venta-usd-manual');
+                let valorActual = parseFloat(inputPrecio.val()) || 0;
+                
+                if (nuevaMoneda === 'ARS') {
+                    // Si paso de USD a ARS: Multiplico el valor actual por la cotización
+                    inputPrecio.val((valorActual * cotizacion).toFixed(2));
+                } else {
+                    // Si paso de ARS a USD: Divido el valor actual por la cotización
+                    inputPrecio.val((valorActual / cotizacion).toFixed(2));
+                }
+            });
+            // Al cambiar el select, actualizamos etiquetas y recalculamos el gran total
+            actualizarEtiquetasMoneda();
+            calcularTotalesServicio();
+        });
 
         $('.select2-persona').select2({
             placeholder: 'Buscar cliente...',
@@ -333,7 +394,19 @@
                 }
             }).on('select2:select', function (e) {
                 const row = $(this).closest('.item-row');
-                row.find('.item-precio-venta-usd-stock').val(e.params.data.precio_venta_usd.toFixed(2)).prop('readonly', true);
+                const moneda = $('#moneda_presupuesto').val();
+                const cotizacion = getCotizacion();
+                
+                let precioCarga = 0;
+                if (moneda === 'ARS') {
+                    // Si el presupuesto es en ARS, prioritariamente usamos precio_venta_ars de la DB, sino convertimos el USD
+                    precioCarga = (e.params.data.precio_venta_ars > 0) ? e.params.data.precio_venta_ars : (e.params.data.precio_venta_usd * cotizacion);
+                } else {
+                    precioCarga = e.params.data.precio_venta_usd;
+                }
+
+                // MODIFICADO: Permitimos edición removiendo el readonly (o asegurando prop false)
+                row.find('.item-precio-venta-usd-stock').val(precioCarga.toFixed(2)).prop('readonly', false);
                 row.find('.item-cantidad-stock').val(1);
                 calcularTotalesServicio();
             });
@@ -354,12 +427,11 @@
                         const opt = new Option(precargadoData.repuesto_nombre, precargadoData.repuesto_id, true, true);
                         stockSelect.append(opt).trigger('change');
                         row.find('.item-cantidad-stock').val(precargadoData.cantidad);
-                        row.find('.item-precio-venta-usd-stock').val(precargadoData.precio_venta_usd).prop('readonly', true);
+                        // Permitir edición incluso en datos precargados de edición
+                        row.find('.item-precio-venta-usd-stock').val(precargadoData.precio_venta_usd).prop('readonly', false);
                     }
                 }
             } 
-            
-            // ## MODIFICACIÓN CLAVE: Lógica para rellenar campos MANUALES al editar ##
             else if (itemType === 'manual') {
                 if (precargadoData.manual_nombre) {
                     row.find('.manual-item-nombre').val(precargadoData.manual_nombre);
@@ -369,6 +441,9 @@
             }
             
             row.find('input').on('input', calcularTotalesServicio);
+            
+            // Sincronizar etiqueta de moneda al crear/cargar la fila
+            actualizarEtiquetasMoneda();
             calcularTotalesServicio();
         }
 
@@ -427,6 +502,8 @@
             }, false);
         });
 
+        // Inicialización de etiquetas y cálculos al cargar
+        actualizarEtiquetasMoneda();
         calcularTotalesServicio();
     });
 </script>
