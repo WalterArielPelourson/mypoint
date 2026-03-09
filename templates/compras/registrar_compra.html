@@ -1,3 +1,4 @@
+
 {% extends 'layout.html' %}
 
 {% block title %}Registrar Compra - {{ super() }}{% endblock %}
@@ -99,7 +100,7 @@
                 {# Los ítems se cargan dinámicamente aquí #}
             </div>
             
-            {% elif item_type == 'repuesto' %}
+           {% elif item_type == 'repuesto' %}
             <h4 class="mt-4 mb-3"><i class="bi bi-box-seam me-2"></i>Detalles del Producto / Repuesto</h4>
             <div class="row g-3">
                 <div class="col-md-3">
@@ -119,11 +120,17 @@
                 </div>
                 <div class="col-md-6">
                     <label for="nombre_parte" class="form-label">Nombre / Descripción:</label>
-                    <input type="text" class="form-control" id="nombre_parte" name="nombre_parte" required>
+                    <!-- SELECT PARA NOMBRE -->
+                    <select class="form-control" id="nombre_parte" name="nombre_parte" required style="width: 100%;">
+                        <option value="">Seleccione o escriba nombre...</option>
+                    </select>
                 </div>
                 <div class="col-md-4">
                     <label for="modelo_compatible" class="form-label">Modelo Compatible:</label>
-                    <input type="text" class="form-control" id="modelo_compatible" name="modelo_compatible">
+                    <!-- SELECT PARA MODELO (CASCADA) -->
+                    <select class="form-control" id="modelo_compatible" name="modelo_compatible" style="width: 100%;">
+                        <option value="">Seleccione o escriba modelo...</option>
+                    </select>
                 </div>
                 <div class="col-md-4">
                     <label for="costo_unidad" class="form-label fw-bold" id="label_costo_unidad">Costo Unidad (USD):</label>
@@ -296,15 +303,87 @@
     }
 
     $(document).ready(function() {
+        // Inicializar Select2 para Proveedores
         $('.select2-persona').select2({ width: '100%', placeholder: 'Buscar...' });
 
+        // 1. SELECTOR DE NOMBRE DE PARTE (Lógica de limpieza total)
+        $('#nombre_parte').select2({
+            placeholder: 'Escriba al menos 3 letras...',
+            minimumInputLength: 3, // <--- CAMBIO: Dispara al 3er carácter
+            tags: true, 
+            width: '100%',
+            ajax: {
+                url: '/api/buscar_nombres_repuestos_limpios', // <--- IMPORTANTE: Usa la nueva ruta de Python
+                dataType: 'json',
+                delay: 250,
+                data: function (params) { return { q: params.term }; },
+                processResults: function (data) {
+                    // El servidor ya debería mandar nombres limpios, 
+                    // pero por seguridad forzamos que no haya duplicados ni basura.
+                    const nombresUnicos = [];
+                    const seen = new Set();
+                    
+                    data.results.forEach(item => {
+                        let nombre = item.text.split(' - ')[0].split(' | ')[0].trim();
+                        let nombreUpper = nombre.toUpperCase();
+
+                        if (!seen.has(nombreUpper)) {
+                            seen.add(nombreUpper);
+                            nombresUnicos.push({ id: nombre, text: nombre });
+                        }
+                    });
+                    return { results: nombresUnicos };
+                },
+                cache: true
+            },
+            // Asegura que al seleccionar, solo se vea el nombre en el cuadro
+            templateSelection: function (data) {
+                return data.text;
+            }
+        });
+
+        // 2. SELECTOR DE MODELO COMPATIBLE (Cascada)
+        $('#modelo_compatible').select2({
+            placeholder: 'Primero elija un nombre...',
+            tags: true,
+            width: '100%',
+            disabled: true, 
+            ajax: {
+                url: '/api/buscar_modelos_por_nombre',
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return { 
+                        q: params.term, 
+                        nombre: $('#nombre_parte').val() 
+                    };
+                },
+                processResults: function (data) {
+                    return { results: data.results };
+                }
+            }
+        });
+
+        // LÓGICA DE CASCADA: Al cambiar el nombre, habilitar modelos
+        $('#nombre_parte').on('select2:select change', function() {
+            const nombreVal = $(this).val();
+            if (nombreVal) {
+                $('#modelo_compatible').prop('disabled', false).val(null).trigger('change');
+                // Al elegir nombre, abrimos modelos automáticamente después de un breve delay
+                setTimeout(() => { $('#modelo_compatible').select2('open'); }, 200);
+            } else {
+                $('#modelo_compatible').prop('disabled', true).val(null).trigger('change');
+            }
+        });
+
+        // --- LÓGICA DE ESTADO DE PAGO ---
         $('#estado_pago').on('change', function() {
-            // Este contenedor solo existe en el HTML si el usuario es Admin
             if($('#pago_detalles_container').length > 0) {
                 $('#pago_detalles_container').toggle(this.value !== 'PENDIENTE');
             }
         });
 
+        // --- LÓGICA DE EQUIPOS CELULARES ---
         if ("{{ item_type }}" === 'celular') {
             const container = $('#celulares-container');
             const template = $('#celular-template').html();

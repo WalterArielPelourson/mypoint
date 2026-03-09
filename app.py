@@ -5081,6 +5081,68 @@ def api_buscar_repuestos():
     return jsonify(results=formatted_results)
 
 
+@app.route('/api/buscar_nombres_repuestos_limpios')
+@login_required
+def api_buscar_nombres_repuestos_limpios():
+    q = request.args.get('q', '').strip().upper()
+    if not q:
+        return jsonify(results=[])
+
+    # SQL que busca la cadena en cualquier parte y devuelve nombres únicos
+    # El UPPER garantiza que 'glas' traiga 'GLASS'
+    sql = "SELECT DISTINCT nombre_parte FROM repuestos WHERE UPPER(nombre_parte) LIKE ? ORDER BY nombre_parte ASC LIMIT 50"
+    params = (f"%{q}%",)
+    
+    resultados = db_query(sql, params)
+    
+    # Enviamos solo el nombre limpio tanto en ID como en TEXT
+    return jsonify(results=[{'id': r['nombre_parte'], 'text': r['nombre_parte']} for r in resultados])
+
+
+
+
+#busca repuestos y accesorios
+@app.route('/api/buscar_nombres_repuestos')
+@login_required
+def api_buscar_nombres_repuestos():
+    q = request.args.get('q', '').strip().upper() # Convertimos a Mayúsculas para comparar
+    
+    # Buscamos nombres únicos
+    sql = "SELECT DISTINCT nombre_parte FROM repuestos"
+    params = []
+    
+    if q:
+        # Buscamos cualquier coincidencia sin importar mayúsculas/minúsculas
+        sql += " WHERE UPPER(nombre_parte) LIKE ?"
+        params.append(f"%{q}%") 
+    
+    sql += " ORDER BY nombre_parte ASC LIMIT 200" # Aumentamos el límite
+    
+    resultados = db_query(sql, tuple(params))
+    
+    # Devolvemos la lista limpia
+    return jsonify(results=[{'id': r['nombre_parte'], 'text': r['nombre_parte']} for r in resultados])
+
+
+@app.route('/api/buscar_modelos_por_nombre')
+@login_required
+def api_buscar_modelos_por_nombre():
+    nombre = request.args.get('nombre', '').strip()
+    q = request.args.get('q', '').strip().lower()
+    if not nombre:
+        return jsonify(results=[])
+    # Traemos los modelos únicos asociados a ese nombre específico
+    sql = "SELECT DISTINCT modelo_compatible FROM repuestos WHERE nombre_parte = ?"
+    params = [nombre]
+    if q:
+        sql += " AND LOWER(modelo_compatible) LIKE ?"
+        params.append(f"%{q}%")
+    sql += " ORDER BY modelo_compatible LIMIT 20"
+    resultados = db_query(sql, tuple(params))
+    return jsonify(results=[{'id': r['modelo_compatible'], 'text': r['modelo_compatible']} for r in resultados])
+
+
+
 @app.route('/exportar/libro_diario')
 @login_required
 def exportar_libro_diario():
