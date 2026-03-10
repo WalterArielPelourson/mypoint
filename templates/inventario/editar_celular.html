@@ -51,22 +51,32 @@
                     <input type="number" class="form-control" id="almacenamiento_gb" name="almacenamiento_gb" 
                            value="{{ request.form.get('almacenamiento_gb', celular.almacenamiento_gb) }}" min="1">
                 </div>
+
                 <div class="col-md-4">
-                    <label for="ram_gb" class="form-label">RAM (GB):</label>
+                    <label for="ram_gb" class="form-label">RAM (GB) <span class="text-muted">(Opcional)</span>:</label>
                     <input type="number" class="form-control" id="ram_gb" name="ram_gb" 
-                           value="{{ request.form.get('ram_gb', celular.ram_gb) }}" min="1">
+                        value="{{ request.form.get('ram_gb', celular.ram_gb) }}" min="0">
+                    <div class="form-text">Dejar en 0 o vacío si no se conoce.</div>
                 </div>
+
+               
                 <div class="col-md-4">
                     <label for="color" class="form-label">Color:</label>
                     <input type="text" class="form-control" id="color" name="color" 
                            value="{{ request.form.get('color', celular.color) }}">
                 </div>
+
+                <!-- CAMPO BATERÍA: Ahora siempre visible y con validación -->
                 <div class="col-md-4" id="bateria_salud_group">
-                    <label for="bateria_salud" class="form-label">Salud de Batería (%):</label>
+                    <label for="bateria_salud" class="form-label">Salud de Batería (%):<span class="text-danger">*</span></label>
                     <input type="number" class="form-control" id="bateria_salud" name="bateria_salud" 
-                           value="{{ request.form.get('bateria_salud', celular.bateria_salud) }}" min="0" max="100">
-                    <div class="form-text">Solo para condición 'Usado'.</div>
+                           value="{{ request.form.get('bateria_salud', celular.bateria_salud) }}" 
+                           min="0" max="100" required>
+                    <div class="invalid-feedback">
+                        La salud de batería es obligatoria (0-100).
+                    </div>
                 </div>
+
                 <div class="col-md-4">
                     <label for="costo_usd" class="form-label">Costo (USD):<span class="text-danger">*</span></label>
                     <input type="number" step="0.01" class="form-control" id="costo_usd" name="costo_usd" 
@@ -119,36 +129,15 @@
           }, false)
         })
 
-        // Lógica para mostrar/ocultar salud de batería
+        // Lógica automática: Si es NUEVO, sugerir 100% de batería
         const condicionSelect = document.getElementById('condicion');
-        const bateriaSaludGroup = document.getElementById('bateria_salud_group');
         const bateriaSaludInput = document.getElementById('bateria_salud');
 
-        function toggleBateriaSalud() {
-            if (condicionSelect.value === 'Usado') {
-                bateriaSaludGroup.style.display = 'block';
-                bateriaSaludInput.setAttribute('required', 'required');
-            } else {
-                bateriaSaludGroup.style.display = 'none';
-                bateriaSaludInput.removeAttribute('required');
-                // Solo limpiar el valor si no fue enviado por el formulario
-                if (!condicionSelect.dataset.hasSubmittedValue) {
-                    bateriaSaludInput.value = ''; 
-                }
+        condicionSelect.addEventListener('change', function() {
+            if (this.value === 'Nuevo') {
+                bateriaSaludInput.value = 100;
             }
-        }
-        
-        // Al cargar la página, inicializa la visibilidad
-        // Usamos dataset para recordar si el valor viene del request.form
-        if (condicionSelect.value === '{{ request.form.get("condicion") }}' && '{{ request.form.get("condicion") }}' !== '') {
-            condicionSelect.dataset.hasSubmittedValue = 'true';
-        } else {
-            condicionSelect.dataset.hasSubmittedValue = 'false';
-        }
-
-
-        condicionSelect.addEventListener('change', toggleBateriaSalud);
-        toggleBateriaSalud(); // Ejecutar al cargar para configurar el estado inicial
+        });
     })()
 </script>
 {% endblock %}

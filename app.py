@@ -1211,51 +1211,76 @@ def editar_celular(celular_id):
 
     if request.method == 'POST':
         try:
+            # 1. Captura de datos de texto
             marca = request.form['marca'].strip()
             modelo = request.form['modelo'].strip()
             imei = request.form['imei'].strip()
             condicion = request.form['condicion']
-            almacenamiento_gb = int(request.form['almacenamiento_gb'])
-            ram_gb = int(request.form['ram_gb'])
             color = request.form['color'].strip()
-            bateria_salud = int(request.form.get('bateria_salud', 0)) if condicion == 'Usado' else None
             observaciones = request.form.get('observaciones', '').strip()
-            costo_usd = float(request.form['costo_usd'])
-            stock = int(request.form.get('stock', 1))
-            # es_parte_pago NO se modifica directamente desde aquí. Se mantiene su estado actual.
 
-            if not all([marca, modelo, imei, condicion, almacenamiento_gb, ram_gb, color, costo_usd]):
-                flash("Todos los campos obligatorios deben ser completados.", "danger")
+            # 2. Captura de datos numéricos
+            # Almacenamiento: Obligatorio
+            almacenamiento_gb = int(request.form.get('almacenamiento_gb') or 0)
+            
+            # RAM: Opcional (si está vacía, guardamos 0)
+            ram_gb = int(request.form.get('ram_gb') or 0)
+            
+            # Batería: Obligatoria (siempre)
+            # Usamos una variable intermedia para validar que no sea None (vacía)
+            bateria_raw = request.form.get('bateria_salud')
+            bateria_salud = int(bateria_raw) if (bateria_raw is not None and bateria_raw != '') else None
+            
+            # Costo y Stock
+            costo_usd = float(request.form.get('costo_usd') or 0)
+            stock = int(request.form.get('stock', 1))
+
+            # 3. VALIDACIÓN DE CAMPOS OBLIGATORIOS
+            # Excluimos 'ram_gb' de esta lista para que sea opcional.
+            # Validamos bateria_salud por separado porque 0 es un valor válido pero "falso" en Python.
+            if not all([marca, modelo, imei, condicion, almacenamiento_gb, color, costo_usd]) or bateria_salud is None:
+                flash("Todos los campos obligatorios deben ser completados (Marca, Modelo, IMEI, Condición, Almacenamiento, Color, Batería y Costo).", "danger")
                 return redirect(url_for('editar_celular', celular_id=celular_id))
+
+            # 4. Validaciones de formato y lógica
             if costo_usd <= 0:
                 flash("El costo en USD debe ser positivo.", "danger")
                 return redirect(url_for('editar_celular', celular_id=celular_id))
+            
             if not (imei.isdigit() and len(imei) == 15):
                 flash("El IMEI debe contener 15 dígitos numéricos.", "danger")
                 return redirect(url_for('editar_celular', celular_id=celular_id))
+            
             if stock not in [0, 1]:
                 flash("El stock de un celular debe ser 0 (vendido) o 1 (disponible).", "danger")
                 return redirect(url_for('editar_celular', celular_id=celular_id))
 
-            # Verificar if el nuevo IMEI ya existe para otro celular
+            # 5. Verificar si el nuevo IMEI ya existe para otro celular
             existing_imei = db_query("SELECT id FROM celulares WHERE imei = ? AND id != ?", (imei, celular_id))
             if existing_imei:
                 flash(f'Error: El IMEI "{imei}" ya está registrado para otro celular.', 'danger')
                 return redirect(url_for('editar_celular', celular_id=celular_id))
 
-            db_execute("UPDATE celulares SET marca=?, modelo=?, imei=?, condicion=?, almacenamiento_gb=?, ram_gb=?, color=?, bateria_salud=?, observaciones=?, costo_usd=?, stock=? WHERE id=?",
-                       (marca, modelo, imei, condicion, almacenamiento_gb, ram_gb, color, bateria_salud, observaciones, costo_usd, stock, celular_id))
+            # 6. Ejecutar actualización en la base de datos
+            db_execute("""
+                UPDATE celulares 
+                SET marca=?, modelo=?, imei=?, condicion=?, almacenamiento_gb=?, 
+                    ram_gb=?, color=?, bateria_salud=?, observaciones=?, costo_usd=?, stock=? 
+                WHERE id=?
+            """, (marca, modelo, imei, condicion, almacenamiento_gb, ram_gb, color, bateria_salud, observaciones, costo_usd, stock, celular_id))
             
+            # Registro de auditoría
             detalles = {'id': celular_id, 'marca': marca, 'modelo': modelo, 'imei': imei, 'stock_nuevo': stock}
             registrar_movimiento(current_user.id, 'MODIFICACION', 'CELULAR', celular_id, detalles)
             
             flash('Celular actualizado exitosamente.', 'success')
             return redirect(url_for('inventario_celulares'))
+
         except sqlite3.IntegrityError as e:
             flash(f'Error de integridad: {e}', 'danger')
             return redirect(url_for('editar_celular', celular_id=celular_id))
         except ValueError as e:
-            flash(f'Error de validación: {e}', 'danger')
+            flash(f'Error de formato: Asegúrese de que los campos numéricos sean válidos.', 'danger')
             return redirect(url_for('editar_celular', celular_id=celular_id))
         except Exception as e:
             app.logger.error(f"Error al editar celular {celular_id}: {e}", exc_info=True)
