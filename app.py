@@ -3136,6 +3136,76 @@ def mostrar_formulario_pago(venta_id):
                            form_data=form_data)
 
 
+@app.route('/cuentas_corrientes/cliente/pago_anticipado', methods=['GET', 'POST'])
+@login_required
+def pago_anticipado_cliente():
+    if request.method == 'POST':
+        db_conn = get_db()
+        try:
+            cliente_id = request.form.get('cliente_id')
+            monto = float(request.form.get('monto', 0))
+            moneda = request.form.get('moneda', 'ARS')
+            cuenta_destino = request.form.get('cuenta_destino', 'EFECTIVO')
+            
+            # --- NUEVA CAPTURA: Selección de Rubro (Equipos o Reparaciones) ---
+            imputacion = request.form.get('imputacion', 'EQUIPOS') 
+            
+            observaciones = request.form.get('observaciones', 'Pago por anticipado / Seña')
+            
+            # Obtener cotización para registro contable
+            dolar_info = obtener_cotizacion_dolar()
+            tipo_dolar = request.form.get('tipo_dolar', 'blue')
+            if tipo_dolar == 'oficial':
+                cotiz = float(dolar_info['venta'] or 1.0)
+            elif tipo_dolar == 'manual':
+                cotiz = float(request.form.get('valor_dolar_manual') or 1.0)
+            else:
+                cotiz = float(dolar_info['venta_blue'] or 1.0)
+
+            if not cliente_id or monto <= 0:
+                flash("Debe seleccionar un cliente y un monto válido.", "danger")
+                return redirect(url_for('pago_anticipado_cliente'))
+
+            db_conn.execute("BEGIN TRANSACTION")
+
+            # 1. Definir montos para la tabla cobros_clientes
+            monto_ars = monto if moneda == 'ARS' else (monto * cotiz)
+            monto_usd = monto if moneda == 'USD' else (monto / cotiz)
+
+            # 2. Registrar en cobros_clientes (Ahora con imputación dinámica)
+            cobro_id = db_execute_func(db_conn, """
+                INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                  monto_ars, monto_usd, cuenta_destino, f"PAGO ANTICIPADO / SEÑA ({imputacion})", observaciones, imputacion), return_id=True)
+
+            # 3. Impacto en Caja/Cuentas Virtuales (Reflejando el rubro en el tipo de movimiento)
+            tipo_mov = f'INGRESO_ANTICIPO_{imputacion}_{moneda}'
+            m_ars = monto if moneda == 'ARS' else 0
+            m_usd = monto if moneda == 'USD' else 0
+            
+            registrar_movimiento_caja(current_user.id, tipo_mov, monto_ars=m_ars, monto_usd=m_usd, 
+                                      descripcion=f"Anticipo {imputacion} - Cliente ID:{cliente_id} - {observaciones}", 
+                                      referencia_id=cobro_id, metodo_pago=cuenta_destino)
+
+            db_conn.commit()
+            flash(f"Pago anticipado para {imputacion} registrado exitosamente en la cuenta del cliente.", "success")
+            return redirect(url_for('ver_detalle_cc_cliente', cliente_id=cliente_id))
+
+        except Exception as e:
+            db_conn.rollback()
+            app.logger.error(f"Error en pago anticipado: {e}")
+            flash(f"Error: {e}", "danger")
+            return redirect(url_for('pago_anticipado_cliente'))
+
+    # GET: Cargar formulario
+    clientes = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_cliente = 1 ORDER BY apellido ASC")
+    return render_template('cuentas_corrientes/pago_anticipado.html', clientes=clientes)
+
+
+
+
+
 @app.route('/ventas/procesar_pago/<int:venta_id>', methods=['POST'])
 @login_required
 def procesar_pago(venta_id):
@@ -3288,7 +3358,8 @@ def procesar_pago(venta_id):
         ))
         
         db_execute_func(db_conn, "UPDATE celulares SET stock = 0 WHERE id = ?", (venta['celular_id'],))
-        
+
+       
         
         # ==========================================================
         # === DESCUENTO DE ÍTEMS ADICIONALES (Venta Accesorios) ===
