@@ -14,15 +14,15 @@ import os
 from database import inicializar_db, db_query as db_query_func, db_execute as db_execute_func
 from itertools import zip_longest 
 
-import pytz # Agrega esta importación
-from datetime import datetime, timedelta
+#import pytz # Agrega esta importación
+#from datetime import datetime, timedelta
 
 # Configura la zona horaria de tu país (Ejemplo para Argentina)
-ZONA_HORARIA = pytz.timezone('America/Argentina/Buenos_Aires')
+#ZONA_HORARIA = pytz.timezone('America/Argentina/Buenos_Aires')
 
-def obtener_fecha_hora():
-    """Función auxiliar para obtener la hora local exacta"""
-    return datetime.now(ZONA_HORARIA)
+#def obtener_fecha_hora():
+#    """Función auxiliar para obtener la hora local exacta"""
+#    return datetime.now(ZONA_HORARIA)
 
 
 
@@ -361,8 +361,8 @@ def editar_usuario(user_id):
 
 # --- FUNCIÓN AUXILIAR PARA REGISTRAR MOVIMIENTOS ---
 def registrar_movimiento(user_id, tipo_movimiento, tipo_item, item_id=None, detalles=None):
-    #fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
     detalles_json = json.dumps(detalles, default=str) if detalles else None # default=str para objetos no serializables
     db_execute(
         "INSERT INTO movimientos (user_id, tipo_movimiento, tipo_item, item_id, fecha, detalles) VALUES (?, ?, ?, ?, ?, ?)",
@@ -371,8 +371,8 @@ def registrar_movimiento(user_id, tipo_movimiento, tipo_item, item_id=None, deta
 
 # --- FUNCIÓN AUXILIAR PARA REGISTRAR MOVIMIENTOS DE CAJA (Ahora con ARS y USD y sub_categoria) ---
 def registrar_movimiento_caja(user_id, tipo, monto_ars=0, monto_usd=0, descripcion=None, referencia_id=None, sub_categoria=None, metodo_pago='EFECTIVO'):
-    #fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
     
     # Aseguramos que si no viene metodo_pago (o es None/vacío), se guarde como EFECTIVO
     if not metodo_pago:
@@ -2676,8 +2676,8 @@ def cotizar_venta(celular_id):
             # Recalculamos el precio_final_usd para guardar en DB el valor real post-impuestos
             precio_final_usd = precio_final_ars / valor_dolar_venta_local
 
-            #fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
+            fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
             
             # Guardamos la venta
             venta_id = db_execute_func(db_conn, """
@@ -2977,8 +2977,8 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             # Independientemente de la moneda del presupuesto, el final a cobrar se guarda en ARS calculando USD * Cotización + MO
             precio_final_ars = (total_precio_venta_items_usd * valor_dolar_servicio) + precio_mano_obra_ars
             
-            #fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
+            fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
 
             if is_edit:
                 db_execute_func(db_conn,
@@ -4014,8 +4014,8 @@ def arqueo_caja():
                 flash("Los montos iniciales no pueden ser negativos.", "danger")
                 return redirect(url_for('arqueo_caja'))
             
-            #fecha_apertura = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            fecha_apertura = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
+            fecha_apertura = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #fecha_apertura = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
             arqueo_id = db_execute("INSERT INTO arqueo_caja (user_id, fecha_apertura, monto_inicial_ars, monto_inicial_usd, estado) VALUES (?, ?, ?, ?, 'ABIERTO')",
                                    (current_user.id, fecha_apertura, monto_inicial_ars, monto_inicial_usd), return_id=True)
             

@@ -15,4 +15,3 @@ packaging==25.0
 requests==2.31.0
 urllib3==2.5.0
 Werkzeug==3.0.1
-pytz==2026.1.post1
