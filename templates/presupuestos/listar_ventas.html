@@ -6,16 +6,16 @@
 <style>
     .select2-container .select2-selection--single {
         height: calc(1.5em + .75rem + 2px) !important;
-        border: 1px solid #ced4da !important; /* Asegura que el borde coincida con otros inputs de Bootstrap */
-        border-radius: .25rem !important; /* Borde redondeado */
+        border: 1px solid #ced4da !important; 
+        border-radius: .25rem !important; 
     }
     .select2-container .select2-selection--single .select2-selection__rendered {
         line-height: calc(1.5em + .75rem + 2px);
-        padding-left: .75rem; /* Espaciado interno */
+        padding-left: .75rem; 
     }
     .select2-container .select2-selection--single .select2-selection__arrow {
         height: calc(1.5em + .75rem + 2px);
-        right: .75rem; /* Posición de la flecha */
+        right: .75rem; 
     }
 </style>
 {% endblock %}
@@ -85,21 +85,23 @@
                     <td><span class="text-monospace">{{ pres.imei }}</span></td>
                     <td>ARS {{ pres.precio_final_ars|round(2) }}</td>
                     <td>
-                        {% if pres.status == 'PRESUPUESTO' %}
-                            <span class="badge bg-info text-dark">{{ pres.status }}</span>
-                        {% elif pres.status == 'COMPLETADA' %}
-                            <span class="badge bg-success">{{ pres.status }}</span> {# No debería aparecer aquí si solo muestra presupuestos pendientes #}
-                        {% else %}
-                            <span class="badge bg-danger">{{ pres.status }}</span>
-                        {% endif %}
+                        <span class="badge bg-info text-dark">{{ pres.status }}</span>
                     </td>
                     <td>
                         <div class="d-flex">
+                            <!-- Visualizar -->
                             <a href="{{ url_for('view_venta', venta_id=pres.id) }}" class="btn btn-sm btn-info me-1" title="Ver Detalles"><i class="bi bi-eye"></i></a>
+                            
                             {% if pres.status == 'PRESUPUESTO' %}
-                            {# MODIFICADO: Este botón ahora redirige al formulario de pago #}
+                            <!-- EDITAR (Nuevo Botón) -->
+                            <a href="{{ url_for('editar_presupuesto_venta', venta_id=pres.id) }}" class="btn btn-sm btn-warning me-1" title="Editar Presupuesto">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+
+                            <!-- Cobrar -->
                             <a href="{{ url_for('mostrar_formulario_pago', venta_id=pres.id) }}" class="btn btn-sm btn-success me-1" title="Confirmar y Cobrar"><i class="bi bi-check-circle"></i> Cobrar</a>
                             
+                            <!-- Cancelar -->
                             <form action="{{ url_for('cancelar_presupuesto_venta', venta_id=pres.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea cancelar este presupuesto?');">
                                 <button type="submit" class="btn btn-sm btn-danger" title="Cancelar Presupuesto"><i class="bi bi-x-circle"></i></button>
                             </form>
@@ -119,52 +121,42 @@
 {% endblock %}
 
 {% block scripts_extra %}
-{# Select2 JS se carga en layout.html, así que aquí solo inicializamos el script #}
 <script>
     $(document).ready(function() {
         // Select2 para el filtro de clientes
         $('#cliente').select2({
+            theme: 'bootstrap-5',
             placeholder: 'Seleccione un cliente',
             allowClear: true,
             ajax: {
-                url: '{{ url_for('api_buscar_personas') }}',
+                url: '{{ url_for("api_buscar_personas") }}',
                 dataType: 'json',
                 delay: 250,
                 data: function (params) {
                     return {
                         q: params.term,
-                        rol: $(this).data('rol')
+                        rol: 'cliente'
                     };
                 },
                 processResults: function (data) {
+                    // Adaptado al nuevo formato JSON {"results": [...]}
                     return {
-                        results: data
+                        results: data.results
                     };
                 },
                 cache: true
             },
-            minimumInputLength: 3,
-            templateResult: function (data) {
-                if (data.loading) return data.text;
-                // Formatear el resultado en la lista desplegable
-                return $('<span>' + data.text + '</span>');
-            },
-            templateSelection: function (data) {
-                // Cómo se muestra el elemento seleccionado
-                return data.text;
-            }
+            minimumInputLength: 1
         });
 
-        // Si ya hay un cliente seleccionado en los filtros, precargarlo en Select2
+        // Precargar cliente si hay filtro activo
         {% if filtros_activos.cliente %}
             $.ajax({
                 type: 'GET',
-                url: '{{ url_for('api_buscar_personas') }}?q=&rol=cliente&id={{ filtros_activos.cliente }}' // Usa la API para buscar por ID
+                url: '{{ url_for("api_buscar_personas") }}?q=&rol=cliente&id={{ filtros_activos.cliente }}'
             }).then(function (data) {
                 if (data.results && data.results.length > 0) {
-                    // Crea una nueva opción
                     var option = new Option(data.results[0].text, data.results[0].id, true, true);
-                    // Añade la opción al select y dispara el evento 'change' para que Select2 la muestre
                     $('#cliente').append(option).trigger('change');
                 }
             });

@@ -148,7 +148,6 @@
             <div class="card my-4 border-warning bg-light shadow-sm">
                 <div class="card-header bg-warning text-dark fw-bold py-2 d-flex justify-content-between align-items-center">
                     <span><i class="bi bi-currency-exchange me-2"></i>Cotización y Moneda</span>
-                    <!-- NUEVO SELECTOR DE MONEDA -->
                     <div class="d-flex align-items-center gap-2">
                         <label class="small mb-0">Moneda Insumos:</label>
                         <select name="moneda_presupuesto" id="moneda_presupuesto" class="form-select form-select-sm w-auto border-dark fw-bold">
@@ -177,7 +176,6 @@
 
             <h4 class="mt-4 mb-3" id="items-heading"><i class="bi bi-gear me-2"></i>Items / Repuestos / Accesorios</h4>
             <div id="items-container">
-                {# PASO DE DATOS DESDE FLASK A JAVASCRIPT MEDIANTE DIVS INICIALES #}
                 {% if form_data.get('repuesto_stock_id[]') or form_data.get('manual_item_nombre[]') %}
                     {% for i in range(form_data.get('repuesto_stock_id[]')|length if form_data.get('repuesto_stock_id[]') else 0) %}
                         <div class="item-row-initial" data-item-type="stock"
@@ -267,7 +265,6 @@
         // --- FUNCIÓN PARA ACTUALIZAR ETIQUETAS DINÁMICAMENTE (ARS/USD) ---
         function actualizarEtiquetasMoneda() {
             const moneda = $('#moneda_presupuesto').val();
-            // Recorremos todas las filas de ítems para cambiar los labels de precio
             $('.item-row').each(function() {
                 $(this).find('label').each(function() {
                     if ($(this).text().includes('Precio Venta')) {
@@ -334,13 +331,10 @@
             if (moneda === 'USD') {
                 precioTotalServicioArs = (totalItemsEnMonedaElegida * cotizacion) + manoObraArs;
             } else {
-                // Si la moneda ya es ARS, simplemente sumamos
                 precioTotalServicioArs = totalItemsEnMonedaElegida + manoObraArs;
             }
 
             $('#precio_final_ars_display').val('ARS ' + precioTotalServicioArs.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
-            
-            // Forzar actualización de etiquetas de texto cada vez que se calcula
             actualizarEtiquetasMoneda();
         }
 
@@ -352,32 +346,38 @@
             $('.item-row').each(function() {
                 const inputPrecio = $(this).find('.item-precio-venta-usd-stock, .item-precio-venta-usd-manual');
                 let valorActual = parseFloat(inputPrecio.val()) || 0;
-                
                 if (nuevaMoneda === 'ARS') {
-                    // Si paso de USD a ARS: Multiplico el valor actual por la cotización
                     inputPrecio.val((valorActual * cotizacion).toFixed(2));
                 } else {
-                    // Si paso de ARS a USD: Divido el valor actual por la cotización
                     inputPrecio.val((valorActual / cotizacion).toFixed(2));
                 }
             });
-            // Al cambiar el select, actualizamos etiquetas y recalculamos el gran total
             actualizarEtiquetasMoneda();
             calcularTotalesServicio();
         });
 
+        // --- CORRECCIÓN SELECT2 PARA CLIENTE (COMPATIBLE CON results) ---
         $('.select2-persona').select2({
-            placeholder: 'Buscar cliente...',
+            theme: 'bootstrap-5',
+            placeholder: 'Escriba nombre o CUIT para buscar...',
             allowClear: true,
+            minimumInputLength: 1, // Reducido a 1 para mejor UX
             ajax: {
                 url: '{{ url_for("api_buscar_personas") }}',
                 dataType: 'json',
                 delay: 250,
-                data: function (params) { return { q: params.term, rol: 'cliente' }; },
-                processResults: function (data) { return { results: data }; },
+                data: function (params) { 
+                    return { 
+                        q: params.term, 
+                        rol: $(this).data('rol') // Toma 'cliente' del atributo HTML
+                    }; 
+                },
+                processResults: function (data) { 
+                    // CAMBIO CLAVE: Adaptar al nuevo formato {"results": [...]}
+                    return { results: data.results }; 
+                },
                 cache: true
-            },
-            minimumInputLength: 3
+            }
         });
 
         function initializeItemSelect2(element) {
@@ -399,13 +399,11 @@
                 
                 let precioCarga = 0;
                 if (moneda === 'ARS') {
-                    // Si el presupuesto es en ARS, prioritariamente usamos precio_venta_ars de la DB, sino convertimos el USD
                     precioCarga = (e.params.data.precio_venta_ars > 0) ? e.params.data.precio_venta_ars : (e.params.data.precio_venta_usd * cotizacion);
                 } else {
                     precioCarga = e.params.data.precio_venta_usd;
                 }
 
-                // MODIFICADO: Permitimos edición removiendo el readonly (o asegurando prop false)
                 row.find('.item-precio-venta-usd-stock').val(precioCarga.toFixed(2)).prop('readonly', false);
                 row.find('.item-cantidad-stock').val(1);
                 calcularTotalesServicio();
@@ -427,7 +425,6 @@
                         const opt = new Option(precargadoData.repuesto_nombre, precargadoData.repuesto_id, true, true);
                         stockSelect.append(opt).trigger('change');
                         row.find('.item-cantidad-stock').val(precargadoData.cantidad);
-                        // Permitir edición incluso en datos precargados de edición
                         row.find('.item-precio-venta-usd-stock').val(precargadoData.precio_venta_usd).prop('readonly', false);
                     }
                 }
@@ -441,8 +438,6 @@
             }
             
             row.find('input').on('input', calcularTotalesServicio);
-            
-            // Sincronizar etiqueta de moneda al crear/cargar la fila
             actualizarEtiquetasMoneda();
             calcularTotalesServicio();
         }
@@ -461,7 +456,6 @@
             initializeItemRowEvents(newRow, itemCounter++, 'manual');
         });
 
-        // PROCESAR FILAS INICIALES (EDICIÓN)
         const initialRows = itemsContainer.find('.item-row-initial');
         if (initialRows.length) {
             initialRows.each(function() {
@@ -490,7 +484,6 @@
             calcularTotalesServicio();
         }).trigger('change');
 
-        // Validación de Bootstrap
         var forms = document.querySelectorAll('.needs-validation');
         Array.prototype.slice.call(forms).forEach(function (form) {
             form.addEventListener('submit', function (event) {
@@ -502,7 +495,6 @@
             }, false);
         });
 
-        // Inicialización de etiquetas y cálculos al cargar
         actualizarEtiquetasMoneda();
         calcularTotalesServicio();
     });

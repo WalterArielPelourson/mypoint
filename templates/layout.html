@@ -26,8 +26,6 @@
     <!-- Tema Bootstrap 5 para Select2 (para que se vea bonito) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" />
 
-
-
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow">
@@ -48,12 +46,10 @@
                             <i class="bi bi-boxes me-1"></i>Inventario
                         </a>
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="navbarDropdownInventario">
-                            {# Agregado rol 'usuario' #}
                             {% if current_user.role in ['usuario', 'vendedor', 'admin', 'superadmin'] %}
                             <li><a class="dropdown-item" href="{{ url_for('inventario_celulares') }}"><i class="bi bi-phone me-1"></i>Celulares / Equipos</a></li>
                             {% endif %}
                             
-                            {# Todos ven Repuestos #}
                             <li><a class="dropdown-item" href="{{ url_for('inventario_repuestos') }}"><i class="bi bi-gear me-1"></i>Repuestos / Accesorios</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('lista_precios_repuestos') }}"><i class="bi bi-tags me-1"></i>Lista de Precios</a></li> 
@@ -66,37 +62,41 @@
                             <i class="bi bi-bag-plus me-1"></i>Compras
                         </a>
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="navbarDropdownCompras">
-                            {# Agregado rol 'usuario' #}
                             {% if current_user.role in ['usuario', 'vendedor', 'admin', 'superadmin'] %}
                             <li><a class="dropdown-item" href="{{ url_for('registrar_compra_celular') }}"><i class="bi bi-phone me-1"></i>Registrar Celulares y Equipos</a></li>
                             {% endif %}
                             
-                            {# Todos registran repuestos #}
                             <li><a class="dropdown-item" href="{{ url_for('registrar_compra_repuesto') }}"><i class="bi bi-gear me-1"></i>Registrar Repuestos y Accesorios</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('listar_compras') }}"><i class="bi bi-list-check me-1"></i>Listar Compras</a></li>
                         </ul>
                     </li>
 
-                    {# --- VENTAS: Agregado rol 'usuario' --- #}
+                    {# --- VENTAS --- #}
                     {% if current_user.role in ['usuario', 'vendedor', 'admin', 'superadmin'] %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle {% if request.endpoint.startswith('ventas') %}active{% endif %}" href="#" id="navbarDropdownVentas" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="bi bi-cart-fill me-1"></i>Ventas
                         </a>
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="navbarDropdownVentas">
+                            <li><a class="dropdown-item fw-bold text-info" href="{{ url_for('venta_rapida') }}"><i class="bi bi-lightning-charge-fill me-1 text-warning"></i>Venta Rápida (Accesorios)</a></li>
+                            <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('listar_presupuestos_venta') }}"><i class="bi bi-list-check me-1"></i>Presupuestos de Venta</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('historial_ventas') }}"><i class="bi bi-journal-text me-1"></i>Historial de Ventas</a></li>
                         </ul>
                     </li>
                     {% endif %}
 
-                    {# --- SERVICIO TÉCNICO: Todos --- #}
+                    {# --- SERVICIO TÉCNICO --- #}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle {% if request.endpoint.startswith('servicio_tecnico') or request.endpoint.startswith('presupuestos') and 'reparacion' in request.endpoint %}active{% endif %}" href="#" id="navbarDropdownServicio" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="bi bi-tools me-1"></i>Servicio Técnico
                         </a>
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="navbarDropdownServicio">
+                            {# AGREGADO: VENTA RÁPIDA TAMBIÉN EN SERVICIO TÉCNICO #}
+                            <li><a class="dropdown-item fw-bold text-warning" href="{{ url_for('venta_rapida') }}"><i class="bi bi-lightning-charge-fill me-1"></i>Venta Rápida (Accesorios)</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            
                             <li><a class="dropdown-item" href="{{ url_for('crear_presupuesto_reparacion') }}"><i class="bi bi-file-earmark-plus me-1"></i>Nuevo Presupuesto</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('listar_presupuestos_reparacion') }}"><i class="bi bi-list-check me-1"></i>Presupuestos de Accesorios y Reparación</a></li>
                             <li><hr class="dropdown-divider"></li>
@@ -104,7 +104,7 @@
                         </ul>
                     </li>
 
-                    {# --- PERSONAS Y CC: Agregado rol 'usuario' --- #}
+                    {# --- PERSONAS Y CC --- #}
                     {% if current_user.role in ['usuario', 'vendedor', 'admin', 'superadmin'] %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle {% if request.endpoint.startswith('personas') or 'cuentas_corrientes' in request.endpoint %}active{% endif %}" href="#" id="navbarDropdownPersonas" role="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -120,7 +120,7 @@
                         </ul>
                     </li>
 
-                    {# --- CAJA: Agregado rol 'usuario' con acceso a Cuentas Virtuales --- #}
+                    {# --- CAJA --- #}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle {% if request.endpoint.startswith('caja') or request.endpoint == 'gestion_cuentas_virtuales' %}active{% endif %}" href="#" id="navbarDropdownCaja" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="bi bi-cash-stack me-1"></i>Caja
@@ -129,14 +129,12 @@
                             <li><a class="dropdown-item" href="{{ url_for('arqueo_caja') }}"><i class="bi bi-calculator me-1"></i>Arqueo de Caja (Efectivo)</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('movimientos_caja') }}"><i class="bi bi-arrow-down-up me-1"></i>Movimientos Manuales</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('arqueos_historial') }}"><i class="bi bi-clock-history me-1"></i>Historial de Arqueos</a></li>
-                            
-                            {# Cambio: Se habilita el acceso a Cuentas Virtuales para el rol 'usuario' #}
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('gestion_cuentas_virtuales') }}"><i class="bi bi-bank me-1"></i>Cuentas Virtuales (Banco/MP)</a></li>
                         </ul>
                     </li>
 
-                    {# --- REPORTES: Visible para 'usuario' --- #}
+                    {# --- REPORTES --- #}
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint.startswith('reportes') %}active{% endif %}" href="{{ url_for('reportes_menu') }}">
                             <i class="bi bi-graph-up-arrow me-1"></i>Reportes
@@ -144,7 +142,7 @@
                     </li>
                     {% endif %}
 
-                    {# --- CONFIGURACIÓN: Solo SuperAdmin --- #}
+                    {# --- CONFIGURACIÓN --- #}
                     {% if current_user.role == 'superadmin' %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle text-warning" href="#" id="navbarDropdownAdmin" role="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -278,22 +276,5 @@
             setInterval(updateDolarCotizacion, 1800000); 
         });
     </script>
-
-    <!-- Librerías de JS: jQuery (necesario para Select2) y Select2 mismo -->
-    <!--<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>-->
-
-    <!-- Script para inicializar Select2 en cualquier página que lo necesite -->
-    <!--<script>
-        $(document).ready(function() {
-            $('.select2').select2({
-                theme: 'bootstrap-5',
-                width: '100%'
-            });
-        });
-    </script>-->
-
-
-
 </body>
 </html>

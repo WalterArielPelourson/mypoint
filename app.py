@@ -14,7 +14,15 @@ import os
 from database import inicializar_db, db_query as db_query_func, db_execute as db_execute_func
 from itertools import zip_longest 
 
+import pytz # Agrega esta importación
+from datetime import datetime, timedelta
 
+# Configura la zona horaria de tu país (Ejemplo para Argentina)
+ZONA_HORARIA = pytz.timezone('America/Argentina/Buenos_Aires')
+
+def obtener_fecha_hora():
+    """Función auxiliar para obtener la hora local exacta"""
+    return datetime.now(ZONA_HORARIA)
 
 
 
@@ -353,7 +361,8 @@ def editar_usuario(user_id):
 
 # --- FUNCIÓN AUXILIAR PARA REGISTRAR MOVIMIENTOS ---
 def registrar_movimiento(user_id, tipo_movimiento, tipo_item, item_id=None, detalles=None):
-    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
     detalles_json = json.dumps(detalles, default=str) if detalles else None # default=str para objetos no serializables
     db_execute(
         "INSERT INTO movimientos (user_id, tipo_movimiento, tipo_item, item_id, fecha, detalles) VALUES (?, ?, ?, ?, ?, ?)",
@@ -362,7 +371,8 @@ def registrar_movimiento(user_id, tipo_movimiento, tipo_item, item_id=None, deta
 
 # --- FUNCIÓN AUXILIAR PARA REGISTRAR MOVIMIENTOS DE CAJA (Ahora con ARS y USD y sub_categoria) ---
 def registrar_movimiento_caja(user_id, tipo, monto_ars=0, monto_usd=0, descripcion=None, referencia_id=None, sub_categoria=None, metodo_pago='EFECTIVO'):
-    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
     
     # Aseguramos que si no viene metodo_pago (o es None/vacío), se guarde como EFECTIVO
     if not metodo_pago:
@@ -1044,7 +1054,6 @@ def registrar_compra_celular():
 
 @app.route('/compras/registrar_repuesto', methods=['GET', 'POST'])
 @login_required
-#@admin_required
 @tecnico_required
 def registrar_compra_repuesto():
     # Obtenemos las cotizaciones del contexto
@@ -1054,8 +1063,9 @@ def registrar_compra_repuesto():
     if request.method == 'POST':
         db_conn = get_db()
         try:
-            # 1. CAPTURA DE MONEDA Y COTIZACIÓN
-            moneda_compra = request.form.get('moneda_compra', 'USD') # 'ARS' o 'USD'
+            # 1. CAPTURA DE DATOS GENERALES DE LA COMPRA (CABECERA)
+            proveedor_id = int(request.form.get('proveedor_id') or 0)
+            moneda_compra = request.form.get('moneda_compra', 'USD')
             tipo_dolar_elegido = request.form.get('tipo_dolar', 'blue')
             
             if tipo_dolar_elegido == 'oficial':
@@ -1065,137 +1075,138 @@ def registrar_compra_repuesto():
             else: # blue
                 valor_dolar_compra_local = dolar_info.get('valor_blue_compra') or 1.0
 
-            # 2. CAPTURA DE DATOS BÁSICOS
-            proveedor_id = int(request.form.get('proveedor_id') or 0)
-            categoria = request.form.get('categoria', 'REPUESTO').strip()
-            nombre_parte = request.form.get('nombre_parte', '').strip()
-            modelo_compatible = request.form.get('modelo_compatible', '').strip() or 'Universal'
-            cantidad_ingresada = int(request.form.get('stock') or 0)
-            costo_ingresado = float(request.form.get('costo_unidad') or 0) # El precio que el usuario escribe
-            
-            # --- LÓGICA DE CONVERSIÓN DE MONEDA ---
-            if moneda_compra == 'ARS':
-                # Si compró en pesos, calculamos cuánto es en USD para el inventario
-                costo_unitario_usd = costo_ingresado / valor_dolar_compra_local
-                costo_total_ars = costo_ingresado * cantidad_ingresada
-                costo_total_usd = costo_unitario_usd * cantidad_ingresada
-            else:
-                # Si compró en USD, el costo unitario es el ingresado
-                costo_unitario_usd = costo_ingresado
-                costo_total_usd = costo_unitario_usd * cantidad_ingresada
-                costo_total_ars = costo_total_usd * valor_dolar_compra_local
+            # 2. CAPTURA DE LISTAS DINÁMICAS (ÍTEMS)
+            nombres_list = request.form.getlist('nombre_parte[]')
+            categorias_list = request.form.getlist('categoria[]')
+            modelos_list = request.form.getlist('modelo_compatible[]')
+            cantidades_list = request.form.getlist('stock[]')
+            costos_list = request.form.getlist('costo_unidad[]')
 
-            if not proveedor_id or not nombre_parte or cantidad_ingresada <= 0:
-                flash("Proveedor, nombre y cantidad son obligatorios.", "danger")
+            if not proveedor_id or not nombres_list:
+                flash("Proveedor y al menos un producto son obligatorios.", "danger")
                 return redirect(url_for('registrar_compra_repuesto'))
 
             db_conn.execute("BEGIN TRANSACTION")
-
-            # 3. ACTUALIZAR STOCK Y COSTO PROMEDIO EN INVENTARIO
-            # NORMALIZAMOS los datos para evitar errores de duplicado por espacios o minúsculas
-            nombre_parte = request.form.get('nombre_parte', '').strip().upper()
-            modelo_compatible = (request.form.get('modelo_compatible', '') or 'Universal').strip().upper()
-            categoria = request.form.get('categoria', 'REPUESTO').strip().upper()
-
-            # BUSCAMOS si existe por nombre y modelo (que es la restricción UNIQUE de tu DB)
-            # Eliminamos la categoría de la búsqueda para que no falle si se categorizó distinto antes
-            existing_part = db_query_func(db_conn, 
-                "SELECT id, stock, costo_usd FROM repuestos WHERE nombre_parte = ? AND modelo_compatible = ?", 
-                (nombre_parte, modelo_compatible))
             
-            if existing_part:
-                # SI EXISTE: Hacemos UPDATE
-                part = existing_part[0]
-                repuesto_id = part['id']
-                nuevo_stock = part['stock'] + cantidad_ingresada
-                
-                # Promedio ponderado del costo en USD
-                costo_actual = part['costo_usd'] if part['costo_usd'] else 0
-                costo_promedio_usd = ((part['stock'] * costo_actual) + (cantidad_ingresada * costo_unitario_usd)) / nuevo_stock
-                
-                db_execute_func(db_conn, 
-                    "UPDATE repuestos SET stock = ?, costo_usd = ?, categoria = ? WHERE id = ?", 
-                    (nuevo_stock, costo_promedio_usd, categoria, repuesto_id))
-            else:
-                # SI NO EXISTE: Hacemos INSERT
-                repuesto_id = db_execute_func(db_conn, 
-                    "INSERT INTO repuestos (nombre_parte, modelo_compatible, costo_usd, stock, categoria, precio_venta_ars, precio_venta_usd) VALUES (?, ?, ?, ?, ?, 0.0, 0.0)", 
-                    (nombre_parte, modelo_compatible, costo_unitario_usd, cantidad_ingresada, categoria), return_id=True)
-                
-            # 4. REGISTRAR LA COMPRA
-            compra_id = db_execute_func(db_conn,
-                """INSERT INTO compras (proveedor_id, user_id, fecha_compra, tipo_item, item_id, cantidad, 
-                costo_unitario_usd, costo_total_usd, valor_dolar_momento, costo_total_ars, estado_pago) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE')""",
-                (proveedor_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), categoria, repuesto_id, 
-                 cantidad_ingresada, costo_unitario_usd, costo_total_usd, valor_dolar_compra_local, costo_total_ars),
-                return_id=True
-            )
+            compras_registradas = [] # Para distribuir el pago después
+            total_factura_ars = 0
 
-           # 5. LÓGICA DE PAGO INICIAL (ACTUALIZADA: RESTRICCIÓN PARA TÉCNICOS)
-            if current_user.role == 'tecnico':
-                # Si es técnico, forzamos valores en 0 y estado Pendiente
-                monto_pago_ars = 0.0
-                monto_pago_usd = 0.0
-                estado_pago_form = 'PENDIENTE'
-            else:
-                # Si es administrador, capturamos los datos del formulario normalmente
-                monto_pago_ars = float(request.form.get('monto_pago_inicial_ars') or 0)
-                monto_pago_usd = float(request.form.get('monto_pago_inicial_usd') or 0)
-                estado_pago_form = request.form.get('estado_pago', 'PENDIENTE')
+            # 3. BUCLE DE PROCESAMIENTO DE ÍTEMS
+            for i in range(len(nombres_list)):
+                nombre_parte = nombres_list[i].strip().upper()
+                categoria = categorias_list[i].strip().upper()
+                modelo_compatible = (modelos_list[i] or 'Universal').strip().upper()
+                cantidad_ingresada = int(cantidades_list[i] or 0)
+                costo_ingresado = float(costos_list[i] or 0)
 
-            # Esta lógica solo se ejecuta si el estado NO es pendiente y hay montos (Solo para Admins)
-            if estado_pago_form != 'PENDIENTE' and (monto_pago_ars > 0 or monto_pago_usd > 0):
-                # CAPTURA DE CUENTAS DINÁMICAS DESDE EL FORMULARIO
-                cuenta_ars_elegida = request.form.get('cuenta_pago_ars', 'EFECTIVO')
-                cuenta_usd_elegida = request.form.get('cuenta_origen_usd_inicial', 'EFECTIVO')
-                
-                # Impacto contable del pago
-                monto_contable_descuento = monto_pago_ars + (monto_pago_usd * valor_dolar_compra_local)
+                if not nombre_parte or cantidad_ingresada <= 0:
+                    continue # Saltar ítems vacíos o inválidos
 
-                # Registrar en la tabla pagos_proveedores usando la cuenta de pesos como referencia de tipo_pago
-                pago_id = db_execute_func(db_conn, """
-                    INSERT INTO pagos_proveedores (proveedor_id, user_id, fecha_pago, compra_id, monto_ars, monto_usd, tipo_pago, referencia, imputacion) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'REPUESTOS')
-                """, (proveedor_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), compra_id, 
-                      monto_contable_descuento, monto_pago_usd, cuenta_ars_elegida, f"Compra en {moneda_compra} - Cotiz: {valor_dolar_compra_local}"))
+                # Lógica de Conversión
+                if moneda_compra == 'ARS':
+                    costo_unitario_usd = costo_ingresado / valor_dolar_compra_local
+                    costo_total_ars = costo_ingresado * cantidad_ingresada
+                else:
+                    costo_unitario_usd = costo_ingresado
+                    costo_total_ars = (costo_unitario_usd * cantidad_ingresada) * valor_dolar_compra_local
+                
+                total_factura_ars += costo_total_ars
+                costo_total_usd = costo_unitario_usd * cantidad_ingresada
 
-                # --- REGISTROS DE CAJA DINÁMICOS ---
-                if monto_pago_ars > 0:
-                    # Registramos el egreso de pesos en la cuenta específica elegida
-                    registrar_movimiento_caja(current_user.id, 'PAGO_PROVEEDOR_ARS', 
-                                              monto_ars=monto_pago_ars, 
-                                              descripcion=f"Pago {categoria} ({moneda_compra})", 
-                                              referencia_id=pago_id, 
-                                              metodo_pago=cuenta_ars_elegida)
+                # Actualizar Stock e Inventario (Costo Promedio)
+                existing_part = db_query_func(db_conn, 
+                    "SELECT id, stock, costo_usd FROM repuestos WHERE nombre_parte = ? AND modelo_compatible = ?", 
+                    (nombre_parte, modelo_compatible))
                 
-                if monto_pago_usd > 0:
-                    # Registramos el egreso de dólares en la cuenta específica elegida
-                    registrar_movimiento_caja(current_user.id, 'PAGO_PROVEEDOR_USD', 
-                                              monto_usd=monto_pago_usd, 
-                                              descripcion=f"Pago {categoria} USD", 
-                                              referencia_id=pago_id, 
-                                              metodo_pago=cuenta_usd_elegida)
+                if existing_part:
+                    part = existing_part[0]
+                    repuesto_id = part['id']
+                    nuevo_stock = part['stock'] + cantidad_ingresada
+                    costo_actual = part['costo_usd'] if part['costo_usd'] else 0
+                    costo_promedio_usd = ((part['stock'] * costo_actual) + (cantidad_ingresada * costo_unitario_usd)) / nuevo_stock
+                    
+                    db_execute_func(db_conn, 
+                        "UPDATE repuestos SET stock = ?, costo_usd = ?, categoria = ? WHERE id = ?", 
+                        (nuevo_stock, costo_promedio_usd, categoria, repuesto_id))
+                else:
+                    repuesto_id = db_execute_func(db_conn, 
+                        "INSERT INTO repuestos (nombre_parte, modelo_compatible, costo_usd, stock, categoria, precio_venta_ars, precio_venta_usd) VALUES (?, ?, ?, ?, ?, 0.0, 0.0)", 
+                        (nombre_parte, modelo_compatible, costo_unitario_usd, cantidad_ingresada, categoria), return_id=True)
+
+                # Registrar la Compra Individual
+                compra_id = db_execute_func(db_conn,
+                    """INSERT INTO compras (proveedor_id, user_id, fecha_compra, tipo_item, item_id, cantidad, 
+                    costo_unitario_usd, costo_total_usd, valor_dolar_momento, costo_total_ars, estado_pago) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE')""",
+                    (proveedor_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), categoria, repuesto_id, 
+                     cantidad_ingresada, costo_unitario_usd, costo_total_usd, valor_dolar_compra_local, costo_total_ars),
+                    return_id=True
+                )
                 
-                # Actualizar el estado de la compra (Liquidación)
-                status_final = 'PAGADO_TOTAL' if monto_contable_descuento >= (costo_total_ars - 0.05) else 'PAGADO_PARCIAL'
-                db_execute_func(db_conn, "UPDATE compras SET estado_pago = ? WHERE id = ?", (status_final, compra_id))
-            else:
-                # Si es técnico o el Admin eligió PENDIENTE, nos aseguramos de que el estado en DB sea PENDIENTE
-                db_execute_func(db_conn, "UPDATE compras SET estado_pago = 'PENDIENTE' WHERE id = ?", (compra_id,))
+                compras_registradas.append({
+                    'id': compra_id,
+                    'total_ars': costo_total_ars,
+                    'categoria': categoria
+                })
+
+            # 4. LÓGICA DE PAGO INICIAL (SOLO PARA ADMINS)
+            if current_user.role != 'tecnico':
+                monto_pago_ars_fisico = float(request.form.get('monto_pago_inicial_ars') or 0)
+                monto_pago_usd_fisico = float(request.form.get('monto_pago_inicial_usd') or 0)
+                
+                if monto_pago_ars_fisico > 0 or monto_pago_usd_fisico > 0:
+                    cuenta_ars_elegida = request.form.get('cuenta_pago_ars', 'EFECTIVO')
+                    cuenta_usd_elegida = request.form.get('cuenta_origen_usd_inicial', 'EFECTIVO')
+                    
+                    # Monto total disponible para pagar (en ARS contables)
+                    monto_disponible_para_repartir = monto_pago_ars_fisico + (monto_pago_usd_fisico * valor_dolar_compra_local)
+                    monto_total_pagado_backup = monto_disponible_para_repartir
+
+                    # Distribuir el pago entre las compras realizadas (Lógica FIFO interna)
+                    for compra in compras_registradas:
+                        if monto_disponible_para_repartir <= 0: break
+                        
+                        monto_a_imputar = min(monto_disponible_para_repartir, compra['total_ars'])
+                        
+                        # Registrar en pagos_proveedores vinculado a esta compra
+                        pago_id = db_execute_func(db_conn, """
+                            INSERT INTO pagos_proveedores (proveedor_id, user_id, fecha_pago, compra_id, monto_ars, monto_usd, tipo_pago, referencia, imputacion) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'REPUESTOS')
+                        """, (proveedor_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), compra['id'], 
+                              monto_a_imputar, 0, cuenta_ars_elegida, f"Pago inicial compra múltiple - Cotiz: {valor_dolar_compra_local}"))
+
+                        # Actualizar estado de la compra individual
+                        nuevo_estado = 'PAGADO_TOTAL' if monto_a_imputar >= (compra['total_ars'] - 0.05) else 'PAGADO_PARCIAL'
+                        db_execute_func(db_conn, "UPDATE compras SET estado_pago = ? WHERE id = ?", (nuevo_estado, compra['id']))
+                        
+                        monto_disponible_para_repartir -= monto_a_imputar
+
+                    # Registros físicos de Caja
+                    if monto_pago_ars_fisico > 0:
+                        registrar_movimiento_caja(current_user.id, 'PAGO_PROVEEDOR_ARS', 
+                                                  monto_ars=monto_pago_ars_fisico, 
+                                                  descripcion=f"Pago parcial {len(compras_registradas)} ítems", 
+                                                  metodo_pago=cuenta_ars_elegida)
+                    
+                    if monto_pago_usd_fisico > 0:
+                        registrar_movimiento_caja(current_user.id, 'PAGO_PROVEEDOR_USD', 
+                                                  monto_usd=monto_pago_usd_fisico, 
+                                                  descripcion=f"Pago parcial {len(compras_registradas)} ítems USD", 
+                                                  metodo_pago=cuenta_usd_elegida)
 
             db_conn.commit()
-            flash(f'Compra registrada exitosamente en {moneda_compra} (Estado: {estado_pago_form}).', 'success')
+            flash(f'Compra de {len(compras_registradas)} productos registrada exitosamente.', 'success')
             return redirect(url_for('listar_compras'))
             
         except Exception as e:
             db_conn.rollback()
-            app.logger.error(f'Error compra repuesto: {e}', exc_info=True)
+            app.logger.error(f'Error compra repuesto múltiple: {e}', exc_info=True)
             flash(f'Error: {e}', 'danger')
             return redirect(url_for('registrar_compra_repuesto'))
 
     proveedores = db_query("SELECT * FROM personas WHERE es_proveedor = 1 ORDER BY razon_social, apellido")
     return render_template('compras/registrar_compra.html', proveedores=proveedores, item_type='repuesto', form_data=form_data)
+
 
 
 
@@ -2272,22 +2283,31 @@ def ver_detalle_cc_cliente(cliente_id):
     
     for v in ventas:
         cotiz_v = v['valor_dolar_momento'] or 1.0
-        
-        # --- A. Entrega Inicial ---
-        total_pago_inicial_ars = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
-                                 (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
-                                 (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
-        
-        total_pago_inicial_usd = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + (total_pago_inicial_ars / cotiz_v)
 
-        if total_pago_inicial_usd > 0.01:
+        # --- NUEVO: Buscar anticipos aplicados a esta venta específica ---
+        # Buscamos en cobros_clientes registros que digan "Aplicado a Venta #ID"
+        res_ant = db_query("SELECT SUM(monto_usd) as total FROM cobros_clientes WHERE estado_anticipo = 'APLICADO' AND referencia LIKE ?", (f'%Venta #{v["id"]}%',))
+        monto_anticipos_aplicados = res_ant[0]['total'] or 0.0
+        
+        # --- A. Entrega Inicial (DEBE REFORZADO) ---
+        # El DEBE inicial debe ser: (Pagos de hoy) + (Anticipos previos) + (Parte de Pago)
+        total_pago_hoy_ars = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
+                             (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
+                             (v['monto_credito_ars'] or 0)
+        
+        total_debe_inicial_usd = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + \
+                                 (v['valor_celular_parte_pago'] or 0) / cotiz_v + \
+                                 (total_pago_hoy_ars / cotiz_v) + \
+                                 monto_anticipos_aplicados # <--- SUMAMOS EL ANTICIPO AL DEBE
+
+        if total_debe_inicial_usd > 0.01:
             movimientos.append({
                 'fecha': v['fecha_venta'],
                 'tipo': 'DEBE',
-                'monto_ars': total_pago_inicial_usd * cotiz_v,
-                'monto_reg': total_pago_inicial_usd,
+                'monto_ars': total_debe_inicial_usd * cotiz_v,
+                'monto_reg': total_debe_inicial_usd,
                 'moneda_display': 'USD',
-                'descripcion': f"Venta #{v['id']} - Entrega Inicial Acordada", 
+                'descripcion': f"Venta #{v['id']} - Compromiso Inicial (Deuda Real)", 
                 'rubro': 'EQUIPOS',
                 'cotizacion': cotiz_v,
                 'vencida': False,
@@ -2295,7 +2315,7 @@ def ver_detalle_cc_cliente(cliente_id):
                 'ref': v['id']
             })
 
-        # --- B. CUOTAS EN EL DEBE (AQUÍ ESTÁ LA CORRECCIÓN) ---
+        # --- B. CUOTAS EN EL DEBE ---
         if v['cantidad_cuotas'] >= 1:
             cuotas = db_query("SELECT * FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
             for c in cuotas:
@@ -2305,15 +2325,13 @@ def ver_detalle_cc_cliente(cliente_id):
                     fecha_venc = hoy
                 es_vencida = fecha_venc < hoy and c['estado'] == 'PENDIENTE'
                 
-                # CLAVE: Si existe monto_original_ars lo usamos, sino usamos monto_ars (para ventas viejas)
-                # Esto garantiza que el DEBE no se mueva aunque se cobre la cuota.
                 monto_deuda_original = c['monto_original_ars'] if (c['monto_original_ars'] and c['monto_original_ars'] > 0) else c['monto_ars']
 
                 movimientos.append({
                     'fecha': c['fecha_vencimiento'] + " 09:00:00",
                     'tipo': 'DEBE', 
                     'monto_ars': monto_deuda_original,
-                    'monto_reg': monto_deuda_original / cotiz_v, # El debe siempre usa el valor original
+                    'monto_reg': monto_deuda_original / cotiz_v,
                     'moneda_display': 'USD',
                     'descripcion': f"Venta #{v['id']} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
                     'rubro': 'EQUIPOS',
@@ -2323,7 +2341,30 @@ def ver_detalle_cc_cliente(cliente_id):
                     'ref': v['id']
                 })
 
-    # 2. DEBE: Servicios (Inamovible porque precio_final_ars no se toca)
+        # --- C. HABER: Lo entregado HOY (Sin duplicar el anticipo previo) ---
+        total_ars_entregado_hoy = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
+                                  (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
+                                  (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
+        
+        # El Haber de hoy es solo: (Efectivo hoy + Virtual hoy + Equipo Tomado)
+        # NO incluimos monto_anticipos_aplicados porque eso ya existe como fila propia en el historial
+        monto_reg_haber_hoy_usd = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + (total_ars_entregado_hoy / cotiz_v)
+        
+        if monto_reg_haber_hoy_usd > 0.01:
+            movimientos.append({
+                'fecha': v['fecha_venta'], 
+                'tipo': 'HABER', 
+                'monto_ars': monto_reg_haber_hoy_usd * cotiz_v, 
+                'monto_reg': monto_reg_haber_hoy_usd, 
+                'moneda_display': 'USD', 
+                'descripcion': f"Pago Inicial Recibido - Venta #{v['id']}", 
+                'rubro': 'EQUIPOS', 
+                'cotizacion': cotiz_v, 
+                'es_cuota': False, 
+                'ref': v['id']
+            })
+
+    # 2. DEBE: Servicios (Inamovible)
     servicios = db_query("SELECT id, fecha_servicio as fecha, precio_final_ars as monto, falla_reportada as descripcion FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'", (cliente_id,))
     for s in servicios:
         movimientos.append({
@@ -2332,11 +2373,10 @@ def ver_detalle_cc_cliente(cliente_id):
             'rubro': 'SERVICIOS', 'cotizacion': None, 'vencida': False, 'es_cuota': False, 'ref': s['id']
         })
 
-    # 3. HABER: Cobros (Aquí es donde se descuenta el saldo realmente)
+    # 3. HABER: Cobros (Incluye los Anticipos en su fecha original)
     cobros = db_query("SELECT id, fecha_cobro as fecha, monto_ars, monto_usd, metodo_pago, observaciones, imputacion FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
     for p in cobros:
         if p['imputacion'] == 'EQUIPOS':
-            # Calculamos el impacto en USD del cobro realizado
             monto_reg = p['monto_usd'] if p['monto_usd'] > 0 else (p['monto_ars'] / cotiz_actual)
             movimientos.append({
                 'fecha': p['fecha'], 'tipo': 'HABER', 'monto_ars': p['monto_ars'], 'monto_reg': monto_reg, 
@@ -2348,23 +2388,6 @@ def ver_detalle_cc_cliente(cliente_id):
                 'fecha': p['fecha'], 'tipo': 'HABER', 'monto_ars': p['monto_ars'], 'monto_reg': p['monto_ars'], 
                 'moneda_display': 'ARS', 'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
                 'rubro': 'SERVICIOS', 'cotizacion': None, 'es_cuota': False, 'ref': p['id']
-            })
-
-    # 4. HABER: Pagos Iniciales de Ventas
-    for v in ventas:
-        cotiz_h = v['valor_dolar_momento'] or 1.0
-        total_ars_h = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
-                      (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
-                      (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
-        
-        monto_reg_usd = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + (total_ars_h / cotiz_h)
-        
-        if monto_reg_usd > 0.01:
-            movimientos.append({
-                'fecha': v['fecha_venta'], 'tipo': 'HABER', 'monto_ars': monto_reg_usd * cotiz_h, 
-                'monto_reg': monto_reg_usd, 'moneda_display': 'USD', 
-                'descripcion': f"Pago Inicial Recibido - Venta #{v['id']}", 
-                'rubro': 'EQUIPOS', 'cotizacion': cotiz_h, 'es_cuota': False, 'ref': v['id']
             })
 
     # Ordenar y calcular saldo acumulado
@@ -2385,7 +2408,6 @@ def ver_detalle_cc_cliente(cliente_id):
                            cliente=cliente, movimientos=movimientos, 
                            saldo_equipos=saldo_equipos_usd_acum,
                            saldo_servicios=saldo_servicios_ars_acum)
-    
     
     
 @app.route('/ventas/plan_cuotas/<int:venta_id>')
@@ -2654,7 +2676,8 @@ def cotizar_venta(celular_id):
             # Recalculamos el precio_final_usd para guardar en DB el valor real post-impuestos
             precio_final_usd = precio_final_ars / valor_dolar_venta_local
 
-            fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
             
             # Guardamos la venta
             venta_id = db_execute_func(db_conn, """
@@ -2954,7 +2977,8 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             # Independientemente de la moneda del presupuesto, el final a cobrar se guarda en ARS calculando USD * Cotización + MO
             precio_final_ars = (total_precio_venta_items_usd * valor_dolar_servicio) + precio_mano_obra_ars
             
-            fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
 
             if is_edit:
                 db_execute_func(db_conn,
@@ -3147,19 +3171,19 @@ def pago_anticipado_cliente():
             moneda = request.form.get('moneda', 'ARS')
             cuenta_destino = request.form.get('cuenta_destino', 'EFECTIVO')
             
-            # --- NUEVA CAPTURA: Selección de Rubro (Equipos o Reparaciones) ---
+            # --- SELECCIÓN DE RUBRO ---
             imputacion = request.form.get('imputacion', 'EQUIPOS') 
-            
             observaciones = request.form.get('observaciones', 'Pago por anticipado / Seña')
             
-            # Obtener cotización para registro contable
+            # --- COTIZACIÓN ---
+            valor_manual = request.form.get('valor_dolar_manual')
             dolar_info = obtener_cotizacion_dolar()
-            tipo_dolar = request.form.get('tipo_dolar', 'blue')
-            if tipo_dolar == 'oficial':
-                cotiz = float(dolar_info['venta'] or 1.0)
-            elif tipo_dolar == 'manual':
-                cotiz = float(request.form.get('valor_dolar_manual') or 1.0)
+            
+            # Determinamos la cotización a usar
+            if valor_manual and float(valor_manual) > 0:
+                cotiz = float(valor_manual)
             else:
+                # Backup con API si no hay manual (en casos bloqueados o errores)
                 cotiz = float(dolar_info['venta_blue'] or 1.0)
 
             if not cliente_id or monto <= 0:
@@ -3168,41 +3192,177 @@ def pago_anticipado_cliente():
 
             db_conn.execute("BEGIN TRANSACTION")
 
-            # 1. Definir montos para la tabla cobros_clientes
-            monto_ars = monto if moneda == 'ARS' else (monto * cotiz)
-            monto_usd = monto if moneda == 'USD' else (monto / cotiz)
+            # --- LÓGICA DE CONVERSIÓN Y REDONDEO (PUNTO 2) ---
+            # Caso especial: Equipos en USD (Siempre 1 a 1, no importa la cotización manual)
+            if imputacion == 'EQUIPOS' and moneda == 'USD':
+                monto_usd = round(monto, 2)
+                # El valor ARS se guarda como referencia histórica usando la cotización de la API
+                monto_ars = round(monto * float(dolar_info['venta_blue'] or 1.0), 2)
+            
+            # Otros casos: ARS para Equipos, o Reparaciones (ARS/USD)
+            else:
+                if moneda == 'ARS':
+                    monto_ars = round(monto, 2)
+                    # Aquí usamos la cotización manual para la división
+                    monto_usd = round(monto / cotiz, 2) if cotiz > 0 else 0
+                else: # Pago en USD para Reparaciones (Cuenta ARS)
+                    monto_usd = round(monto, 2)
+                    # Aquí usamos la cotización manual para la multiplicación
+                    monto_ars = round(monto * cotiz, 2)
 
-            # 2. Registrar en cobros_clientes (Ahora con imputación dinámica)
+            # 2. Registrar en cobros_clientes (Usando los valores calculados y redondeados)
             cobro_id = db_execute_func(db_conn, """
                 INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                   monto_ars, monto_usd, cuenta_destino, f"PAGO ANTICIPADO / SEÑA ({imputacion})", observaciones, imputacion), return_id=True)
 
-            # 3. Impacto en Caja/Cuentas Virtuales (Reflejando el rubro en el tipo de movimiento)
+            # 3. Impacto en Caja/Cuentas Virtuales
             tipo_mov = f'INGRESO_ANTICIPO_{imputacion}_{moneda}'
-            m_ars = monto if moneda == 'ARS' else 0
-            m_usd = monto if moneda == 'USD' else 0
+            m_ars_caja = monto if moneda == 'ARS' else 0
+            m_usd_caja = monto if moneda == 'USD' else 0
             
-            registrar_movimiento_caja(current_user.id, tipo_mov, monto_ars=m_ars, monto_usd=m_usd, 
+            registrar_movimiento_caja(current_user.id, tipo_mov, monto_ars=m_ars_caja, monto_usd=m_usd_caja, 
                                       descripcion=f"Anticipo {imputacion} - Cliente ID:{cliente_id} - {observaciones}", 
                                       referencia_id=cobro_id, metodo_pago=cuenta_destino)
 
             db_conn.commit()
-            flash(f"Pago anticipado para {imputacion} registrado exitosamente en la cuenta del cliente.", "success")
+            flash(f"Pago anticipado para {imputacion} registrado exitosamente.", "success")
             return redirect(url_for('ver_detalle_cc_cliente', cliente_id=cliente_id))
 
         except Exception as e:
-            db_conn.rollback()
+            if db_conn:
+                db_conn.rollback()
             app.logger.error(f"Error en pago anticipado: {e}")
             flash(f"Error: {e}", "danger")
             return redirect(url_for('pago_anticipado_cliente'))
 
     # GET: Cargar formulario
     clientes = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_cliente = 1 ORDER BY apellido ASC")
-    return render_template('cuentas_corrientes/pago_anticipado.html', clientes=clientes)
+    dolar = obtener_cotizacion_dolar()
+    return render_template('cuentas_corrientes/pago_anticipado.html', 
+                           clientes=clientes, 
+                           valor_blue_compra=dolar['compra_blue'], 
+                           valor_bcra_compra=dolar['compra'])
+    
+    
+
+@app.route('/api/anticipos_disponibles/<int:cliente_id>')
+@login_required
+def api_get_anticipos_disponibles(cliente_id):
+    imputacion = request.args.get('imputacion', 'EQUIPOS')
+    anticipos = db_query("""
+        SELECT id, fecha_cobro, monto_ars, monto_usd, observaciones 
+        FROM cobros_clientes 
+        WHERE cliente_id = ? AND estado_anticipo = 'DISPONIBLE' 
+        AND (imputacion = ? OR imputacion = 'ANTICIPO')
+    """, (cliente_id, imputacion))
+    return jsonify([dict(a) for a in anticipos])
 
 
+@app.route('/ventas/rapida', methods=['GET', 'POST'])
+@login_required
+def venta_rapida():
+    db_conn = get_db()
+    dolar_info = inject_dolar_values()
+    valor_dolar = dolar_info['valor_blue_venta'] or 1.0
+
+    if request.method == 'POST':
+        try:
+            db_conn.execute("BEGIN TRANSACTION")
+            
+            # 1. ASEGURAR CLIENTE GENÉRICO
+            res_cliente = db_query_func(db_conn, "SELECT id FROM personas WHERE cuit_cuil = '99999999'")
+            if res_cliente:
+                cliente_id = res_cliente[0]['id']
+            else:
+                cliente_id = db_execute_func(db_conn, 
+                    "INSERT INTO personas (nombre, apellido, razon_social, cuit_cuil, es_cliente) VALUES (?,?,?,?,?)",
+                    ('Venta', 'Generica', 'CONSUMIDOR FINAL', '99999999', 1), return_id=True)
+
+            # 2. CAPTURA DE DATOS
+            items_ids = request.form.getlist('item_id[]')
+            cantidades = request.form.getlist('cantidad[]')
+            precios_unitarios = request.form.getlist('precio_unitario[]')
+            
+            metodo_pago = request.form.get('metodo_pago', 'EFECTIVO')
+            monto_recibido = float(request.form.get('monto_recibido', 0) or 0)
+            moneda_pago = request.form.get('moneda_pago', 'ARS')
+            cotiz_manual = float(request.form.get('cotiz_manual') or valor_dolar)
+
+            if not items_ids:
+                flash("No se seleccionaron productos.", "warning")
+                return redirect(url_for('venta_rapida'))
+
+            # 3. CÁLCULO DE TOTALES
+            total_venta_ars = monto_recibido if moneda_pago == 'ARS' else monto_recibido * cotiz_manual
+            total_venta_usd = total_venta_ars / cotiz_manual if cotiz_manual > 0 else 0
+
+            # 4. INSERTAR EN servicios_reparacion (10 Signos de pregunta, 10 Valores)
+            sql_servicio = """
+                INSERT INTO servicios_reparacion 
+                (cliente_id, tecnico_nombre, falla_reportada, precio_final_ars, status, 
+                 tipo_servicio, fecha_servicio, saldo_pendiente, costo_total_repuestos_usd, precio_mano_obra_ars) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            valores_servicio = (
+                cliente_id, 
+                'MOSTRADOR', 
+                'Venta Rápida de Accesorios', 
+                total_venta_ars, 
+                'COMPLETADO', 
+                'VENTA_ACCESORIO', 
+                #datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S"), 
+                0, 
+                total_venta_usd, 
+                0
+            )
+            servicio_id = db_execute_func(db_conn, sql_servicio, valores_servicio, return_id=True)
+
+            # 5. PROCESAR ITEMS (STOCK Y DETALLE)
+            for i in range(len(items_ids)):
+                id_rep = int(items_ids[i])
+                cant = int(cantidades[i])
+                p_unit = float(precios_unitarios[i])
+                
+                # Descontar Stock
+                db_execute_func(db_conn, "UPDATE repuestos SET stock = stock - ? WHERE id = ?", (cant, id_rep))
+                
+                # Precio unitario en USD para el registro
+                p_unit_usd = p_unit if moneda_pago == 'USD' else p_unit / cotiz_manual
+                
+                db_execute_func(db_conn, """
+                    INSERT INTO repuestos_usados (servicio_id, repuesto_id, cantidad, costo_usd_momento) 
+                    VALUES (?, ?, ?, ?)
+                """, (servicio_id, id_rep, cant, p_unit_usd))
+
+            # 6. IMPACTO EN CAJA
+            tipo_mov = 'INGRESO_SERVICIO_REPARACION_ARS' if moneda_pago == 'ARS' else 'INGRESO_VENTA_USD'
+            m_ars = total_venta_ars if moneda_pago == 'ARS' else 0
+            m_usd = total_venta_usd if moneda_pago == 'USD' else 0
+            
+            registrar_movimiento_caja(current_user.id, tipo_mov, m_ars, m_usd, 
+                                      f"Venta Rápida Accesorios #{servicio_id}", None, servicio_id, metodo_pago)
+
+            # 7. REGISTRAR COBRO PARA CC
+            db_execute_func(db_conn, """
+                INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, imputacion)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                  total_venta_ars, m_usd, metodo_pago, f"Pago Venta Rápida #{servicio_id}", 'REPARACIONES'))
+
+            db_conn.commit()
+            flash(f"Venta Rápida #{servicio_id} procesada con éxito.", "success")
+            return redirect(url_for('venta_rapida'))
+
+        except Exception as e:
+            db_conn.rollback()
+            app.logger.error(f"Error en venta rápida: {e}", exc_info=True)
+            flash(f"Error al procesar la venta: {e}", "danger")
+            return redirect(url_for('venta_rapida'))
+
+    return render_template('ventas/venta_rapida.html', valor_dolar=valor_dolar)
 
 
 
@@ -3213,19 +3373,19 @@ def procesar_pago(venta_id):
     try:
         db_conn.execute("BEGIN TRANSACTION")
 
+        # 1. RECUPERACIÓN DE DATOS Y VALIDACIÓN DE STOCK DEL EQUIPO
         venta = db_query_func(db_conn, "SELECT v.*, c.imei FROM ventas v JOIN celulares c ON v.celular_id = c.id WHERE v.id = ? AND v.status = 'PRESUPUESTO'", (venta_id,))
         if not venta:
             flash("El presupuesto de venta no existe o ya fue procesado.", "danger")
             return redirect(url_for('listar_presupuestos_venta'))
         venta = venta[0]
 
-        # Validaciones para el celular a vender
         celular_vendido = db_query_func(db_conn, "SELECT stock FROM celulares WHERE id = ?", (venta['celular_id'],))[0]
         if celular_vendido['stock'] == 0:
             flash(f"El celular con IMEI {venta['imei']} no está disponible en stock para la venta.", "danger")
             return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id, **request.form.to_dict(flat=True)))
 
-        # --- SELECCIÓN DINÁMICA DE DÓLAR PARA LA LIQUIDACIÓN ---
+        # 2. CAPTURA DE CONFIGURACIÓN DE PAGO (DÓLAR Y CUENTAS)
         dolar_info = obtener_cotizacion_dolar()
         tipo_dolar_pago = request.form.get('tipo_dolar', 'blue')
         
@@ -3233,16 +3393,15 @@ def procesar_pago(venta_id):
             valor_dolar_pago = float(dolar_info['venta'] or 1.0)
         elif tipo_dolar_pago == 'manual':
             valor_dolar_pago = float(request.form.get('valor_dolar_manual') or 1.0)
-        else: # blue
+        else:
             valor_dolar_pago = float(dolar_info['venta_blue'] or 1.0)
 
         if valor_dolar_pago <= 0:
             raise ValueError("La cotización del dólar de pago debe ser mayor a 0.")
 
-        # --- CAPTURA DE CUENTAS DE DESTINO ---
         cuenta_destino_virtual = request.form.get('cuenta_destino_virtual', 'BANCO')
 
-        # --- Recoger datos de pago del formulario ---
+        # 3. CAPTURA DE DINERO FÍSICO/VIRTUAL RECIBIDO HOY (DINERO NUEVO)
         monto_efectivo_ars = float(request.form.get('monto_efectivo_ars', 0) or 0)
         monto_efectivo_usd = float(request.form.get('monto_efectivo_usd', 0) or 0)
         monto_transferencia_ars = float(request.form.get('monto_transferencia_ars', 0) or 0)
@@ -3251,68 +3410,28 @@ def procesar_pago(venta_id):
         monto_mp_ars = float(request.form.get('monto_mp_ars', 0) or 0)
         monto_virtual_usd = float(request.form.get('monto_virtual_usd', 0) or 0)
         
+        # 4. PROCESAR ANTICIPOS (SEÑAS PREVIAS YA REGISTRADAS)
+        anticipos_seleccionados = request.form.getlist('anticipos_ids[]')
+        monto_anticipos_usd_total = 0.0
+
+        for a_id in anticipos_seleccionados:
+            anticipo_data = db_query_func(db_conn, "SELECT monto_usd FROM cobros_clientes WHERE id = ? AND estado_anticipo = 'DISPONIBLE'", (a_id,))
+            if anticipo_data:
+                monto_anticipos_usd_total += anticipo_data[0]['monto_usd']
+                # Actualizamos el estado del anticipo para que no se use de nuevo
+                db_execute_func(db_conn, """
+                    UPDATE cobros_clientes 
+                    SET estado_anticipo = 'APLICADO', 
+                        referencia = referencia || ' (Aplicado a Venta #' || ? || ')' 
+                    WHERE id = ?
+                """, (venta_id, a_id))
+
+        # 5. PROCESAR PARTE DE PAGO (EQUIPO RECIBIDO)
         usar_parte_pago = 'usar_parte_pago' in request.form
         celular_parte_pago_id = request.form.get('celular_parte_pago_id') if usar_parte_pago else None
-        
-        # MODIFICACIÓN: Capturamos el valor directamente en USD desde el nuevo input del HTML
         valor_pp_usd = float(request.form.get('valor_celular_parte_pago_usd', 0) or 0) if usar_parte_pago else 0
         
-        if usar_parte_pago and not celular_parte_pago_id:
-            flash("Debe seleccionar un celular para la parte de pago.", "danger")
-            return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id, **request.form.to_dict(flat=True)))
-
-        # --- CÁLCULOS FINANCIEROS EN DÓLARES ---
-        total_a_cobrar_usd = venta['precio_final_usd']
-        
-        # Sumamos los montos que ya vienen en USD (Efectivo, Virtual y Parte de Pago)
-        total_pagado_usd = monto_efectivo_usd + monto_virtual_usd + valor_pp_usd
-        
-        # Sumamos los montos en ARS convertidos a USD según la cotización elegida
-        total_pagado_usd += (monto_efectivo_ars / valor_dolar_pago)
-        total_pagado_usd += (monto_transferencia_ars / valor_dolar_pago)
-        total_pagado_usd += (monto_debito_ars / valor_dolar_pago)
-        total_pagado_usd += (monto_credito_ars / valor_dolar_pago)
-        total_pagado_usd += (monto_mp_ars / valor_dolar_pago)
-        
-        # Calculamos la diferencia
-        diferencia_usd = total_pagado_usd - total_a_cobrar_usd
-        saldo_pendiente_usd = 0.0
-
-        if diferencia_usd > 0.05: # Margen pequeño por redondeo
-            flash(f"Error: El monto pagado (u$d {total_pagado_usd:.2f}) excede el total (u$d {total_a_cobrar_usd:.2f}).", "danger")
-            return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id, **request.form.to_dict(flat=True)))
-        elif diferencia_usd < -0.01:
-            saldo_pendiente_usd = abs(diferencia_usd)
-
-        # --- LÓGICA DE CUOTAS EN USD ---
-        cantidad_cuotas = 1
-        if saldo_pendiente_usd > 0.01:
-            cantidad_cuotas = int(request.form.get('cantidad_cuotas', 1))
-            intervalo_dias = int(request.form.get('intervalo_dias', 30))
-            
-            cuota_usd = saldo_pendiente_usd / cantidad_cuotas
-            monto_cuota_ars = cuota_usd * valor_dolar_pago 
-            
-            fecha_actual = datetime.now()
-            for i in range(1, cantidad_cuotas + 1):
-                fecha_vencimiento = (fecha_actual + timedelta(days=i * intervalo_dias)).strftime('%Y-%m-%d')
-                
-                # Busca la parte donde haces el INSERT en ventas_cuotas y cámbialo por esto:
-                db_execute_func(db_conn, """
-                    INSERT INTO ventas_cuotas (venta_id, numero_cuota, monto_ars, monto_original_ars, fecha_vencimiento, estado)
-                    VALUES (?, ?, ?, ?, ?, 'PENDIENTE')
-                """, (venta_id, i, monto_cuota_ars, monto_cuota_ars, fecha_vencimiento)) 
-                # Guardamos lo mismo en monto_ars (que será el saldo que baja) 
-                # y en monto_original_ars (que no se toca)
-                
-                #db_execute_func(db_conn, """
-                #    INSERT INTO ventas_cuotas (venta_id, numero_cuota, monto_ars, fecha_vencimiento, estado)
-                #    VALUES (?, ?, ?, ?, 'PENDIENTE')
-                #""", (venta_id, i, monto_cuota_ars, fecha_vencimiento))
-
-        # --- Procesar el celular en parte de pago ---
         if usar_parte_pago and celular_parte_pago_id:
-            # MODIFICACIÓN: El costo_usd del equipo que reingresa es directamente el valor acordado en USD
             db_execute_func(db_conn, """
                 UPDATE celulares SET 
                     stock = 1, es_parte_pago = 1, costo_usd = ?, 
@@ -3320,35 +3439,59 @@ def procesar_pago(venta_id):
                 WHERE id = ?
             """, (valor_pp_usd, f", Reingreso Venta ID {venta_id}", celular_parte_pago_id))
 
-        # --- Actualizar la venta ---
-        # Calculamos los equivalentes en ARS para las columnas de la tabla ventas (referencia histórica)
+        # 6. CÁLCULOS FINANCIEROS Y SALDO PENDIENTE
+        total_a_cobrar_usd = venta['precio_final_usd']
+        
+        # El anticipo SI se suma aquí para calcular correctamente cuánto queda debiendo el cliente
+        total_pagado_usd_para_financiar = (
+            monto_efectivo_usd + monto_virtual_usd + valor_pp_usd + monto_anticipos_usd_total +
+            (monto_efectivo_ars / valor_dolar_pago) +
+            (monto_transferencia_ars + monto_debito_ars + monto_credito_ars + monto_mp_ars) / valor_dolar_pago
+        )
+        
+        diferencia_usd = total_pagado_usd_para_financiar - total_a_cobrar_usd
+        saldo_pendiente_usd = 0.0
+
+        if diferencia_usd > 0.05:
+            db_conn.rollback()
+            flash(f"Error: El monto total excede el precio de la venta.", "danger")
+            return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id, **request.form.to_dict(flat=True)))
+        elif diferencia_usd < -0.01:
+            saldo_pendiente_usd = abs(diferencia_usd)
+
+        # 7. GENERACIÓN DE CUOTAS
+        cantidad_cuotas = int(request.form.get('cantidad_cuotas', 1))
+        if saldo_pendiente_usd > 0.01:
+            intervalo_dias = int(request.form.get('intervalo_dias', 30))
+            monto_cuota_ars = (saldo_pendiente_usd / cantidad_cuotas) * valor_dolar_pago 
+            for i in range(1, cantidad_cuotas + 1):
+                f_vencimiento = (datetime.now() + timedelta(days=i * intervalo_dias)).strftime('%Y-%m-%d')
+                db_execute_func(db_conn, """
+                    INSERT INTO ventas_cuotas (venta_id, numero_cuota, monto_ars, monto_original_ars, fecha_vencimiento, estado)
+                    VALUES (?, ?, ?, ?, ?, 'PENDIENTE')
+                """, (venta_id, i, monto_cuota_ars, monto_cuota_ars, f_vencimiento)) 
+
+        # 8. ACTUALIZACIÓN DE TABLA VENTAS
+        # IMPORTANTE: Aquí NO sumamos el anticipo al monto_cobrado_usd. 
+        # Esto evita que el anticipo se tome nuevamente en el DEBE de la Cuenta Corriente.
         valor_pp_ars_historico = valor_pp_usd * valor_dolar_pago
         saldo_pendiente_ars = saldo_pendiente_usd * valor_dolar_pago
 
         db_execute_func(db_conn, """
             UPDATE ventas 
-            SET status = 'COMPLETADA', 
-                monto_cobrado_ars = ?, 
-                monto_cobrado_usd = ?,
-                monto_transferencia_ars = ?, 
-                monto_debito_ars = ?, 
-                monto_credito_ars = ?, 
-                monto_mp_ars = ?,
-                monto_virtual_usd = ?, 
-                celular_parte_pago_id = ?, 
-                valor_celular_parte_pago = ?, 
-                saldo_pendiente = ?,
-                valor_dolar_momento = ?, 
-                cantidad_cuotas = ?
+            SET status = 'COMPLETADA', monto_cobrado_ars = ?, monto_cobrado_usd = ?,
+                monto_transferencia_ars = ?, monto_debito_ars = ?, monto_credito_ars = ?, monto_mp_ars = ?,
+                monto_virtual_usd = ?, celular_parte_pago_id = ?, valor_celular_parte_pago = ?, 
+                saldo_pendiente = ?, valor_dolar_momento = ?, cantidad_cuotas = ?
             WHERE id = ?
         """, (
             monto_efectivo_ars, 
-            monto_efectivo_usd, 
+            monto_efectivo_usd, # Solo dinero físico nuevo de hoy
             monto_transferencia_ars, 
             monto_debito_ars, 
             monto_credito_ars, 
             monto_mp_ars,
-            monto_virtual_usd, # <-- Campo agregado
+            monto_virtual_usd, 
             celular_parte_pago_id, 
             valor_pp_ars_historico, 
             saldo_pendiente_ars, 
@@ -3358,46 +3501,22 @@ def procesar_pago(venta_id):
         ))
         
         db_execute_func(db_conn, "UPDATE celulares SET stock = 0 WHERE id = ?", (venta['celular_id'],))
-
-       
         
-        # ==========================================================
-        # === DESCUENTO DE ÍTEMS ADICIONALES (Venta Accesorios) ===
-        # ==========================================================
-        adicionales = db_query_func(db_conn, "SELECT repuesto_id, cantidad FROM items_adicionales_venta WHERE venta_id = ?", (venta_id,))
-        for item in adicionales:
-            repuesto_data = db_query_func(db_conn, "SELECT stock, nombre_parte FROM repuestos WHERE id = ?", (item['repuesto_id'],))
-            if repuesto_data:
-                stock_actual = repuesto_data[0]['stock']
-                nombre_repuesto = repuesto_data[0]['nombre_parte']
-                
-                if stock_actual < item['cantidad']:
-                    db_conn.rollback()
-                    flash(f"Error: No hay stock suficiente del accesorio '{nombre_repuesto}' (Disponible: {stock_actual}).", "danger")
-                    return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id))
-                
+        # 9. DESCUENTO DE STOCK DE ACCESORIOS Y REGALOS
+        for query_items in [
+            "SELECT repuesto_id, cantidad FROM items_adicionales_venta WHERE venta_id = ?",
+            "SELECT repuesto_id, cantidad FROM items_promocionales_venta WHERE venta_id = ?"
+        ]:
+            items = db_query_func(db_conn, query_items, (venta_id,))
+            for item in items:
                 db_execute_func(db_conn, "UPDATE repuestos SET stock = stock - ? WHERE id = ?", (item['cantidad'], item['repuesto_id']))
-
-        # --- DESCUENTO DE REGALOS / PROMOCIONES ---
-        regalos = db_query_func(db_conn, "SELECT repuesto_id, cantidad FROM items_promocionales_venta WHERE venta_id = ?", (venta_id,))
-        for reg in regalos:
-            repuesto_data = db_query_func(db_conn, "SELECT stock, nombre_parte FROM repuestos WHERE id = ?", (reg['repuesto_id'],))
-            if repuesto_data:
-                stock_actual = repuesto_data[0]['stock']
-                nombre_repuesto = repuesto_data[0]['nombre_parte']
-                if stock_actual < reg['cantidad']:
-                    db_conn.rollback()
-                    flash(f"Error: No hay stock suficiente de '{nombre_repuesto}' para el regalo.", "danger")
-                    return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id))
         
-                db_execute_func(db_conn, "UPDATE repuestos SET stock = stock - ? WHERE id = ?", (reg['cantidad'], reg['repuesto_id']))
-        
-        # --- REGISTROS DE CAJA SEPARADOS ---
+        # 10. IMPACTO EN CAJA (SOLO DINERO NUEVO RECIBIDO HOY)
         if monto_efectivo_usd > 0:
-            registrar_movimiento_caja(current_user.id, 'INGRESO_VENTA_USD', 0, monto_efectivo_usd, f"Venta #{venta_id} USD Billete (Caja)", venta_id, None, 'EFECTIVO')
+            registrar_movimiento_caja(current_user.id, 'INGRESO_VENTA_USD', 0, monto_efectivo_usd, f"Venta #{venta_id} USD Billete", venta_id, None, 'EFECTIVO')
         
         if monto_efectivo_ars > 0:
-            registrar_movimiento_caja(current_user.id, 'INGRESO_VENTA', monto_efectivo_ars, 0, f"Venta #{venta_id} ARS Efectivo (Caja)", venta_id, None, 'EFECTIVO')
+            registrar_movimiento_caja(current_user.id, 'INGRESO_VENTA', monto_efectivo_ars, 0, f"Venta #{venta_id} ARS Efectivo", venta_id, None, 'EFECTIVO')
         
         total_v_ars = monto_transferencia_ars + monto_mp_ars + monto_debito_ars + monto_credito_ars
         if total_v_ars > 0:
@@ -3406,15 +3525,16 @@ def procesar_pago(venta_id):
         if monto_virtual_usd > 0:
             registrar_movimiento_caja(current_user.id, 'INGRESO_VENTA_VIRTUAL_USD', 0, monto_virtual_usd, f"Venta #{venta_id} Pago Virtual USD", venta_id, None, cuenta_destino_virtual)
 
+        # 11. AUDITORÍA
         registrar_movimiento(current_user.id, 'VENTA_COBRADA', 'VENTA', venta_id, {
             'total_usd': total_a_cobrar_usd,
             'saldo_pendiente_usd': saldo_pendiente_usd,
-            'cotizacion_venta': valor_dolar_pago,
-            'valor_toma_usd': valor_pp_usd
+            'anticipos_aplicados': monto_anticipos_usd_total,
+            'precio_dolar': valor_dolar_pago
         })
-        
+
         db_conn.commit()
-        flash(f"Venta confirmada. Saldo a financiar: u$d {saldo_pendiente_usd:.2f}.", "success")
+        flash(f"Venta confirmada. Anticipos aplicados: u$d {monto_anticipos_usd_total:.2f}.", "success")
         return redirect(url_for('listar_presupuestos_venta'))
 
     except Exception as e:
@@ -3423,8 +3543,8 @@ def procesar_pago(venta_id):
         flash(f"Error: {e}", "danger")
         return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id))
     
-      
         
+            
 @app.route('/presupuestos/reparaciones/confirmar/<int:servicio_id>', methods=['POST'])
 @login_required
 #@admin_required
@@ -3476,7 +3596,148 @@ def confirmar_reparacion(servicio_id):
         app.logger.error(f"Error al confirmar servicio {servicio_id}: {e}", exc_info=True)
     return redirect(url_for('listar_presupuestos_reparacion'))
 
+@app.route('/presupuestos/ventas/editar/<int:venta_id>', methods=['GET', 'POST'])
+@login_required
+def editar_presupuesto_venta(venta_id):
+    db_conn = get_db()
+    # 1. Obtener los datos del presupuesto actual
+    #venta_data = db_query("SELECT * FROM ventas WHERE id = ? AND status = 'PRESUPUESTO'", (venta_id,))
+    #if not venta_data:
+    #    flash("El presupuesto no existe o ya ha sido procesado.", "danger")
+    #    return redirect(url_for('listar_presupuestos_venta'))
+    
+    #venta = venta_data[0]
+    
+    # MODIFICACIÓN CLAVE: Agregamos el JOIN para traer el nombre del cliente
+    venta_data = db_query("""
+        SELECT v.*, p.nombre, p.apellido, p.razon_social, p.cuit_cuil 
+        FROM ventas v 
+        JOIN personas p ON v.cliente_id = p.id 
+        WHERE v.id = ? AND v.status = 'PRESUPUESTO'
+    """, (venta_id,))
+    
+    if not venta_data:
+        flash("El presupuesto no existe o ya ha sido procesado.", "danger")
+        return redirect(url_for('listar_presupuestos_venta'))
+    
+    venta = venta_data[0]
+    
+       
+    
+    if request.method == 'POST':
+        try:
+            db_conn.execute("BEGIN TRANSACTION")
+            
+            # --- CAPTURA DE CONFIGURACIÓN DE DÓLAR ---
+            dolar_info = obtener_cotizacion_dolar()
+            tipo_dolar_elegido = request.form.get('tipo_dolar', 'blue')
+            if tipo_dolar_elegido == 'oficial':
+                valor_dolar_venta_local = float(dolar_info['venta'] or 1.0)
+            elif tipo_dolar_elegido == 'manual':
+                valor_dolar_venta_local = float(request.form.get('valor_dolar_manual') or 1.0)
+            else:
+                valor_dolar_venta_local = float(dolar_info['venta_blue'] or 1.0)
 
+            # --- DATOS BÁSICOS ---
+            cliente_id = int(request.form['cliente_id'])
+            impuestos_pct = float(request.form.get('impuestos_pct', 0) or 0)
+            observaciones = request.form.get('observaciones', '').strip()
+            
+            # --- LÓGICA DE PRECIO Y GANANCIA ---
+            ganancia_tipo = request.form.get('ganancia_tipo')
+            costo_base_usd = db_query_func(db_conn, "SELECT costo_usd FROM celulares WHERE id = ?", (venta['celular_id'],))[0]['costo_usd']
+            
+            precio_final_usd_pre_tax = 0.0
+            monto_agregado_ars_db = None
+            monto_agregado_usd_db = None
+            ganancia_pct_db = None
+
+            if ganancia_tipo == 'porcentaje':
+                ganancia_pct_db = float(request.form.get('ganancia_pct', 0) or 0)
+                precio_final_usd_pre_tax = costo_base_usd * (1 + ganancia_pct_db / 100)
+            else:
+                monto_agregado = float(request.form.get('monto_agregado', 0) or 0)
+                if request.form.get('monto_agregado_moneda') == 'USD':
+                    precio_final_usd_pre_tax = costo_base_usd + monto_agregado
+                    monto_agregado_usd_db = monto_agregado
+                else:
+                    precio_final_usd_pre_tax = costo_base_usd + (monto_agregado / valor_dolar_venta_local)
+                    monto_agregado_ars_db = monto_agregado
+
+            # --- ACTUALIZACIÓN DE ÍTEMS ADICIONALES (Venta Accesorios) ---
+            db_execute_func(db_conn, "DELETE FROM items_adicionales_venta WHERE venta_id = ?", (venta_id,))
+            add_ids = request.form.getlist('add_item_id[]')
+            add_cants = request.form.getlist('add_cantidad[]')
+            add_precios = request.form.getlist('add_precio_usd[]')
+            
+            total_adicionales_usd = 0.0
+            for i in range(len(add_ids)):
+                if add_ids[i].strip():
+                    r_id = int(add_ids[i])
+                    cant = int(add_cants[i] or 1)
+                    p_usd = float(add_precios[i] or 0)
+                    costo_m = db_query_func(db_conn, "SELECT costo_usd FROM repuestos WHERE id = ?", (r_id,))[0]['costo_usd']
+                    total_adicionales_usd += (p_usd * cant)
+                    db_execute_func(db_conn, """
+                        INSERT INTO items_adicionales_venta (venta_id, repuesto_id, cantidad, precio_vendido_usd, costo_usd_momento) 
+                        VALUES (?, ?, ?, ?, ?)""", (venta_id, r_id, cant, p_usd, costo_m))
+
+            # --- ACTUALIZACIÓN DE REGALOS (PROMOCIONES) ---
+            db_execute_func(db_conn, "DELETE FROM items_promocionales_venta WHERE venta_id = ?", (venta_id,))
+            promo_ids = request.form.getlist('promo_item_id[]')
+            promo_cants = request.form.getlist('promo_cantidad[]')
+            for i in range(len(promo_ids)):
+                if promo_ids[i].strip():
+                    r_id_p = int(promo_ids[i])
+                    costo_p = db_query_func(db_conn, "SELECT costo_usd FROM repuestos WHERE id = ?", (r_id_p,))[0]['costo_usd']
+                    db_execute_func(db_conn, """
+                        INSERT INTO items_promocionales_venta (venta_id, repuesto_id, cantidad, costo_usd_momento) 
+                        VALUES (?, ?, ?, ?)""", (venta_id, r_id_p, promo_cants[i], costo_p))
+
+            # --- CÁLCULOS TOTALES FINALES ---
+            precio_final_usd_pre_tax += total_adicionales_usd
+            precio_final_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
+            if impuestos_pct > 0:
+                precio_final_ars *= (1 + impuestos_pct / 100)
+            
+            precio_final_usd = precio_final_ars / valor_dolar_venta_local
+
+            # Actualizar tabla de ventas
+            db_execute_func(db_conn, """
+                UPDATE ventas SET 
+                    cliente_id=?, valor_dolar_momento=?, impuestos_pct=?, ganancia_pct=?, 
+                    monto_agregado_ars=?, monto_agregado_usd=?, precio_final_ars=?, 
+                    precio_final_usd=?, observaciones=? 
+                WHERE id=?
+            """, (cliente_id, valor_dolar_venta_local, impuestos_pct, ganancia_pct_db, 
+                  monto_agregado_ars_db, monto_agregado_usd_db, precio_final_ars, 
+                  precio_final_usd, observaciones, venta_id))
+
+            db_conn.commit()
+            registrar_movimiento(current_user.id, 'MODIFICACION_PRESUPUESTO', 'VENTA', venta_id)
+            flash("Presupuesto de venta actualizado correctamente.", "success")
+            return redirect(url_for('listar_presupuestos_venta'))
+
+        except Exception as e:
+            db_conn.rollback()
+            app.logger.error(f"Error editando presupuesto de venta: {e}")
+            flash(f"Error: {e}", "danger")
+
+    # --- DATOS PARA EL RENDER (GET) ---
+    clientes = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY apellido")
+    celular = db_query("SELECT * FROM celulares WHERE id = ?", (venta['celular_id'],))[0]
+    # Recuperamos accesorios y regalos actuales
+    adicionales = db_query("""
+        SELECT ia.*, r.nombre_parte, r.modelo_compatible 
+        FROM items_adicionales_venta ia 
+        JOIN repuestos r ON ia.repuesto_id = r.id WHERE ia.venta_id = ?""", (venta_id,))
+    regalos = db_query("""
+        SELECT ip.*, r.nombre_parte, r.modelo_compatible 
+        FROM items_promocionales_venta ip 
+        JOIN repuestos r ON ip.repuesto_id = r.id WHERE ip.venta_id = ?""", (venta_id,))
+    
+    return render_template('ventas/nueva.html', venta=venta, celular=celular, clientes=clientes, 
+                           adicionales=adicionales, regalos=regalos, is_edit=True)
 
 
 @app.route('/presupuestos/ventas/cancelar/<int:venta_id>', methods=['POST'])
@@ -3753,7 +4014,8 @@ def arqueo_caja():
                 flash("Los montos iniciales no pueden ser negativos.", "danger")
                 return redirect(url_for('arqueo_caja'))
             
-            fecha_apertura = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #fecha_apertura = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            fecha_apertura = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
             arqueo_id = db_execute("INSERT INTO arqueo_caja (user_id, fecha_apertura, monto_inicial_ars, monto_inicial_usd, estado) VALUES (?, ?, ?, ?, 'ABIERTO')",
                                    (current_user.id, fecha_apertura, monto_inicial_ars, monto_inicial_usd), return_id=True)
             
@@ -5025,8 +5287,10 @@ def api_buscar_personas():
     query_str = request.args.get('q', '').strip()
     rol = request.args.get('rol', '').strip() # 'cliente' o 'proveedor'
     
+    # Select2 AJAX espera un objeto con la llave "results". 
+    # Si no hay query, devolvemos la lista de resultados vacía.
     if not query_str:
-        return jsonify([])
+        return jsonify(results=[])
 
     sql_query = "SELECT id, nombre, apellido, razon_social, cuit_cuil FROM personas WHERE (nombre LIKE ? OR apellido LIKE ? OR razon_social LIKE ? OR cuit_cuil LIKE ?)"
     params = [f"%{query_str}%", f"%{query_str}%", f"%{query_str}%", f"%{query_str}%"]
@@ -5036,7 +5300,7 @@ def api_buscar_personas():
     elif rol == 'proveedor':
         sql_query += " AND es_proveedor = 1"
     
-    sql_query += " LIMIT 10" # Limitar resultados para rendimiento
+    sql_query += " LIMIT 15" # Aumentamos ligeramente el límite para dar más opciones
 
     resultados = db_query(sql_query, tuple(params))
     
@@ -5048,7 +5312,11 @@ def api_buscar_personas():
             'id': r['id'],
             'text': f"{display_name} (CUIT/CUIL: {r['cuit_cuil']})"
         })
-    return jsonify(formatted_results)
+    
+    # CAMBIO INTEGRADO: Select2 requiere que la respuesta sea un objeto JSON 
+    # que contenga una lista en la propiedad "results".
+    return jsonify(results=formatted_results)
+
 
 @app.route('/api/buscar_celulares_disponibles')
 @login_required
@@ -6237,6 +6505,7 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("personas", "fecha_nacimiento", "DATE")
         agregar_columna("users", "active", "INTEGER DEFAULT 1")
         agregar_columna("repuestos_usados", "manual_item_nombre", "TEXT")
+        agregar_columna("cobros_clientes", "estado_anticipo", "TEXT DEFAULT 'DISPONIBLE'")
 
         # ==========================================
         # 3. MIGRACIÓN DEFINITIVA: RECREAR REPUESTOS_USADOS

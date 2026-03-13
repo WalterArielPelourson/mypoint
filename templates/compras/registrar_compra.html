@@ -1,4 +1,3 @@
-
 {% extends 'layout.html' %}
 
 {% block title %}Registrar Compra - {{ super() }}{% endblock %}
@@ -21,7 +20,7 @@
         height: calc(1.5em + .75rem + 2px);
         right: .75rem;
     }
-    .celular-item {
+    .item-bloque {
         border: 1px solid #dee2e6;
         padding: 15px;
         margin-bottom: 15px;
@@ -29,7 +28,7 @@
         background-color: #f8f9fa;
         position: relative;
     }
-    .celular-item .remove-celular {
+    .item-bloque .remove-item {
         position: absolute;
         top: 10px;
         right: 10px;
@@ -96,50 +95,28 @@
                 <label class="form-check-label fw-bold" for="es_parte_pago_checkbox">¿Es un equipo recibido como parte de pago de una venta?</label>
             </div>
 
-            <div id="celulares-container">
-                {# Los ítems se cargan dinámicamente aquí #}
+            <div id="items-container">
+                {# Dinámico Celulares #}
             </div>
             
            {% elif item_type == 'repuesto' %}
-            <h4 class="mt-4 mb-3"><i class="bi bi-box-seam me-2"></i>Detalles del Producto / Repuesto</h4>
-            <div class="row g-3">
-                <div class="col-md-3">
-                    <label class="form-label fw-bold">Moneda de Compra:</label>
-                    <select name="moneda_compra" id="moneda_compra" class="form-select border-primary fw-bold" onchange="updateCostLabel()">
+            <h4 class="mt-4 mb-3 d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-box-seam me-2"></i>Detalles de Productos / Repuestos</span>
+                <button type="button" class="btn btn-sm btn-primary" id="add-repuesto"><i class="bi bi-plus-circle me-1"></i>Añadir Ítem</button>
+            </h4>
+
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Moneda de Compra de la Factura:</label>
+                    <select name="moneda_compra" id="moneda_compra" class="form-select border-primary fw-bold" onchange="updateCostLabels()">
                         <option value="USD">Dólares (USD)</option>
                         <option value="ARS">Pesos (ARS)</option>
                     </select>
                 </div>
-                <div class="col-md-3">
-                    <label for="categoria" class="form-label">Categoría:</label>
-                    <select class="form-select" id="categoria" name="categoria" required>
-                        <option value="REPUESTO">Repuesto</option>
-                        <option value="ACCESORIO">Accesorio</option>
-                        <option value="OTRO">Otro</option>
-                    </select>
-                </div>
-                <div class="col-md-6">
-                    <label for="nombre_parte" class="form-label">Nombre / Descripción:</label>
-                    <!-- SELECT PARA NOMBRE -->
-                    <select class="form-control" id="nombre_parte" name="nombre_parte" required style="width: 100%;">
-                        <option value="">Seleccione o escriba nombre...</option>
-                    </select>
-                </div>
-                <div class="col-md-4">
-                    <label for="modelo_compatible" class="form-label">Modelo Compatible:</label>
-                    <!-- SELECT PARA MODELO (CASCADA) -->
-                    <select class="form-control" id="modelo_compatible" name="modelo_compatible" style="width: 100%;">
-                        <option value="">Seleccione o escriba modelo...</option>
-                    </select>
-                </div>
-                <div class="col-md-4">
-                    <label for="costo_unidad" class="form-label fw-bold" id="label_costo_unidad">Costo Unidad (USD):</label>
-                    <input type="number" class="form-control bg-usd-input" id="costo_unidad" name="costo_unidad" step="0.01" min="0" required>
-                </div>
-                <div class="col-md-4">
-                    <label for="stock" class="form-label">Cantidad:</label>
-                    <input type="number" class="form-control" id="stock" name="stock" min="1" required>
-                </div>
+            </div>
+
+            <div id="items-container">
+                {# Dinámico Repuestos #}
             </div>
             {% endif %}
 
@@ -149,7 +126,7 @@
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label for="proveedor_id" class="form-label fw-bold">Proveedor:</label>
-                        <select class="form-select select2-persona" id="proveedor_id" name="proveedor_id">
+                        <select class="form-select select2-persona" id="proveedor_id" name="proveedor_id" required>
                             <option value="">Seleccione un proveedor...</option>
                             {% for prov in proveedores %}
                                 <option value="{{ prov.id }}">{{ prov.razon_social or (prov.nombre + ' ' + prov.apellido) }}</option>
@@ -160,19 +137,16 @@
                     <div class="col-md-6">
                         <label for="estado_pago" class="form-label fw-bold">Estado de Pago:</label>
                         {% if current_user.role in ['admin', 'superadmin'] %}
-                            {# VISTA PARA EL ADMINISTRADOR #}
                             <select class="form-select" id="estado_pago" name="estado_pago">
                                 <option value="PENDIENTE">A Cuenta Corriente (Deuda Total)</option>
                                 <option value="PAGADO_TOTAL">Pagado Totalmente</option>
                                 <option value="PAGADO_PARCIAL">Pagado Parcialmente</option>
                             </select>
                         {% else %}
-                            {# VISTA RESTRINGIDA PARA EL TÉCNICO #}
                             <div class="form-control bg-light">
                                 <span class="badge bg-warning text-dark"><i class="bi bi-clock-history me-1"></i>CUENTA CORRIENTE (PENDIENTE)</span>
                             </div>
-                            <input type="hidden" name="estado_pago" id="estado_pago" value="PENDIENTE">
-                            <small class="text-muted">Como Técnico, la compra se registra como deuda para ser liquidada por un Admin.</small>
+                            <input type="hidden" name="estado_pago" value="PENDIENTE">
                         {% endif %}
                     </div>
 
@@ -203,12 +177,6 @@
                             </div>
                         </div>
                     </div>
-                    {% else %}
-                        {# CAMPOS OCULTOS PARA TÉCNICO PARA EVITAR ERRORES DE ENVÍO #}
-                        <input type="hidden" name="monto_pago_inicial_ars" value="0">
-                        <input type="hidden" name="monto_pago_inicial_usd" value="0">
-                        <input type="hidden" name="cuenta_pago_ars" value="EFECTIVO">
-                        <input type="hidden" name="cuenta_origen_usd_inicial" value="EFECTIVO">
                     {% endif %}
                 </div>
             </div>
@@ -223,63 +191,60 @@
     </div>
 </div>
 
-{# TEMPLATE PARA CELULARES / EQUIPOS #}
+{# TEMPLATE PARA CELULARES #}
 <template id="celular-template">
-    <div class="celular-item shadow-sm">
-        <button type="button" class="btn btn-danger btn-sm remove-celular"><i class="bi bi-trash"></i></button>
+    <div class="item-bloque shadow-sm">
+        <button type="button" class="btn btn-danger btn-sm remove-item"><i class="bi bi-trash"></i></button>
         <div class="row g-3">
             <div class="col-md-3">
                 <label class="form-label fw-bold">Tipo de Equipo *</label>
-                <select class="form-select fw-bold border-primary" name="tipo_item[]" required>
+                <select class="form-select" name="tipo_item[]" required>
                     <option value="CELULAR">Celular</option>
                     <option value="TABLET">Tablet</option>
                     <option value="SMARTWATCH">Smartwatch</option>
-                    <option value="EQUIPO">Otro Hardware / Equipo</option>
+                    <option value="EQUIPO">Otro Hardware</option>
                 </select>
             </div>
-            <div class="col-md-3">
-                <label class="form-label">Marca *</label>
-                <input type="text" class="form-control" name="marca[]" required>
-            </div>
-            <div class="col-md-3">
-                <label class="form-label">Modelo *</label>
-                <input type="text" class="form-control" name="modelo[]" required>
-            </div>
-            <div class="col-md-3">
-                <label class="form-label">IMEI / SN *</label>
-                <input type="text" class="form-control" name="imei[]" required>
-            </div>
-            <div class="col-md-3">
-                <label class="form-label">Condición *</label>
-                <select class="form-select" name="condicion[]" required>
-                    <option value="Nuevo">Nuevo</option>
-                    <option value="Usado">Usado</option>
-                    <option value="Reacondicionado">Reacondicionado</option>
+            <div class="col-md-3"><label class="form-label">Marca *</label><input type="text" class="form-control" name="marca[]" required></div>
+            <div class="col-md-3"><label class="form-label">Modelo *</label><input type="text" class="form-control" name="modelo[]" required></div>
+            <div class="col-md-3"><label class="form-label">IMEI / SN *</label><input type="text" class="form-control" name="imei[]" required></div>
+            <div class="col-md-3"><label class="form-label">Condición *</label><select class="form-select" name="condicion[]" required><option value="Nuevo">Nuevo</option><option value="Usado">Usado</option></select></div>
+            <div class="col-md-3"><label class="form-label">Color *</label><input type="text" class="form-control" name="color[]" required></div>
+            <div class="col-md-2"><label class="form-label">Alm. (GB) *</label><input type="number" class="form-control" name="almacenamiento_gb[]" required></div>
+            <div class="col-md-2"><label class="form-label">Batería (%)</label><input type="number" class="form-control" name="bateria_salud[]"></div>
+            <div class="col-md-2"><label class="form-label fw-bold text-danger">Costo (USD) *</label><input type="number" class="form-control bg-usd-input" name="costo_usd[]" step="0.01" required></div>
+        </div>
+    </div>
+</template>
+
+{# TEMPLATE PARA REPUESTOS / ACCESORIOS #}
+<template id="repuesto-template">
+    <div class="item-bloque shadow-sm">
+        <button type="button" class="btn btn-danger btn-sm remove-item"><i class="bi bi-trash"></i></button>
+        <div class="row g-3">
+            <div class="col-md-2">
+                <label class="form-label fw-bold">Categoría *</label>
+                <select class="form-select" name="categoria[]" required>
+                    <option value="REPUESTO">Repuesto</option>
+                    <option value="ACCESORIO">Accesorio</option>
+                    <option value="OTRO">Otro</option>
                 </select>
             </div>
-            <div class="col-md-3">
-                <label class="form-label">Color *</label>
-                <input type="text" class="form-control" name="color[]" required>
-            </div>
-            <div class="col-md-2">
-                <label class="form-label">Alm. (GB) *</label>
-                <input type="number" class="form-control" name="almacenamiento_gb[]" required>
-            </div>
-            <div class="col-md-2">
-                <label class="form-label text-muted">RAM (GB)</label>
-                <input type="number" class="form-control" name="ram_gb[]">
-            </div>
-            <div class="col-md-2">
-                <label class="form-label">Batería (%) *</label>
-                <input type="number" class="form-control" name="bateria_salud[]" min="0" max="100" required>
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Nombre / Descripción *</label>
+                <select class="form-control select2-repuesto-nombre" name="nombre_parte[]" required style="width: 100%;"></select>
             </div>
             <div class="col-md-3">
-                <label class="form-label text-danger fw-bold">Costo Unitario (USD) *</label>
-                <input type="number" class="form-control bg-usd-input" name="costo_usd[]" step="0.01" required>
+                <label class="form-label">Modelo Compatible</label>
+                <select class="form-control select2-repuesto-modelo" name="modelo_compatible[]" style="width: 100%;"></select>
             </div>
-            <div class="col-md-9">
-                <label class="form-label text-muted">Observaciones del ítem</label>
-                <input type="text" class="form-control" name="observaciones_celular[]" placeholder="Opcional...">
+            <div class="col-md-1">
+                <label class="form-label">Cant. *</label>
+                <input type="number" class="form-control" name="stock[]" min="1" value="1" required>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label fw-bold label-costo">Costo Unit. (USD) *</label>
+                <input type="number" class="form-control bg-cost-input" name="costo_unidad[]" step="0.01" min="0" required>
             </div>
         </div>
     </div>
@@ -293,121 +258,81 @@
     function toggleManualDolar() {
         const val = $('#tipo_dolar').val();
         $('#manual_dolar_group').toggle(val === 'manual');
-        if(val === 'manual') $('#valor_dolar_manual').prop('required', true);
     }
 
-    function updateCostLabel() {
+    function updateCostLabels() {
         const moneda = $('#moneda_compra').val();
-        $('#label_costo_unidad').text('Costo Unidad (' + moneda + '):');
-        $('#costo_unidad').attr('class', 'form-control bg-' + moneda.toLowerCase() + '-input');
+        $('.label-costo').text('Costo Unit. (' + moneda + ') *');
+        $('.bg-cost-input').removeClass('bg-ars-input bg-usd-input').addClass('bg-' + moneda.toLowerCase() + '-input');
     }
 
     $(document).ready(function() {
-        // Inicializar Select2 para Proveedores
         $('.select2-persona').select2({ width: '100%', placeholder: 'Buscar...' });
 
-        // 1. SELECTOR DE NOMBRE DE PARTE (Lógica de limpieza total)
-        $('#nombre_parte').select2({
-            placeholder: 'Escriba al menos 3 letras...',
-            minimumInputLength: 3, // <--- CAMBIO: Dispara al 3er carácter
-            tags: true, 
-            width: '100%',
-            ajax: {
-                url: '/api/buscar_nombres_repuestos_limpios', // <--- IMPORTANTE: Usa la nueva ruta de Python
-                dataType: 'json',
-                delay: 250,
-                data: function (params) { return { q: params.term }; },
-                processResults: function (data) {
-                    // El servidor ya debería mandar nombres limpios, 
-                    // pero por seguridad forzamos que no haya duplicados ni basura.
-                    const nombresUnicos = [];
-                    const seen = new Set();
-                    
-                    data.results.forEach(item => {
-                        let nombre = item.text.split(' - ')[0].split(' | ')[0].trim();
-                        let nombreUpper = nombre.toUpperCase();
+        const container = $('#items-container');
+        const itemType = "{{ item_type }}";
 
-                        if (!seen.has(nombreUpper)) {
-                            seen.add(nombreUpper);
-                            nombresUnicos.push({ id: nombre, text: nombre });
-                        }
-                    });
-                    return { results: nombresUnicos };
-                },
-                cache: true
-            },
-            // Asegura que al seleccionar, solo se vea el nombre en el cuadro
-            templateSelection: function (data) {
-                return data.text;
-            }
-        });
-
-        // 2. SELECTOR DE MODELO COMPATIBLE (Cascada)
-        $('#modelo_compatible').select2({
-            placeholder: 'Primero elija un nombre...',
-            tags: true,
-            width: '100%',
-            disabled: true, 
-            ajax: {
-                url: '/api/buscar_modelos_por_nombre',
-                dataType: 'json',
-                delay: 250,
-                data: function (params) {
-                    return { 
-                        q: params.term, 
-                        nombre: $('#nombre_parte').val() 
-                    };
-                },
-                processResults: function (data) {
-                    return { results: data.results };
-                }
-            }
-        });
-
-        // LÓGICA DE CASCADA: Al cambiar el nombre, habilitar modelos
-        $('#nombre_parte').on('select2:select change', function() {
-            const nombreVal = $(this).val();
-            if (nombreVal) {
-                $('#modelo_compatible').prop('disabled', false).val(null).trigger('change');
-                // Al elegir nombre, abrimos modelos automáticamente después de un breve delay
-                setTimeout(() => { $('#modelo_compatible').select2('open'); }, 200);
-            } else {
-                $('#modelo_compatible').prop('disabled', true).val(null).trigger('change');
-            }
-        });
-
-        // --- LÓGICA DE ESTADO DE PAGO ---
-        $('#estado_pago').on('change', function() {
-            if($('#pago_detalles_container').length > 0) {
-                $('#pago_detalles_container').toggle(this.value !== 'PENDIENTE');
-            }
-        });
-
-        // --- LÓGICA DE EQUIPOS CELULARES ---
-        if ("{{ item_type }}" === 'celular') {
-            const container = $('#celulares-container');
-            const template = $('#celular-template').html();
-
-            $('#add-celular').click(function() {
-                container.append(template);
-            });
-
-            container.on('click', '.remove-celular', function() {
-                if(container.find('.celular-item').length > 1) {
-                    $(this).closest('.celular-item').remove();
+        function inicializarSelectsDinámicos(row) {
+            // Buscador de Nombres
+            row.find('.select2-repuesto-nombre').select2({
+                tags: true,
+                placeholder: 'Escriba o seleccione...',
+                ajax: {
+                    url: '/api/buscar_nombres_repuestos_limpios',
+                    dataType: 'json',
+                    delay: 250,
+                    data: params => ({ q: params.term }),
+                    processResults: data => ({ results: data.results })
                 }
             });
 
-            $('#add-celular').click();
+            // Buscador de Modelos
+            const selectModelo = row.find('.select2-repuesto-modelo');
+            const selectNombre = row.find('.select2-repuesto-nombre');
 
-            $('#es_parte_pago_checkbox').change(function() {
-                if(this.checked) {
-                    $('#proveedor-pago-section').slideUp();
-                } else {
-                    $('#proveedor-pago-section').slideDown();
+            selectModelo.select2({
+                tags: true,
+                placeholder: 'Seleccione modelo...',
+                ajax: {
+                    url: '/api/buscar_modelos_por_nombre',
+                    dataType: 'json',
+                    delay: 250,
+                    data: params => ({ q: params.term, nombre: selectNombre.val() }),
+                    processResults: data => ({ results: data.results })
                 }
+            });
+
+            selectNombre.on('change', function() {
+                selectModelo.val(null).trigger('change');
             });
         }
+
+        function addRow() {
+            const templateId = itemType === 'celular' ? '#celular-template' : '#repuesto-template';
+            const html = $(templateId).html();
+            const newRow = $(html);
+            container.append(newRow);
+            if (itemType === 'repuesto') {
+                inicializarSelectsDinámicos(newRow);
+                updateCostLabels();
+            }
+        }
+
+        $('#add-celular, #add-repuesto').click(addRow);
+        container.on('click', '.remove-item', function() {
+            if(container.find('.item-bloque').length > 1) $(this).closest('.item-bloque').remove();
+        });
+
+        // Carga inicial
+        addRow();
+
+        $('#estado_pago').on('change', function() {
+            $('#pago_detalles_container').toggle(this.value !== 'PENDIENTE');
+        });
+
+        $('#es_parte_pago_checkbox').change(function() {
+            $('#proveedor-pago-section').toggle(!this.checked);
+        });
     });
 </script>
 {% endblock %}

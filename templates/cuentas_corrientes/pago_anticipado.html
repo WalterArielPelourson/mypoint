@@ -33,15 +33,13 @@
                         </div>
                     </div>
 
-                    <!-- Cliente -->
+                    <!-- Cliente (MODIFICADO PARA BÚSQUEDA SELECT2) -->
                     <div class="col-md-6 mb-3">
-                        <label class="form-label fw-bold">Cliente</label>
-                        <select name="cliente_id" class="form-control select2" required>
-                            <option value="">Seleccionar cliente...</option>
-                            {% for c in clientes %}
-                            <option value="{{ c.id }}">{{ c.razon_social or (c.nombre ~ ' ' ~ c.apellido) }}</option>
-                            {% endfor %}
+                        <label class="form-label fw-bold">Buscar Cliente</label>
+                        <select name="cliente_id" id="cliente_id" class="form-control select2-cliente-ajax" required>
+                            <option value="">Escriba nombre, apellido o CUIT...</option>
                         </select>
+                        <div class="form-text">Búsqueda inteligente por nombre o CUIT.</div>
                     </div>
 
                     <!-- Medio de Pago -->
@@ -63,25 +61,26 @@
                     <div class="col-md-4 mb-3">
                         <label class="form-label fw-bold">Monto que entrega el cliente</label>
                         <div class="input-group input-group-lg">
-                            <input type="number" step="0.01" name="monto" class="form-control border-primary" placeholder="0.00" required>
-                            <select name="moneda" class="form-select bg-primary text-white" style="max-width: 100px;">
+                            <input type="number" step="0.01" name="monto" id="input_monto" class="form-control border-primary" placeholder="0.00" required>
+                            <select name="moneda" id="select_moneda" class="form-select bg-primary text-white" style="max-width: 100px;">
                                 <option value="ARS">ARS</option>
                                 <option value="USD">USD</option>
                             </select>
                         </div>
                     </div>
 
-                    <!-- Cotización -->
-                    <div class="col-md-8 mb-3">
-                        <label class="form-label fw-bold text-muted">Cotización para el historial (Dólar hoy)</label>
+                    <!-- Cotización Única Manual -->
+                    <div class="col-md-8 mb-3" id="contenedor_cotizacion">
+                        <label class="form-label fw-bold text-muted" id="label_cotizacion">Cotización Dólar</label>
                         <div class="input-group">
-                            <span class="input-group-text bg-white">
-                                <input class="form-check-input" type="radio" name="tipo_dolar" value="blue" checked> <small class="ms-1">Blue: ${{ valor_blue_compra }}</small>
+                            <span class="input-group-text bg-white text-muted">
+                                <small>Ref: Blue ${{ valor_blue_compra }}</small>
                             </span>
-                            <span class="input-group-text bg-white">
-                                <input class="form-check-input" type="radio" name="tipo_dolar" value="oficial"> <small class="ms-1">Oficial: ${{ valor_bcra_compra }}</small>
-                            </span>
-                            <input type="number" step="0.01" name="valor_dolar_manual" class="form-control" placeholder="Valor Manual">
+                            <input type="number" step="0.01" name="valor_dolar_manual" id="input_cotizacion" class="form-control form-control-lg border-primary" placeholder="Ej: 1150">
+                        </div>
+                        
+                        <div id="info_conversion" class="form-text mt-2 fw-bold text-success" style="display: none;">
+                            Resultado del cálculo: <span id="resultado_calc">0.00</span> <span id="label_moneda_calc"></span>
                         </div>
                     </div>
                 </div>
@@ -101,4 +100,92 @@
         </div>
     </div>
 </div>
+
+<!-- jQuery y Select2 JS (Asegúrate de que estén en tu layout, sino agrégalos aquí) -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<script>
+    $(document).ready(function() {
+        // INICIALIZACIÓN DE SELECT2 CON BÚSQUEDA REMOTA (AJAX)
+        $('.select2-cliente-ajax').select2({
+            theme: "classic", // Puedes cambiar por bootstrap-5 si tienes el CSS cargado
+            placeholder: 'Escriba nombre, apellido o CUIT...',
+            minimumInputLength: 1,
+            ajax: {
+                url: "{{ url_for('api_buscar_personas') }}",
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return {
+                        q: params.term, // Texto que el usuario escribe
+                        rol: 'cliente'  // Filtro de backend
+                    };
+                },
+                processResults: function (data) {
+                    return {
+                        results: data.results
+                    };
+                },
+                cache: true
+            }
+        });
+    });
+
+    const inputMonto = document.getElementById('input_monto');
+    const selectMoneda = document.getElementById('select_moneda');
+    const inputCotizacion = document.getElementById('input_cotizacion');
+    const displayResultado = document.getElementById('resultado_calc');
+    const labelMonedaCalc = document.getElementById('label_moneda_calc');
+    const infoConversion = document.getElementById('info_conversion');
+    const radioEquipos = document.getElementById('imp_equipos');
+    const radioReparaciones = document.getElementById('imp_servicios');
+
+    function actualizarInterfaz() {
+        const monedaPago = selectMoneda.value;
+        const esEquipos = radioEquipos.checked;
+        const monto = parseFloat(inputMonto.value) || 0;
+        const cotizacion = parseFloat(inputCotizacion.value) || 0;
+
+        // UNICO CASO DE BLOQUEO: Equipos + Pago en USD
+        if (esEquipos && monedaPago === 'USD') {
+            inputCotizacion.disabled = true;
+            inputCotizacion.required = false;
+            inputCotizacion.value = "";
+            infoConversion.style.display = 'none';
+        } 
+        // TODOS LOS DEMÁS CASOS: Habilitado
+        else {
+            inputCotizacion.disabled = false;
+            inputCotizacion.required = true;
+            
+            if (monto > 0 && cotizacion > 0) {
+                if (esEquipos && monedaPago === 'ARS') {
+                    // Calculando cuántos USD se acreditan
+                    displayResultado.innerText = (monto / cotizacion).toFixed(2);
+                    labelMonedaCalc.innerText = "USD";
+                    infoConversion.style.display = 'block';
+                } else if (!esEquipos && monedaPago === 'USD') {
+                    // Calculando cuántos Pesos se acreditan (Reparaciones)
+                    displayResultado.innerText = (monto * cotizacion).toFixed(2);
+                    labelMonedaCalc.innerText = "ARS";
+                    infoConversion.style.display = 'block';
+                } else {
+                    infoConversion.style.display = 'none';
+                }
+            } else {
+                infoConversion.style.display = 'none';
+            }
+        }
+    }
+
+    inputMonto.addEventListener('input', actualizarInterfaz);
+    inputCotizacion.addEventListener('input', actualizarInterfaz);
+    selectMoneda.addEventListener('change', actualizarInterfaz);
+    radioEquipos.addEventListener('change', actualizarInterfaz);
+    radioReparaciones.addEventListener('change', actualizarInterfaz);
+
+    actualizarInterfaz();
+</script>
 {% endblock %}

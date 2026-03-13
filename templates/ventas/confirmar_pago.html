@@ -23,8 +23,10 @@
     .bg-usd-input { background-color: #fafff0; border-left: 5px solid #198754; }
     .bg-usd-virtual { background-color: #f5f0ff; border-left: 5px solid #6f42c1; }
     .text-información { font-size: 0.85rem; opacity: 0.8; }
-    /* Estilo para el detalle inferior */
     .detalle-toma-box { background-color: #ffffff; border: 1px dashed #0dcaf0; border-radius: 8px; }
+    
+    /* Estilo para la nueva sección de anticipos */
+    .bg-anticipo { background-color: #fffdf0; border: 1px solid #ffecb5; border-left: 5px solid #ffc107; }
 </style>
 {% endblock %}
 
@@ -100,6 +102,22 @@
                 </div>
             </div>
 
+            <!-- NUEVO: SECCIÓN DE ANTICIPOS / SEÑAS (Solo aparece si el cliente tiene saldo) -->
+            <div id="seccion_anticipos" class="card mb-4 shadow-sm bg-anticipo d-none">
+                <div class="card-header bg-warning text-dark fw-bold border-0">
+                    <i class="bi bi-star-fill me-2"></i>Anticipos / Saldo a Favor Disponible
+                </div>
+                <div class="card-body">
+                    <p class="small mb-2 text-muted">Marque las señas que desea aplicar a esta venta:</p>
+                    <div id="lista_anticipos">
+                        <!-- Se llena vía AJAX -->
+                    </div>
+                    <div class="mt-3 text-end">
+                        <span class="badge bg-dark fs-6">Total Anticipos: u$d <span id="display_total_anticipos">0.00</span></span>
+                    </div>
+                </div>
+            </div>
+
             <div class="row g-4">
                 <!-- COLUMNA CAJA FÍSICA -->
                 <div class="col-md-6">
@@ -164,15 +182,12 @@
                     <div class="card border-info shadow-sm">
                         <div class="card-body">
                             <div class="row g-3">
-                                <!-- Línea Superior: Buscador -->
                                 <div class="col-12">
                                     <label class="form-label fw-bold"><i class="bi bi-search me-1"></i>1. Buscar Equipo Registrado (IMEI o Modelo):</label>
                                     <select class="form-select select2-celulares-parte-pago" id="celular_parte_pago_id" name="celular_parte_pago_id">
                                         <option value="">Escriba para buscar...</option>
                                     </select>
                                 </div>
-
-                                <!-- Línea Inferior: Detalle y Valor -->
                                 <div class="col-12 mt-3 p-3 detalle-toma-box">
                                     <div class="row align-items-center">
                                         <div class="col-md-7 border-end">
@@ -269,7 +284,33 @@
     (function () {
         'use strict';
         const precioTotalVentaUSD = parseFloat("{{ venta.precio_final_usd }}") || 0;
-        
+        const clienteId = "{{ venta.cliente_id }}";
+
+        // ==========================================================
+        // === NUEVO: LOGICA AJAX PARA ANTICIPOS ===
+        // ==========================================================
+        $.getJSON(`/api/anticipos_disponibles/${clienteId}?imputacion=EQUIPOS`, function(data) {
+            if (data && data.length > 0) {
+                $('#seccion_anticipos').removeClass('d-none');
+                data.forEach(a => {
+                    $('#lista_anticipos').append(`
+                        <div class="form-check border-bottom py-2">
+                            <input class="form-check-input anticipo-check" type="checkbox" name="anticipos_ids[]" 
+                                   value="${a.id}" data-monto="${a.monto_usd}" id="ant_${a.id}">
+                            <label class="form-check-label d-flex justify-content-between w-100" for="ant_${a.id}">
+                                <span><i class="bi bi-calendar-event me-2"></i>${a.fecha_cobro.split(' ')[0]} - <strong>${a.observaciones}</strong></span>
+                                <span class="fw-bold text-success">u$d ${parseFloat(a.monto_usd).toFixed(2)}</span>
+                            </label>
+                        </div>
+                    `);
+                });
+            }
+        });
+
+        $(document).on('change', '.anticipo-check', function() {
+            calcularTotalPagado();
+        });
+
         window.calcularTotalPagado = function() {
             const tipoDolar = $('#tipo_dolar_pago').val();
             let cotiz = 1;
@@ -284,12 +325,20 @@
 
             let totalUSD = 0;
             
-            // Sumar Dólares Directos (Incluyendo ahora la Parte de Pago en USD)
+            // 1. Sumar Dólares Directos e Inputs
             totalUSD += parseFloat($('#monto_efectivo_usd').val()) || 0;
             totalUSD += parseFloat($('#monto_virtual_usd').val()) || 0;
-            totalUSD += parseFloat($('#valor_celular_parte_pago_usd').val()) || 0; // NUEVO: Se suma como USD directo
+            totalUSD += parseFloat($('#valor_celular_parte_pago_usd').val()) || 0;
             
-            // Sumar Pesos convertidos a Dólares
+            // 2. NUEVO: Sumar Anticipos Seleccionados
+            let totalAnticipos = 0;
+            $('.anticipo-check:checked').each(function() {
+                totalAnticipos += parseFloat($(this).data('monto')) || 0;
+            });
+            totalUSD += totalAnticipos;
+            $('#display_total_anticipos').text(totalAnticipos.toFixed(2));
+
+            // 3. Sumar Pesos convertidos a Dólares
             const idsARS = ['#monto_efectivo_ars', '#monto_transferencia_ars'];
             idsARS.forEach(id => {
                 totalUSD += (parseFloat($(id).val()) || 0) / cotiz;
@@ -297,6 +346,7 @@
 
             const restanteUSD = precioTotalVentaUSD - totalUSD;
 
+            // Actualización de Monitor
             $('#display_pagando_hoy_usd').text(totalUSD.toFixed(2));
             $('#display_restante_usd').text(Math.max(0, restanteUSD).toFixed(2));
             $('#monto_a_financiar_usd_txt').text(Math.max(0, restanteUSD).toFixed(2));
@@ -311,6 +361,7 @@
             let valUSD_PP = parseFloat($('#valor_celular_parte_pago_usd').val()) || 0;
             $('#preview_ars_pp').text('≈ $ ' + (valUSD_PP * cotiz).toLocaleString('es-AR', {minimumFractionDigits: 2}) + ' ARS');
 
+            // Gestión de botones y crédito
             const btn = $('#btn-confirmar');
             const cardMonitor = $('#card_financiar_monitor');
 
@@ -372,14 +423,11 @@
                 dataType: 'json',
                 processResults: data => ({ results: data.results })
             },
-            placeholder: "Buscar equipo por IMEI o Modelo..."
+            placeholder: "Buscar equipo..."
         }).on('select2:select', function(e) {
             const data = e.params.data;
-            // Actualizar el detalle inferior
             $('#detalle_equipo_info').html('<i class="bi bi-phone-vibrate text-info me-2"></i>' + data.text);
-            
             if (data.costo_usd) {
-                // Seteamos el costo en USD directamente
                 $('#valor_celular_parte_pago_usd').val(parseFloat(data.costo_usd).toFixed(2)).trigger('input');
             }
         });

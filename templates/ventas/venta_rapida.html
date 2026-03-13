@@ -1,0 +1,232 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <!-- Lado Izquierdo: Selección de Productos -->
+        <div class="col-md-8">
+            <div class="card shadow border-0 mb-4">
+                <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0"><i class="bi bi-cart4 me-2"></i>Venta Rápida de Mostrador</h4>
+                    <span class="badge bg-primary">Consumidor Final (99999999)</span>
+                </div>
+                <div class="card-body">
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Buscar Producto / Accesorio</label>
+                        <!-- Cambiado a select2-productos para mayor claridad -->
+                        <select id="buscador_productos" class="form-select"></select>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle" id="tabla_venta">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Producto</th>
+                                    <th style="width: 100px;">Cant.</th>
+                                    <th style="width: 150px;">Precio Unit.</th>
+                                    <th style="width: 150px;">Subtotal</th>
+                                    <th style="width: 50px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Dinámico JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lado Derecho: Totales y Cobro -->
+        <div class="col-md-4">
+            <form action="{{ url_for('venta_rapida') }}" method="POST" id="form_venta_rapida">
+                <div class="card shadow border-0 position-sticky" style="top: 20px;">
+                    <div class="card-body">
+                        <h5 class="border-bottom pb-2 mb-3">Resumen de Pago</h5>
+                        
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Dólar para conversión:</label>
+                            <input type="number" step="0.01" name="cotiz_manual" id="cotiz_manual" class="form-control" value="{{ valor_dolar }}">
+                        </div>
+
+                        <div class="mb-3 text-center p-3 bg-light rounded border">
+                            <span class="text-muted d-block small">TOTAL A COBRAR</span>
+                            <h2 class="mb-0 text-primary fw-bold" id="total_display_ars">$ 0.00</h2>
+                            <span class="badge bg-secondary mt-2" id="total_display_usd">u$d 0.00</span>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Medio de Cobro</label>
+                            <select name="metodo_pago" class="form-select form-select-lg border-primary" required>
+                                <option value="EFECTIVO">💰 EFECTIVO (Caja)</option>
+                                {% for c in cuentas_entidades %}
+                                <option value="{{ c.nombre }}">💳 {{ c.nombre }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Moneda del Cliente</label>
+                            <select name="moneda_pago" id="moneda_pago" class="form-select">
+                                <option value="ARS">Pesos (ARS)</option>
+                                <option value="USD">Dólares (USD)</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Monto Recibido</label>
+                            <input type="number" step="0.01" name="monto_recibido" id="monto_recibido" class="form-control form-control-lg border-success" placeholder="0.00" required>
+                        </div>
+
+                        <!-- Aquí JS inyectará los items seleccionados -->
+                        <div id="wrapper_items_ocultos"></div>
+
+                        <button type="submit" class="btn btn-success btn-lg w-100 shadow py-3">
+                            <i class="bi bi-check-circle-fill me-2"></i>FINALIZAR VENTA
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{# --- TODO EL SCRIPT SE MUEVE AL BLOQUE EXTRA PARA ASEGURAR QUE JQUERY EXISTA --- #}
+{% block scripts_extra %}
+<script>
+$(document).ready(function() {
+    let itemsVenta = [];
+
+    // SELECT2: Configuración robusta para búsqueda remota
+    $('#buscador_productos').select2({
+        theme: 'bootstrap-5',
+        placeholder: "Escriba nombre o modelo del producto...",
+        allowClear: true,
+        minimumInputLength: 1,
+        width: '100%',
+        ajax: {
+            url: "{{ url_for('api_buscar_repuestos') }}",
+            dataType: 'json',
+            delay: 250,
+            data: function (params) {
+                return {
+                    q: params.term // El término que el usuario escribe se envía como 'q'
+                };
+            },
+            processResults: function (data) {
+                // Tu app.py devuelve un objeto con la llave "results"
+                return {
+                    results: data.results
+                };
+            },
+            cache: true
+        }
+    }).on('select2:select', function(e) {
+        agregarProducto(e.params.data);
+        $(this).val(null).trigger('change'); // Limpiar el buscador
+    });
+
+    function agregarProducto(prod) {
+        const existe = itemsVenta.find(i => i.id === prod.id);
+        if (existe) {
+            existe.cantidad++;
+        } else {
+            // Cálculo inicial de precio según la moneda de la pantalla
+            const cotiz = parseFloat($('#cotiz_manual').val()) || 1;
+            let precioArs = 0;
+            
+            // Priorizamos el precio_venta_ars que venga de la base de datos
+            if (prod.precio_venta_ars && prod.precio_venta_ars > 0) {
+                precioArs = prod.precio_venta_ars;
+            } else {
+                precioArs = (prod.precio_venta_usd || 0) * cotiz;
+            }
+
+            itemsVenta.push({
+                id: prod.id,
+                nombre: prod.text,
+                precio: precioArs,
+                cantidad: 1
+            });
+        }
+        renderTabla();
+    }
+
+    function renderTabla() {
+        const tbody = $('#tabla_venta tbody');
+        const wrapper = $('#wrapper_items_ocultos');
+        tbody.empty();
+        wrapper.empty();
+        
+        let totalArs = 0;
+
+        itemsVenta.forEach((item) => {
+            const subtotal = item.cantidad * item.precio;
+            totalArs += subtotal;
+
+            tbody.append(`
+                <tr>
+                    <td class="small">${item.nombre}</td>
+                    <td>
+                        <input type="number" class="form-control form-control-sm" 
+                               value="${item.cantidad}" min="1" 
+                               onchange="updateCant(${item.id}, this.value)">
+                    </td>
+                    <td>
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text">$</span>
+                            <input type="number" class="form-control" 
+                                   value="${item.precio.toFixed(2)}" 
+                                   onchange="updatePrecio(${item.id}, this.value)">
+                        </div>
+                    </td>
+                    <td class="fw-bold text-end">$ ${subtotal.toLocaleString('es-AR', {minimumFractionDigits: 2})}</td>
+                    <td>
+                        <button type="button" class="btn btn-link text-danger p-0" onclick="removeItem(${item.id})">
+                            <i class="bi bi-x-circle"></i>
+                        </button>
+                    </td>
+                </tr>
+            `);
+
+            // Inputs para enviar al POST de Flask
+            wrapper.append(`<input type="hidden" name="item_id[]" value="${item.id}">`);
+            wrapper.append(`<input type="hidden" name="cantidad[]" value="${item.cantidad}">`);
+            wrapper.append(`<input type="hidden" name="precio_unitario[]" value="${item.precio}">`);
+        });
+
+        const cotiz = parseFloat($('#cotiz_manual').val()) || 1;
+        const totalUsd = totalArs / cotiz;
+
+        $('#total_display_ars').text(`$ ${totalArs.toLocaleString('es-AR', {minimumFractionDigits: 2})}`);
+        $('#total_display_usd').text(`u$d ${totalUsd.toFixed(2)}`);
+        
+        // Autocompletar el monto recibido si está vacío o es igual al total anterior
+        if ($('#moneda_pago').val() === 'ARS') {
+            $('#monto_recibido').val(totalArs.toFixed(2));
+        } else {
+            $('#monto_recibido').val(totalUsd.toFixed(2));
+        }
+    }
+
+    // Funciones globales necesarias para los eventos en el HTML inyectado
+    window.updateCant = (id, val) => { 
+        const item = itemsVenta.find(i => i.id === id);
+        if (item) item.cantidad = parseInt(val) || 1; 
+        renderTabla(); 
+    };
+    window.updatePrecio = (id, val) => { 
+        const item = itemsVenta.find(i => i.id === id);
+        if (item) item.precio = parseFloat(val) || 0; 
+        renderTabla(); 
+    };
+    window.removeItem = (id) => { 
+        itemsVenta = itemsVenta.filter(i => i.id !== id); 
+        renderTabla(); 
+    };
+    
+    // Escuchar cambios en parámetros globales
+    $('#cotiz_manual, #moneda_pago').on('change', renderTabla);
+});
+</script>
+{% endblock %}
