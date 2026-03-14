@@ -3312,8 +3312,8 @@ def venta_rapida():
                 total_venta_ars, 
                 'COMPLETADO', 
                 'VENTA_ACCESORIO', 
-                #datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S"), 
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                #obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S"), 
                 0, 
                 total_venta_usd, 
                 0
