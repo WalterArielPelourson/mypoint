@@ -1,0 +1,160 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<!-- Forzamos la carga de CSS de Select2 dentro de este template para evitar errores de rutas -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" />
+
+<style>
+    /* Fix para asegurar que el buscador sea visible y tenga foco */
+    .select2-container--bootstrap-5 .select2-search__field {
+        background-color: #fff !important;
+        border: 1px solid #ccc !important;
+        color: #000 !important;
+    }
+    .select2-container {
+        z-index: 1050 !important;
+    }
+</style>
+
+<div class="container mt-4">
+    <h2 class="mb-4"><i class="fas fa-balance-scale"></i> Ajuste Manual de Cuentas Corrientes</h2>
+    <div class="alert alert-warning">
+        <i class="fas fa-exclamation-triangle"></i> <strong>Atención SuperAdmin:</strong> Estos ajustes 
+        <strong>NO</strong> generan movimientos en el Arqueo de Caja ni en Cuentas Virtuales.
+    </div>
+
+    <div class="row">
+        <!-- Ajuste Clientes -->
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white"><h5>Ajustar Cliente</h5></div>
+                <div class="card-body">
+                    <form action="{{ url_for('ajuste_cc_cliente') }}" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label">Buscar Cliente (Escriba nombre o CUIT):</label>
+                            <select name="cliente_id" id="cliente_id_ajuste" class="form-control" required></select>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Monto:</label>
+                                <input type="number" step="0.01" name="monto" class="form-control" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Moneda:</label>
+                                <select name="moneda" class="form-select">
+                                    <option value="ARS">Pesos (ARS)</option>
+                                    <option value="USD">Dólares (USD)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Tipo de Ajuste:</label>
+                            <select name="tipo_ajuste" class="form-select">
+                                <option value="CREDITO">Crédito (Baja deuda)</option>
+                                <option value="DEBITO">Débito (Sube deuda)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Imputación:</label>
+                            <select name="imputacion" class="form-select">
+                                <option value="EQUIPOS">Equipos (USD)</option>
+                                <option value="SERVICIOS">Servicios/Varios (ARS)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Motivo:</label>
+                            <textarea name="motivo" class="form-control" rows="2" placeholder="Motivo del ajuste" required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Aplicar Ajuste a Cliente</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ajuste Proveedores -->
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-header bg-dark text-white"><h5>Ajustar Proveedor</h5></div>
+                <div class="card-body">
+                    <form action="{{ url_for('ajuste_cc_proveedor') }}" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label">Buscar Proveedor (Escriba nombre o CUIT):</label>
+                            <select name="proveedor_id" id="proveedor_id_ajuste" class="form-control" required></select>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Monto:</label>
+                                <input type="number" step="0.01" name="monto" class="form-control" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Moneda:</label>
+                                <select name="moneda" class="form-select">
+                                    <option value="ARS">Pesos (ARS)</option>
+                                    <option value="USD">Dólares (USD)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Tipo de Ajuste:</label>
+                            <select name="tipo_ajuste" class="form-select">
+                                <option value="PAGO">Pago (Baja deuda)</option>
+                                <option value="CARGO">Cargo (Sube deuda)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Imputación:</label>
+                            <select name="imputacion" class="form-select">
+                                <option value="EQUIPOS">Equipos (USD)</option>
+                                <option value="REPUESTOS">Repuestos (ARS)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Motivo:</label>
+                            <textarea name="motivo" class="form-control" rows="2" placeholder="Motivo del ajuste" required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-dark w-100">Aplicar Ajuste a Proveedor</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Forzamos carga de JS de Select2 para asegurar funcionamiento -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<script>
+$(document).ready(function() {
+    function inicializarSelect2(id, rol) {
+        $(id).select2({
+            theme: 'bootstrap-5',
+            width: '100%',
+            placeholder: 'Escriba para buscar...',
+            allowClear: true,
+            language: {
+                noResults: function() { return "No se encontraron resultados"; },
+                searching: function() { return "Buscando..."; }
+            },
+            ajax: {
+                url: '/api/personas/buscar',
+                dataType: 'json',
+                delay: 300,
+                data: function (params) {
+                    return { q: params.term, rol: rol };
+                },
+                processResults: function (data) {
+                    return { results: data.results };
+                },
+                cache: true
+            },
+            minimumInputLength: 1
+        });
+    }
+
+    inicializarSelect2('#cliente_id_ajuste', 'cliente');
+    inicializarSelect2('#proveedor_id_ajuste', 'proveedor');
+});
+</script>
+{% endblock %}

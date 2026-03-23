@@ -49,11 +49,11 @@
     </div>
 </div>
 
-{# Aquí iría tu tabla de ventas #}
 <div class="table-responsive">
     <table class="table table-striped">
         <thead class="table-dark">
             <tr>
+                <th>Venta #</th>
                 <th>Fecha</th>
                 <th>Cliente</th>
                 <th>Equipo</th>
@@ -64,6 +64,7 @@
         <tbody>
             {% for venta in ventas %}
             <tr>
+                <td><strong>#{{ venta.id }}</strong></td>
                 <td>{{ venta.fecha_venta|datetimeformat }}</td>
                 <td>{{ venta.razon_social or (venta.nombre + ' ' + venta.apellido) }}</td>
                 <td>{{ venta.marca }} {{ venta.modelo }}</td>

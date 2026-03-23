@@ -22,6 +22,12 @@
                 </div>
                 <div class="col-md-auto">
                     <button type="submit" class="btn btn-primary"><i class="bi bi-search me-1"></i>Ver Listado</button>
+
+                     <!-- NUEVO BOTÓN DE EXPORTAR -->
+                    <a href="{{ url_for('exportar_listado_diario', selected_date=selected_date) }}" class="btn btn-success">
+                        <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
+                    </a>
+
                 </div>
             </form>
         </div>
@@ -69,7 +75,7 @@
 
 <div class="card mb-4 shadow-sm">
     <div class="card-header bg-primary text-white">
-        <h5 class="mb-0"><i class="bi bi-arrow-down-up me-2"></i>Movimientos de CAJA (Efectivo)</h5>
+        <h5 class="mb-0"><i class="bi bi-arrow-down-up me-2"></i>Movimientos de CAJA y CUENTAS</h5>
     </div>
     <div class="card-body">
         <div class="table-responsive">
@@ -79,7 +85,8 @@
                         <th scope="col">Hora</th>
                         <th scope="col">Usuario</th>
                         <th scope="col">Tipo</th>
-                        <th scope="col">Sub-Rubro</th> {# NUEVA COLUMNA #}
+                        <th scope="col">Sub-Rubro</th>
+                        <th scope="col">Impacto / Cuenta</th> {# NUEVA COLUMNA #}
                         <th scope="col" class="text-end">Ingreso ARS</th>
                         <th scope="col" class="text-end">Egreso ARS</th>
                         <th scope="col" class="text-end">Ingreso USD</th>
@@ -94,7 +101,10 @@
                             <td>{{ mov.fecha.split(' ')[1] }}</td>
                             <td>{{ mov.username }}</td>
                             <td>
-                                {% if 'INGRESO' in mov.tipo or 'APERTURA' in mov.tipo %}
+                                <!-- CAMBIO APLICADO AQUÍ: Detección de Venta Rápida -->
+                                {% if 'VENTA_RAPIDA' in mov.tipo %}
+                                    <span class="badge bg-warning text-dark">VENTA RAPIDA ACCESORIOS</span>
+                                {% elif 'INGRESO' in mov.tipo or 'APERTURA' in mov.tipo %}
                                     <span class="badge bg-success">{{ mov.tipo.replace('_', ' ') }}</span>
                                 {% elif 'EGRESO' in mov.tipo or 'PAGO_PROVEEDOR' in mov.tipo or 'CIERRE' in mov.tipo %}
                                     <span class="badge bg-danger">{{ mov.tipo.replace('_', ' ') }}</span>
@@ -102,7 +112,15 @@
                                     <span class="badge bg-info text-dark">{{ mov.tipo.replace('_', ' ') }}</span>
                                 {% endif %}
                             </td>
-                            <td>{{ mov.sub_categoria or 'N/A' }}</td> {# MOSTRAR SUB-RUBRO #}
+                            <td>{{ mov.sub_categoria or 'N/A' }}</td>
+                            <td>
+                                <!-- Muestra la cuenta de impacto (Efectivo o Virtuales) -->
+                                {% if mov.metodo_pago == 'EFECTIVO' or not mov.metodo_pago %}
+                                    <span class="badge border text-dark bg-light"><i class="bi bi-cash me-1"></i>EFECTIVO</span>
+                                {% else %}
+                                    <span class="badge border text-primary bg-white"><i class="bi bi-bank me-1"></i>{{ mov.metodo_pago.replace('_', ' ') }}</span>
+                                {% endif %}
+                            </td>
                             <td class="text-end">{% if 'INGRESO' in mov.tipo or 'APERTURA' in mov.tipo %}ARS {{ mov.monto_ars|default(0)|round(2) }}{% else %}-{% endif %}</td>
                             <td class="text-end">{% if 'EGRESO' in mov.tipo or 'PAGO_PROVEEDOR' in mov.tipo or 'CIERRE' in mov.tipo %}ARS {{ mov.monto_ars|default(0)|round(2) }}{% else %}-{% endif %}</td>
                             <td class="text-end">{% if 'INGRESO' in mov.tipo or 'APERTURA' in mov.tipo %}USD {{ mov.monto_usd|default(0)|round(2) }}{% else %}-{% endif %}</td>
@@ -112,19 +130,19 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="9" class="text-center text-muted">No se encontraron movimientos de caja para la fecha seleccionada.</td> {# colspan ajustado #}
+                            <td colspan="10" class="text-center text-muted">No se encontraron movimientos de caja para la fecha seleccionada.</td>
                         </tr>
                     {% endif %}
                 </tbody>
             </table>
         </div>
         <div class="row mt-3 text-end fw-bold">
-            <div class="col-5"></div> {# Columna ajustada #}
+            <div class="col-6"></div> {# Columna ajustada por la nueva columna #}
             <div class="col-2">Total Ingresos ARS: <span class="text-success">ARS {{ total_ingresos_caja_ars|round(2) }}</span></div>
             <div class="col-2">Total Egresos ARS: <span class="text-danger">ARS {{ total_egresos_caja_ars|round(2) }}</span></div>
         </div>
         <div class="row text-end fw-bold">
-            <div class="col-5"></div> {# Columna ajustada #}
+            <div class="col-6"></div> {# Columna ajustada por la nueva columna #}
             <div class="col-2">Total Ingresos USD: <span class="text-success">USD {{ total_ingresos_caja_usd|round(2) }}</span></div>
             <div class="col-2">Total Egresos USD: <span class="text-danger">USD {{ total_egresos_caja_usd|round(2) }}</span></div>
         </div>
@@ -133,7 +151,7 @@
 
 <div class="card mb-4 shadow-sm">
     <div class="card-header bg-secondary text-white">
-        <h5 class="mb-0"><i class="bi bi-activity me-2"></i>Otros Movimientos del Sistema (No Efectivo)</h5>
+        <h5 class="mb-0"><i class="bi bi-activity me-2"></i>Otros Movimientos del Sistema (Acciones de Auditoría)</h5>
     </div>
     <div class="card-body">
         <div class="table-responsive">

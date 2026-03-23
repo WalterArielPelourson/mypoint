@@ -1093,9 +1093,9 @@ def registrar_compra_repuesto():
 
             # 3. BUCLE DE PROCESAMIENTO DE ÍTEMS
             for i in range(len(nombres_list)):
-                nombre_parte = nombres_list[i].strip().upper()
+                nombre_parte = nombres_list[i].strip().lower()
                 categoria = categorias_list[i].strip().upper()
-                modelo_compatible = (modelos_list[i] or 'Universal').strip().upper()
+                modelo_compatible = (modelos_list[i] or 'universal').strip().lower()
                 cantidad_ingresada = int(cantidades_list[i] or 0)
                 costo_ingresado = float(costos_list[i] or 0)
 
@@ -1313,10 +1313,10 @@ def editar_repuesto(repuesto_id):
 
     if request.method == 'POST':
         try:
-            nombre_parte = request.form['nombre_parte'].strip()
-            modelo_compatible = request.form.get('modelo_compatible', '').strip()
+            nombre_parte = request.form['nombre_parte'].strip().lower()
+            modelo_compatible = request.form.get('modelo_compatible', '').strip().lower()
             # --- NUEVO: Captura de Categoría ---
-            categoria = request.form.get('categoria', 'REPUESTO').strip()
+            categoria = request.form.get('categoria', 'REPUESTO').strip().upper()
             
             costo_usd = float(request.form['costo_usd'])
             stock = int(request.form['stock'])
@@ -1697,48 +1697,213 @@ def listar_proveedores_cc():
 @app.route('/cuentas_corrientes/clientes')
 @login_required
 def listar_clientes_cc():
+    # 1. Obtener todos los clientes
     clientes = db_query("SELECT id, nombre, apellido, razon_social, telefono FROM personas WHERE es_cliente = 1 ORDER BY apellido, nombre, razon_social")
+    
+    # Necesitamos la cotización actual solo para cobros viejos que no tengan monto_usd guardado
+    dolar_info = obtener_cotizacion_dolar()
+    cotiz_actual = float(dolar_info['compra_blue'] or 1.0)
+    
     estados_cuenta = []
     
     for cli in clientes:
-        # --- DEUDA USD (Ventas de Equipos) ---
-        total_ventas_usd = db_query("""
-            SELECT COALESCE(SUM(precio_final_usd), 0) as total 
+        cliente_id = cli['id']
+        
+        # --- LÓGICA DE EQUIPOS (USD) - RÉPLICA EXACTA DEL DETALLE ---
+        debe_equipos = 0.0
+        haber_equipos = 0.0
+
+        # A. Ventas y Cuotas (DEBE y HABER de Venta)
+        ventas = db_query("""
+            SELECT id, valor_dolar_momento, precio_final_usd,
+                   monto_cobrado_ars, monto_cobrado_usd, monto_transferencia_ars, 
+                   monto_mp_ars, monto_debito_ars, monto_credito_ars, 
+                   monto_virtual_usd, valor_celular_parte_pago, cantidad_cuotas
             FROM ventas WHERE cliente_id = ? AND status = 'COMPLETADA'
-        """, (cli['id'],))[0]['total']
-        
-        pagos_ventas_usd = db_query("""
-            SELECT COALESCE(SUM(monto_usd), 0) as total 
-            FROM cobros_clientes WHERE cliente_id = ? AND monto_usd > 0
-        """, (cli['id'],))[0]['total']
-        
-        # También restamos lo pagado inicialmente en USD al momento de la venta
-        pagos_iniciales_usd = db_query("SELECT COALESCE(SUM(monto_cobrado_usd), 0) FROM ventas WHERE cliente_id = ? AND status = 'COMPLETADA'", (cli['id'],))
-        
-        saldo_usd = total_ventas_usd - pagos_ventas_usd - pagos_iniciales_usd[0][0]
+        """, (cliente_id,))
 
-        # --- DEUDA ARS (Servicios Técnicos / Reparaciones) ---
-        total_servicios_ars = db_query("""
-            SELECT COALESCE(SUM(precio_final_ars), 0) as total 
-            FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'
-        """, (cli['id'],))[0]['total']
-        
-        pagos_servicios_ars = db_query("""
-            SELECT COALESCE(SUM(monto_ars), 0) as total 
-            FROM cobros_clientes WHERE cliente_id = ? AND monto_usd = 0
-        """, (cli['id'],))[0]['total']
+        for v in ventas:
+            cotiz_v = v['valor_dolar_momento'] or 1.0
+            
+            # 1. Anticipos Aplicados (Heredado de tu lógica de detalle)
+            res_ant = db_query("SELECT SUM(monto_usd) as total FROM cobros_clientes WHERE cliente_id = ? AND estado_anticipo = 'APLICADO' AND referencia LIKE ?", 
+                               (cliente_id, f'%Venta #{v["id"]}%',))
+            monto_anticipos_aplicados = res_ant[0]['total'] or 0.0
 
-        saldo_ars = total_servicios_ars - pagos_servicios_ars
+            # 2. Compromiso Inicial (DEBE)
+            # Calculamos los pagos en pesos realizados hoy en la venta
+            total_pago_hoy_ars = (
+                (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + 
+                (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + (v['monto_credito_ars'] or 0)
+            )
+            
+            # DEBE de la Venta (Según tu punto A del detalle)
+            total_debe_inicial_v = (
+                (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + 
+                ((v['valor_celular_parte_pago'] or 0) / cotiz_v) + (total_pago_hoy_ars / cotiz_v) + 
+                monto_anticipos_aplicados 
+            )
+            debe_equipos += total_debe_inicial_v
 
+            # 3. Cuotas (DEBE - Según tu punto B del detalle)
+            cuotas = db_query("SELECT monto_ars, monto_original_ars FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
+            for c in cuotas:
+                # Toma el valor en pesos original (pactado) y lo divide por el dólar de la venta
+                monto_cuota_ars = c['monto_original_ars'] if (c['monto_original_ars'] and c['monto_original_ars'] > 0) else c['monto_ars']
+                debe_equipos += (monto_cuota_ars / cotiz_v)
+
+            # 4. Pago Inicial Recibido (HABER - Según tu punto C del detalle)
+            # El Haber de la venta es el efectivo/virtual/equipo entregado hoy
+            total_entregado_hoy_ars = total_pago_hoy_ars + (v['valor_celular_parte_pago'] or 0)
+            pago_inicial_haber_v = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + (total_entregado_hoy_ars / cotiz_v)
+            haber_equipos += pago_inicial_haber_v
+
+        # B. Cobros Posteriores y Anticipos (HABER de Cobros - Según tu punto 3 del detalle)
+        cobros = db_query("SELECT monto_ars, monto_usd, imputacion FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
+        for p in cobros:
+            if p['imputacion'] == 'EQUIPOS':
+                # IMPORTANTE: Aquí toma el monto_usd que ya tiene la cotización de referencia elegida al cobrar
+                monto_cobro_usd = p['monto_usd'] if (p['monto_usd'] is not None and p['monto_usd'] != 0) else (p['monto_ars'] / cotiz_actual)
+                haber_equipos += monto_cobro_usd
+
+        saldo_usd = debe_equipos - haber_equipos
+
+        # --- LÓGICA DE SERVICIOS (ARS) - RÉPLICA DEL DETALLE ---
+        # 1. Total Servicios (DEBE)
+        res_serv = db_query("SELECT SUM(precio_final_ars) FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'", (cliente_id,))
+        debe_servicios = res_serv[0][0] or 0.0
+
+        # 2. Total Cobros Servicios (HABER)
+        res_cob_serv = db_query("SELECT SUM(monto_ars) FROM cobros_clientes WHERE cliente_id = ? AND (imputacion = 'REPARACIONES' OR imputacion = 'SERVICIOS')", (cliente_id,))
+        haber_servicios = res_cob_serv[0][0] or 0.0
+
+        saldo_ars = debe_servicios - haber_servicios
+
+        # 3. Solo agregar si hay saldos pendientes significativos (tolerancia 0.01)
         if abs(saldo_usd) > 0.01 or abs(saldo_ars) > 0.01:
             estados_cuenta.append({
                 'id': cli['id'],
                 'nombre': cli['razon_social'] or f"{cli['nombre']} {cli['apellido']}",
-                'saldo_usd': saldo_usd,
-                'saldo_ars': saldo_ars
+                'telefono': cli['telefono'],
+                'saldo_usd': round(saldo_usd, 2),
+                'saldo_ars': round(saldo_ars, 2)
             })
 
     return render_template('cuentas_corrientes/listar_clientes_cc.html', estados_cuenta=estados_cuenta)
+
+
+# --- AJUSTES DE CUENTAS CORRIENTES (SUPERADMIN) ---
+
+#@app.route('/admin/configuracion/ajuste_cc', methods=['GET'])
+#@login_required
+#@superadmin_required
+#def menu_ajuste_cc():
+#    clientes = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_cliente = 1 ORDER BY apellido ASC")
+#    proveedores = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_proveedor = 1 ORDER BY razon_social ASC")
+#    return render_template('admin/ajuste_cc.html', clientes=clientes, proveedores=proveedores)
+
+@app.route('/admin/configuracion/ajuste_cc', methods=['GET'])
+@login_required
+@superadmin_required
+def menu_ajuste_cc():
+    # Ya no necesitamos enviar las listas completas de personas
+    return render_template('admin/ajuste_cc.html')
+
+
+
+@app.route('/admin/configuracion/ajuste_cc_cliente', methods=['POST'])
+@login_required
+@superadmin_required
+def ajuste_cc_cliente():
+    db_conn = get_db()
+    try:
+        cliente_id = request.form.get('cliente_id')
+        monto = float(request.form.get('monto', 0))
+        moneda = request.form.get('moneda', 'ARS') # ARS o USD
+        tipo_ajuste = request.form.get('tipo_ajuste') # 'CREDITO' (Baja deuda) o 'DEBITO' (Sube deuda)
+        imputacion = request.form.get('imputacion', 'EQUIPOS')
+        motivo = request.form.get('motivo', 'Ajuste Manual SuperAdmin').strip()
+
+        if monto <= 0:
+            flash("El monto debe ser positivo.", "danger")
+            return redirect(url_for('menu_ajuste_cc'))
+
+        # Si es DÉBITO (queremos que el cliente deba MÁS), el monto en la tabla de cobros debe ser NEGATIVO
+        # Si es CRÉDITO (queremos que el cliente deba MENOS), el monto debe ser POSITIVO (como un pago)
+        monto_final = monto if tipo_ajuste == 'CREDITO' else -monto
+        
+        m_ars = monto_final if moneda == 'ARS' else 0
+        m_usd = monto_final if moneda == 'USD' else 0
+
+        db_conn.execute("BEGIN TRANSACTION")
+        
+        # Insertamos en cobros_clientes PERO NO LLAMAMOS A registrar_movimiento_caja
+        db_execute_func(db_conn, """
+            INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+              m_ars, m_usd, 'AJUSTE', f"AJUSTE MANUAL {tipo_ajuste}", motivo, imputacion))
+
+        # Auditoría
+        registrar_movimiento(current_user.id, 'AJUSTE_CC_CLIENTE', 'PERSONA', cliente_id, {
+            'monto': monto_final, 'moneda': moneda, 'motivo': motivo, 'imputacion': imputacion
+        })
+
+        db_conn.commit()
+        flash(f"Ajuste de {tipo_ajuste} aplicado al cliente correctamente. Sin afectar caja.", "success")
+    except Exception as e:
+        db_conn.rollback()
+        flash(f"Error: {e}", "danger")
+    
+    return redirect(url_for('menu_ajuste_cc'))
+
+@app.route('/admin/configuracion/ajuste_cc_proveedor', methods=['POST'])
+@login_required
+@superadmin_required
+def ajuste_cc_proveedor():
+    db_conn = get_db()
+    try:
+        proveedor_id = request.form.get('proveedor_id')
+        monto = float(request.form.get('monto', 0))
+        moneda = request.form.get('moneda', 'ARS')
+        tipo_ajuste = request.form.get('tipo_ajuste') # 'PAGO' (Baja nuestra deuda) o 'CARGO' (Sube nuestra deuda)
+        imputacion = request.form.get('imputacion', 'EQUIPOS')
+        motivo = request.form.get('motivo', 'Ajuste Manual SuperAdmin').strip()
+
+        if monto <= 0:
+            flash("El monto debe ser positivo.", "danger")
+            return redirect(url_for('menu_ajuste_cc'))
+
+        # Para proveedores: 
+        # Si es PAGO (baja deuda), el registro en pagos_proveedores es POSITIVO.
+        # Si es CARGO (debemos más), el registro debe ser NEGATIVO.
+        monto_final = monto if tipo_ajuste == 'PAGO' else -monto
+        
+        m_ars = monto_final if moneda == 'ARS' else 0
+        m_usd = monto_final if moneda == 'USD' else 0
+
+        db_conn.execute("BEGIN TRANSACTION")
+        
+        # Insertamos en pagos_proveedores PERO NO LLAMAMOS A registrar_movimiento_caja
+        db_execute_func(db_conn, """
+            INSERT INTO pagos_proveedores (proveedor_id, user_id, fecha_pago, monto_ars, monto_usd, tipo_pago, referencia, imputacion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (proveedor_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+              m_ars, m_usd, 'AJUSTE', f"AJUSTE MANUAL {tipo_ajuste}", imputacion))
+
+        # Auditoría
+        registrar_movimiento(current_user.id, 'AJUSTE_CC_PROVEEDOR', 'PERSONA', proveedor_id, {
+            'monto': monto_final, 'moneda': moneda, 'motivo': motivo, 'imputacion': imputacion
+        })
+
+        db_conn.commit()
+        flash(f"Ajuste de {tipo_ajuste} aplicado al proveedor correctamente. Sin afectar caja.", "success")
+    except Exception as e:
+        db_conn.rollback()
+        flash(f"Error: {e}", "danger")
+    
+    return redirect(url_for('menu_ajuste_cc'))
+
 
 
 ##Reporte de cumpleaños
@@ -2042,10 +2207,15 @@ def cobrar_cliente(cliente_id):
                 flash("El monto a cobrar debe ser positivo.", "danger")
                 return redirect(url_for('cobrar_cliente', cliente_id=cliente_id, imputacion=imputacion_elegida))
             
-            # Valor contable para el Haber
-            monto_ingresado_en_usd = monto_fisico_entregado if moneda_pago == 'USD' else (monto_fisico_entregado / cotiz_hoy)
-            monto_ars_contable = monto_fisico_entregado if moneda_pago == 'ARS' else (monto_fisico_entregado * cotiz_hoy)
-            monto_usd_fisico = monto_fisico_entregado if moneda_pago == 'USD' else 0.0
+            # Calculamos el impacto real en ambas monedas usando la cotización elegida
+            if moneda_pago == 'USD':
+                monto_usd_contable = monto_fisico_entregado
+                monto_ars_contable = monto_fisico_entregado * cotiz_hoy
+                monto_usd_fisico = monto_fisico_entregado # Para la caja
+            else:
+                monto_ars_contable = monto_fisico_entregado
+                monto_usd_contable = monto_fisico_entregado / cotiz_hoy
+                monto_usd_fisico = 0.0 # Para la caja
 
             db_conn.execute("BEGIN TRANSACTION")
             
@@ -2067,14 +2237,9 @@ def cobrar_cliente(cliente_id):
                         venta = db_query_func(db_conn, "SELECT v.valor_dolar_momento, v.id as v_id FROM ventas_cuotas vc JOIN ventas v ON vc.venta_id = v.id WHERE vc.id = ?", (id_ref,))[0]
                         monto_ars_a_restar = monto_especifico_input * venta['valor_dolar_momento']
                         
-                        # ACTUALIZACIÓN DEL SALDO PENDIENTE (Semaforo)
-                        # Restamos de monto_ars (el saldo), pero NUNCA tocamos monto_original_ars
+                        # ACTUALIZACIÓN DEL SALDO PENDIENTE
                         db_execute_func(db_conn, "UPDATE ventas_cuotas SET monto_ars = monto_ars - ? WHERE id = ?", (monto_ars_a_restar, id_ref))
-                        
-                        # Si el saldo es casi cero, marcar como PAGADO para que salga del semáforo
                         db_execute_func(db_conn, "UPDATE ventas_cuotas SET estado = 'PAGADO' WHERE id = ? AND monto_ars <= 1.0", (id_ref,))
-                        
-                        # Actualizar saldo global de la venta
                         db_execute_func(db_conn, "UPDATE ventas SET saldo_pendiente = saldo_pendiente - ? WHERE id = ?", (monto_ars_a_restar, venta['v_id']))
                         
                         items_pagados_detalle.append(f"Cuota ID:{id_ref} (u$d {monto_especifico_input})")
@@ -2087,13 +2252,18 @@ def cobrar_cliente(cliente_id):
                         db_execute_func(db_conn, "UPDATE servicios_reparacion SET saldo_pendiente = saldo_pendiente - ? WHERE id = ?", (monto_especifico_input, id_ref))
                         items_pagados_detalle.append(f"Servicio #{id_ref} (-${monto_especifico_input})")
 
-            # Registro de cobro (Este es el HABER que cancelará el DEBE original en el historial)
-            referencia = ", ".join(items_pagados_detalle)
+            # --- CORRECCIÓN: Definir referencia antes del INSERT ---
+            if items_pagados_detalle:
+                referencia = ", ".join(items_pagados_detalle)
+            else:
+                referencia = f"Cobro {imputacion_elegida}"
+
+            # Registro de cobro: Pasamos monto_usd_contable para congelar la cotización
             cobro_id = db_execute_func(db_conn, """
                 INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                  monto_ars_contable, monto_usd_fisico, cuenta_destino, referencia, observaciones, imputacion_elegida), return_id=True)
+                  monto_ars_contable, monto_usd_contable, cuenta_destino, referencia, observaciones, imputacion_elegida), return_id=True)
 
             # Impacto en Caja
             if moneda_pago == 'USD':
@@ -2108,7 +2278,8 @@ def cobrar_cliente(cliente_id):
             return redirect(url_for('listar_clientes_cc'))
 
         except Exception as e:
-            db_conn.rollback()
+            if 'db_conn' in locals():
+                db_conn.rollback()
             app.logger.error(f"Error cobro: {e}", exc_info=True)
             flash(f"Error: {e}", "danger")
             return redirect(url_for('cobrar_cliente', cliente_id=cliente_id))
@@ -2117,7 +2288,6 @@ def cobrar_cliente(cliente_id):
                            cliente=cliente, items=items_pendientes, 
                            total_deuda=total_deuda, dolar_info=dolar_info,
                            imputacion=imputacion_elegida, hoy=hoy)
-    
     
     
 @app.route('/cuentas_corrientes/registrar_pago/<int:proveedor_id>', methods=['GET', 'POST'])
@@ -2272,7 +2442,7 @@ def ver_detalle_cc_cliente(cliente_id):
     dolar_info = obtener_cotizacion_dolar()
     cotiz_actual = float(dolar_info['compra_blue'] or 1.0)
 
-    # 1. DEBE: Ventas y sus CUOTAS (Moneda base: USD)
+    # 1. DEBE y HABER: Ventas y sus CUOTAS (Moneda base: USD)
     ventas = db_query("""
         SELECT id, fecha_venta, precio_final_ars, precio_final_usd, valor_dolar_momento, 
                cantidad_cuotas, monto_cobrado_ars, monto_cobrado_usd, 
@@ -2284,38 +2454,40 @@ def ver_detalle_cc_cliente(cliente_id):
     for v in ventas:
         cotiz_v = v['valor_dolar_momento'] or 1.0
 
-        # --- NUEVO: Buscar anticipos aplicados a esta venta específica ---
+        # --- LÓGICA DE ANTICIPOS (Reintegrada según tu solicitud) ---
         # Buscamos en cobros_clientes registros que digan "Aplicado a Venta #ID"
         res_ant = db_query("SELECT SUM(monto_usd) as total FROM cobros_clientes WHERE estado_anticipo = 'APLICADO' AND referencia LIKE ?", (f'%Venta #{v["id"]}%',))
         monto_anticipos_aplicados = res_ant[0]['total'] or 0.0
         
         # --- A. Entrega Inicial (DEBE REFORZADO) ---
-        # El DEBE inicial debe ser: (Pagos de hoy) + (Anticipos previos) + (Parte de Pago)
-        total_pago_hoy_ars = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
-                             (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
-                             (v['monto_credito_ars'] or 0)
+        # Calculamos los pagos de hoy (Pesos convertidos al dólar de la venta + Dólares billete)
+        total_pago_hoy_ars = (
+            (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + 
+            (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + 
+            (v['monto_credito_ars'] or 0)
+        )
         
-        total_debe_inicial_usd = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + \
-                                 (v['valor_celular_parte_pago'] or 0) / cotiz_v + \
-                                 (total_pago_hoy_ars / cotiz_v) + \
-                                 monto_anticipos_aplicados # <--- SUMAMOS EL ANTICIPO AL DEBE
+        # El compromiso inicial en USD
+        total_debe_inicial_usd = (
+            (v['monto_cobrado_usd'] or 0) + 
+            (v['monto_virtual_usd'] or 0) + 
+            ((v['valor_celular_parte_pago'] or 0) / cotiz_v) + 
+            (total_pago_hoy_ars / cotiz_v) + 
+            monto_anticipos_aplicados 
+        )
 
         if total_debe_inicial_usd > 0.01:
             movimientos.append({
                 'fecha': v['fecha_venta'],
                 'tipo': 'DEBE',
-                'monto_ars': total_debe_inicial_usd * cotiz_v,
                 'monto_reg': total_debe_inicial_usd,
                 'moneda_display': 'USD',
                 'descripcion': f"Venta #{v['id']} - Compromiso Inicial (Deuda Real)", 
                 'rubro': 'EQUIPOS',
-                'cotizacion': cotiz_v,
-                'vencida': False,
-                'es_cuota': False,
                 'ref': v['id']
             })
 
-        # --- B. CUOTAS EN EL DEBE ---
+        # --- B. CUOTAS EN EL DEBE (Reintegrado) ---
         if v['cantidad_cuotas'] >= 1:
             cuotas = db_query("SELECT * FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
             for c in cuotas:
@@ -2323,72 +2495,128 @@ def ver_detalle_cc_cliente(cliente_id):
                     fecha_venc = datetime.strptime(c['fecha_vencimiento'][:10], '%Y-%m-%d').date()
                 except:
                     fecha_venc = hoy
-                es_vencida = fecha_venc < hoy and c['estado'] == 'PENDIENTE'
+                es_vencida = (fecha_venc < hoy and c['estado'] == 'PENDIENTE')
                 
-                monto_deuda_original = c['monto_original_ars'] if (c['monto_original_ars'] and c['monto_original_ars'] > 0) else c['monto_ars']
+                # Monto de la deuda de la cuota convertido a USD (congelado a la venta)
+                monto_cuota_ars = c['monto_original_ars'] if (c['monto_original_ars'] and c['monto_original_ars'] > 0) else c['monto_ars']
 
                 movimientos.append({
                     'fecha': c['fecha_vencimiento'] + " 09:00:00",
                     'tipo': 'DEBE', 
-                    'monto_ars': monto_deuda_original,
-                    'monto_reg': monto_deuda_original / cotiz_v,
+                    'monto_reg': monto_cuota_ars / cotiz_v,
                     'moneda_display': 'USD',
                     'descripcion': f"Venta #{v['id']} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
                     'rubro': 'EQUIPOS',
-                    'cotizacion': cotiz_v,
                     'vencida': es_vencida,
                     'es_cuota': True,
                     'ref': v['id']
                 })
 
-        # --- C. HABER: Lo entregado HOY (Sin duplicar el anticipo previo) ---
-        total_ars_entregado_hoy = (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + \
-                                  (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + \
-                                  (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
+        # --- C. HABER: Lo entregado HOY (Haber de la venta) ---
+        total_ars_entregado_hoy = (
+            (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + 
+            (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + 
+            (v['monto_credito_ars'] or 0) + (v['valor_celular_parte_pago'] or 0)
+        )
         
-        # El Haber de hoy es solo: (Efectivo hoy + Virtual hoy + Equipo Tomado)
-        # NO incluimos monto_anticipos_aplicados porque eso ya existe como fila propia en el historial
         monto_reg_haber_hoy_usd = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + (total_ars_entregado_hoy / cotiz_v)
         
         if monto_reg_haber_hoy_usd > 0.01:
             movimientos.append({
                 'fecha': v['fecha_venta'], 
                 'tipo': 'HABER', 
-                'monto_ars': monto_reg_haber_hoy_usd * cotiz_v, 
                 'monto_reg': monto_reg_haber_hoy_usd, 
                 'moneda_display': 'USD', 
                 'descripcion': f"Pago Inicial Recibido - Venta #{v['id']}", 
                 'rubro': 'EQUIPOS', 
-                'cotizacion': cotiz_v, 
                 'es_cuota': False, 
                 'ref': v['id']
             })
 
-    # 2. DEBE: Servicios (Inamovible)
-    servicios = db_query("SELECT id, fecha_servicio as fecha, precio_final_ars as monto, falla_reportada as descripcion FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'", (cliente_id,))
+    # 2. DEBE: Servicios (Inamovible en ARS)
+    servicios = db_query("SELECT id, fecha_servicio, precio_final_ars, falla_reportada FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'", (cliente_id,))
     for s in servicios:
         movimientos.append({
-            'fecha': s['fecha'], 'tipo': 'DEBE', 'monto_ars': s['monto'], 'monto_reg': s['monto'], 
-            'moneda_display': 'ARS', 'descripcion': f"Servicio #{s['id']} - {s['descripcion']}", 
-            'rubro': 'SERVICIOS', 'cotizacion': None, 'vencida': False, 'es_cuota': False, 'ref': s['id']
+            'fecha': s['fecha_servicio'], 'tipo': 'DEBE', 'monto_reg': s['precio_final_ars'], 
+            'moneda_display': 'ARS', 'descripcion': f"Servicio #{s['id']} - {s['falla_reportada']}", 
+            'rubro': 'SERVICIOS', 'vencida': False, 'es_cuota': False, 'ref': s['id']
         })
 
     # 3. HABER: Cobros (Incluye los Anticipos en su fecha original)
-    cobros = db_query("SELECT id, fecha_cobro as fecha, monto_ars, monto_usd, metodo_pago, observaciones, imputacion FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
+    #cobros = db_query("SELECT id, fecha_cobro, monto_ars, monto_usd, metodo_pago, observaciones, imputacion, estado_anticipo, referencia FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
+    #for p in cobros:
+    #    if p['imputacion'] == 'EQUIPOS':
+            # USAMOS EL MONTO_USD GUARDADO (Para que coincida con el listado)
+           # monto_reg = p['monto_usd'] if (p['monto_usd'] and p['monto_usd'] > 0) else (p['monto_ars'] / cotiz_actual)
+            
+            # Si el monto_usd ya está en la DB (con la corrección anterior), lo usamos.
+            # Solo si no existe (pagos viejos), calculamos con el dólar actual como último recurso.
+    #        if p['monto_usd'] and p['monto_usd'] > 0:
+    #            monto_reg = p['monto_usd']
+    #        else:
+    #            monto_reg = p['monto_ars'] / cotiz_actual
+            
+           
+            
+            
+            # Si el anticipo ya fue mostrado como "Aplicado" arriba, lo mostramos aquí solo como el ingreso original de dinero
+   #         desc_pago = f"Pago Cta.Cte. ({p['metodo_pago']})"
+   #         if p['estado_anticipo'] == 'APLICADO':
+   #             desc_pago = f"Anticipo Aplicado ({p['metodo_pago']})"
+
+   #         movimientos.append({
+   #             'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': monto_reg, 
+   #             'moneda_display': 'USD', 'descripcion': desc_pago, 
+   #             'rubro': 'EQUIPOS', 'es_cuota': False, 'ref': p['id']
+   #         })
+   #     else:
+   #         movimientos.append({
+   #             'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': p['monto_ars'], 
+   #             'moneda_display': 'ARS', 'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
+   #             'rubro': 'SERVICIOS', 'es_cuota': False, 'ref': p['id']
+   #         })
+   
+   # 3. HABER: Cobros (Incluye los Anticipos en su fecha original)
+    cobros = db_query("SELECT id, fecha_cobro, monto_ars, monto_usd, metodo_pago, observaciones, imputacion, estado_anticipo, referencia FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
     for p in cobros:
         if p['imputacion'] == 'EQUIPOS':
-            monto_reg = p['monto_usd'] if p['monto_usd'] > 0 else (p['monto_ars'] / cotiz_actual)
+            # Si el monto_usd ya está en la DB (con la corrección anterior), lo usamos.
+            # Usamos abs() porque los AJUSTES de DÉBITO se guardan como montos negativos.
+            if p['monto_usd'] and abs(p['monto_usd']) > 0:
+                monto_reg = p['monto_usd']
+            else:
+                monto_reg = p['monto_ars'] / cotiz_actual
+            
+            # --- LÓGICA DE DESCRIPCIÓN ---
+            if p['metodo_pago'] == 'AJUSTE':
+                # Si es un ajuste manual del SuperAdmin
+                desc_pago = f"⚠️ {p['referencia']}: {p['observaciones']}"
+            else:
+                # Si el anticipo ya fue mostrado como "Aplicado" arriba, lo mostramos aquí solo como el ingreso original de dinero
+                desc_pago = f"Pago Cta.Cte. ({p['metodo_pago']})"
+                if p['estado_anticipo'] == 'APLICADO':
+                    desc_pago = f"Anticipo Aplicado ({p['metodo_pago']})"
+
             movimientos.append({
-                'fecha': p['fecha'], 'tipo': 'HABER', 'monto_ars': p['monto_ars'], 'monto_reg': monto_reg, 
-                'moneda_display': 'USD', 'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
-                'rubro': 'EQUIPOS', 'cotizacion': cotiz_actual, 'es_cuota': False, 'ref': p['id']
+                'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': monto_reg, 
+                'moneda_display': 'USD', 'descripcion': desc_pago, 
+                'rubro': 'EQUIPOS', 'es_cuota': False, 'ref': p['id']
             })
         else:
+            # --- LÓGICA PARA SERVICIOS / VARIOS (ARS) ---
+            if p['metodo_pago'] == 'AJUSTE':
+                # Si es un ajuste manual del SuperAdmin
+                desc_pago = f"⚠️ {p['referencia']}: {p['observaciones']}"
+            else:
+                desc_pago = f"Pago Cta.Cte. ({p['metodo_pago']})"
+
             movimientos.append({
-                'fecha': p['fecha'], 'tipo': 'HABER', 'monto_ars': p['monto_ars'], 'monto_reg': p['monto_ars'], 
-                'moneda_display': 'ARS', 'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
-                'rubro': 'SERVICIOS', 'cotizacion': None, 'es_cuota': False, 'ref': p['id']
+                'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': p['monto_ars'], 
+                'moneda_display': 'ARS', 'descripcion': desc_pago, 
+                'rubro': 'SERVICIOS', 'es_cuota': False, 'ref': p['id']
             })
+   ##########################
+   
 
     # Ordenar y calcular saldo acumulado
     movimientos.sort(key=lambda x: x['fecha'])
@@ -2524,11 +2752,42 @@ def ver_detalle_cc_proveedor(proveedor_id):
 
     # 4. Procesar Pagos (HABER)
     # Filtramos por la imputación correspondiente ('EQUIPOS' o 'REPUESTOS')
+    #pagos = db_query("SELECT * FROM pagos_proveedores WHERE proveedor_id = ? AND imputacion = ?", (proveedor_id, view))
+    #for p in pagos:
+    #    metodo_label = p['tipo_pago'].replace('_', ' ').title() if p['tipo_pago'] else 'General'
+    #    
+        # --- SOLUCIÓN A LA DUPLICACIÓN ---
+        # Como las funciones de registro ahora guardan el impacto LIMPIO en la columna moneda base:
+    #    if view == 'EQUIPOS':
+    #        # Si estamos viendo equipos, el impacto que descuenta saldo es directamente monto_usd
+    #        impacto_haber = p['monto_usd']
+    #    else:
+    #        # Si estamos viendo repuestos, el impacto que descuenta saldo es directamente monto_ars
+    #        impacto_haber = p['monto_ars']
+
+     #   movimientos.append({
+     #       'fecha': p['fecha_pago'], 
+     #       'tipo': 'HABER', 
+     #       'monto_usd': p['monto_usd'], # Para mostrar en la tabla (si existiera valor)
+     #       'monto_ars': p['monto_ars'], # Para mostrar en la tabla (si existiera valor)
+     #       'monto_ars_info': p['monto_ars'], 
+     #       'cotizacion': p['valor_dolar_momento'], 
+     #       'impacto_haber': impacto_haber, # Este es el valor que resta del acumulado
+     #       'descripcion': f"Pago realizado ({metodo_label})",
+     #       'ref': p['id']
+     #   })
+
+    # 4. Procesar Pagos (HABER)
+    # Filtramos por la imputación correspondiente ('EQUIPOS' o 'REPUESTOS')
     pagos = db_query("SELECT * FROM pagos_proveedores WHERE proveedor_id = ? AND imputacion = ?", (proveedor_id, view))
     for p in pagos:
-        metodo_label = p['tipo_pago'].replace('_', ' ').title() if p['tipo_pago'] else 'General'
+        # --- MEJORA: Detectar si es un AJUSTE MANUAL del SuperAdmin ---
+        if p['tipo_pago'] == 'AJUSTE':
+            metodo_label = f"⚠️ AJUSTE MANUAL: {p['referencia']}"
+        else:
+            metodo_label = p['tipo_pago'].replace('_', ' ').title() if p['tipo_pago'] else 'General'
         
-        # --- SOLUCIÓN A LA DUPLICACIÓN ---
+        # --- SOLUCIÓN A LA DUPLICACIÓN (Manteniendo tu lógica original) ---
         # Como las funciones de registro ahora guardan el impacto LIMPIO en la columna moneda base:
         if view == 'EQUIPOS':
             # Si estamos viendo equipos, el impacto que descuenta saldo es directamente monto_usd
@@ -2548,6 +2807,11 @@ def ver_detalle_cc_proveedor(proveedor_id):
             'descripcion': f"Pago realizado ({metodo_label})",
             'ref': p['id']
         })
+
+
+
+
+
 
     # 5. Ordenar cronológicamente y calcular saldo acumulado dinámico
     movimientos.sort(key=lambda x: x['fecha'])
@@ -3338,13 +3602,25 @@ def venta_rapida():
                 """, (servicio_id, id_rep, cant, p_unit_usd))
 
             # 6. IMPACTO EN CAJA
-            tipo_mov = 'INGRESO_SERVICIO_REPARACION_ARS' if moneda_pago == 'ARS' else 'INGRESO_VENTA_USD'
+            #tipo_mov = 'INGRESO_SERVICIO_REPARACION_ARS' if moneda_pago == 'ARS' else 'INGRESO_VENTA_USD'
+            #m_ars = total_venta_ars if moneda_pago == 'ARS' else 0
+            #m_usd = total_venta_usd if moneda_pago == 'USD' else 0
+            
+            #registrar_movimiento_caja(current_user.id, tipo_mov, m_ars, m_usd, 
+            #                          f"Venta Rápida Accesorios #{servicio_id}", None, servicio_id, metodo_pago)
+
+            # Busca esta parte dentro de @app.route('/ventas/rapida'...)
+            # 6. IMPACTO EN CAJA
+            # CAMBIAMOS EL TIPO A "VENTA_RAPIDA" para diferenciarlo de los servicios normales
+            tipo_mov = 'INGRESO_VENTA_RAPIDA_ARS' if moneda_pago == 'ARS' else 'INGRESO_VENTA_RAPIDA_USD'
             m_ars = total_venta_ars if moneda_pago == 'ARS' else 0
             m_usd = total_venta_usd if moneda_pago == 'USD' else 0
-            
-            registrar_movimiento_caja(current_user.id, tipo_mov, m_ars, m_usd, 
-                                      f"Venta Rápida Accesorios #{servicio_id}", None, servicio_id, metodo_pago)
 
+            registrar_movimiento_caja(current_user.id, tipo_mov, m_ars, m_usd, 
+                                    f"Venta Rápida Accesorios #{servicio_id}", None, servicio_id, metodo_pago)
+
+            
+            
             # 7. REGISTRAR COBRO PARA CC
             db_execute_func(db_conn, """
                 INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, imputacion)
@@ -4886,21 +5162,24 @@ def reporte_auditoria():
 def libro_diario():
     start_date, end_date_display, end_date_query = get_date_filters()
     
-    # --- NUEVOS FILTROS ---
+    # --- FILTROS ---
     filtro_forma_pago = request.args.get('forma_pago', '')
     filtro_origen = request.args.get('origen', '') # 'PROVEEDOR' o 'CLIENTE'
 
-    # Dolar info (para visualización si se requiere, aunque el reporte ya tiene los montos calculados)
+    # Dolar info para visualización
     dolar_info_from_context = inject_dolar_values()
     valor_dolar_compra_local = dolar_info_from_context['valor_dolar_compra'] 
     valor_dolar_venta_local = dolar_info_from_context['valor_dolar_venta'] 
 
     params = []
 
-    # Construcción de la consulta unificada
+    # RESTRICCIÓN DE DUPLICADOS: 
+    # Usamos caja_movimientos como fuente maestra de dinero. 
+    # Eliminamos la unión con cobros_clientes y pagos_proveedores para evitar duplicar montos de ventas/compras.
     query = """
     SELECT * FROM (
-        -- 1. Movimientos generales del sistema (Auditoría)
+        -- 1. Movimientos generales del sistema (Auditoría / Log de acciones)
+        -- No tienen montos, sirven para ver quién creó/borró qué.
         SELECT 
             m.fecha, 
             u.username, 
@@ -4920,26 +5199,29 @@ def libro_diario():
 
         UNION ALL
 
-        -- 2. Movimientos de caja
+        -- 2. Movimientos de Caja y Cuentas (Fuente Maestra de Dinero)
+        -- Aquí entran Ventas Rápidas, Cobros de Cuotas, Pagos a Proveedores y Gastos.
         SELECT 
             cm.fecha, 
             u.username, 
             cm.tipo AS tipo_transaccion, 
-            'CAJA' AS categoria, 
+            CASE 
+                WHEN cm.metodo_pago = 'EFECTIVO' THEN 'CAJA' 
+                ELSE 'CUENTA_VIRTUAL' 
+            END AS categoria, 
             cm.descripcion AS detalles,
-            -- Lógica de Ingresos
-            CASE WHEN cm.monto_ars > 0 AND (cm.tipo LIKE 'INGRESO%' OR cm.tipo = 'APERTURA_CAJA_ARS') THEN cm.monto_ars ELSE NULL END,
-            -- Lógica de Egresos
-            CASE WHEN cm.monto_ars > 0 AND (cm.tipo LIKE 'EGRESO%' OR cm.tipo = 'PAGO_PROVEEDOR_ARS' OR cm.tipo = 'CIERRE_CAJA_ARS') THEN cm.monto_ars ELSE NULL END,
+            -- Lógica de Ingresos ARS
+            CASE WHEN cm.monto_ars > 0 AND (cm.tipo LIKE 'INGRESO%' OR cm.tipo LIKE 'APERTURA%') THEN cm.monto_ars ELSE NULL END,
+            -- Lógica de Egresos ARS
+            CASE WHEN cm.monto_ars > 0 AND (cm.tipo LIKE 'EGRESO%' OR cm.tipo LIKE 'PAGO_PROVEEDOR%' OR cm.tipo LIKE 'CIERRE%') THEN cm.monto_ars ELSE NULL END,
             -- Lógica de Ingresos USD
-            CASE WHEN cm.monto_usd > 0 AND (cm.tipo LIKE 'INGRESO%' OR cm.tipo = 'APERTURA_CAJA_USD') THEN cm.monto_usd ELSE NULL END,
+            CASE WHEN cm.monto_usd > 0 AND (cm.tipo LIKE 'INGRESO%' OR cm.tipo LIKE 'APERTURA%') THEN cm.monto_usd ELSE NULL END,
             -- Lógica de Egresos USD
-            CASE WHEN cm.monto_usd > 0 AND (cm.tipo LIKE 'EGRESO%' OR cm.tipo = 'PAGO_PROVEEDOR_USD' OR cm.tipo = 'CIERRE_CAJA_USD') THEN cm.monto_usd ELSE NULL END,
+            CASE WHEN cm.monto_usd > 0 AND (cm.tipo LIKE 'EGRESO%' OR cm.tipo LIKE 'PAGO_PROVEEDOR%' OR cm.tipo LIKE 'CIERRE%') THEN cm.monto_usd ELSE NULL END,
             
             cm.sub_categoria,
             COALESCE(cm.metodo_pago, 'EFECTIVO') AS metodo_pago_filtro,
             
-            -- Clasificación de Origen para filtros
             CASE 
                 WHEN cm.tipo LIKE '%PROVEEDOR%' THEN 'PROVEEDOR'
                 WHEN cm.tipo LIKE '%VENTA%' OR cm.tipo LIKE '%COBRO%' OR cm.tipo LIKE '%SERVICIO%' THEN 'CLIENTE'
@@ -4949,69 +5231,22 @@ def libro_diario():
         JOIN users u ON cm.user_id = u.id
         WHERE cm.fecha BETWEEN ? AND ?
 
-        UNION ALL
-        
-        -- 3. Pagos a Proveedores (Cta Cte / Bancos)
-        -- Filtramos EFECTIVO para no duplicar con caja_movimientos si se registraron ahí
-        SELECT
-            pp.fecha_pago AS fecha,
-            u.username,
-            'PAGO_PROVEEDOR' AS tipo_transaccion,
-            'CUENTA_CORRIENTE' AS categoria,
-            'Pago a Prov. ' || COALESCE(p.razon_social, p.nombre || ' ' || p.apellido) || ' (' || pp.observaciones || ')' AS detalles,
-            NULL AS monto_ingreso_ars,
-            pp.monto_ars AS monto_egreso_ars,
-            NULL AS monto_ingreso_usd,
-            pp.monto_usd AS monto_egreso_usd,
-            'Pago Proveedores' AS sub_categoria,
-            pp.tipo_pago AS metodo_pago_filtro,
-            'PROVEEDOR' AS origen_filtro
-        FROM pagos_proveedores pp
-        JOIN users u ON pp.user_id = u.id
-        JOIN personas p ON pp.proveedor_id = p.id
-        WHERE pp.fecha_pago BETWEEN ? AND ? AND pp.tipo_pago NOT IN ('EFECTIVO_ARS', 'EFECTIVO_USD', 'EFECTIVO_ARS_USD_COMBINADO')
-
-        UNION ALL
-
-        -- 4. Cobros a Clientes (Deudas / Cta Cte / Bancos)
-        -- Filtramos EFECTIVO si se registró en caja_movimientos (depende de tu implementación en cobrar_cliente)
-        -- Asumiremos que EFECTIVO va a caja y aquí traemos el resto, o traemos todo si no duplica.
-        -- En cobrar_cliente registraste en caja si era efectivo.
-        SELECT
-            cc.fecha_cobro AS fecha,
-            u.username,
-            'COBRO_CLIENTE' AS tipo_transaccion,
-            'CUENTA_CORRIENTE' AS categoria,
-            'Cobro a Cliente ' || COALESCE(p.razon_social, p.nombre || ' ' || p.apellido) || ' (' || cc.observaciones || ')' AS detalles,
-            cc.monto_ars AS monto_ingreso_ars,
-            NULL AS monto_egreso_ars,
-            cc.monto_usd AS monto_ingreso_usd,
-            NULL AS monto_egreso_usd,
-            'Cobro Clientes' AS sub_categoria,
-            cc.metodo_pago AS metodo_pago_filtro,
-            'CLIENTE' AS origen_filtro
-        FROM cobros_clientes cc
-        JOIN users u ON cc.user_id = u.id
-        JOIN personas p ON cc.cliente_id = p.id
-        WHERE cc.fecha_cobro BETWEEN ? AND ? AND cc.metodo_pago NOT IN ('EFECTIVO', 'EFECTIVO_ARS', 'EFECTIVO_USD')
-
     ) AS unificado
     WHERE 1=1
     """
     
-    # Añadir parámetros de fecha para los 4 SELECTs
-    params.extend([start_date, end_date_query] * 4)
+    # Añadir parámetros de fecha para los 2 SELECTs resultantes
+    params.extend([start_date, end_date_query] * 2)
 
     # --- APLICAR FILTROS DINÁMICOS ---
     if filtro_forma_pago:
+        # Buscamos coincidencia exacta o parecida (para BANCO / MERCADO_PAGO)
         query += " AND unificado.metodo_pago_filtro LIKE ?"
         params.append(f"%{filtro_forma_pago}%")
     
     if filtro_origen:
-        if filtro_origen == 'PROVEEDOR':
-            query += " AND unificado.origen_filtro = 'PROVEEDOR'"
-        elif filtro_origen == 'CLIENTE':
-            query += " AND unificado.origen_filtro = 'CLIENTE'"
+        query += " AND unificado.origen_filtro = ?"
+        params.append(filtro_origen)
 
     query += " ORDER BY fecha DESC"
     
@@ -5031,24 +5266,40 @@ def libro_diario():
             mov['detalles_parsed'] = {'Descripción': mov['detalles']} if mov['detalles'] else {}
 
         # Formateo visual de tipos de transacción de caja
-        if mov['categoria'] == 'CAJA':
+        if mov['categoria'] in ['CAJA', 'CUENTA_VIRTUAL']:
             if mov['sub_categoria']:
                 mov['detalles_parsed']['Sub-Rubro'] = mov['sub_categoria']
-            # Mapeo de nombres técnicos a legibles
+            
+            # Mapeo de nombres técnicos a legibles para el usuario
             mapping = {
-                'INGRESO_VENTA': 'Venta Celular (Efectivo)',
-                'INGRESO_SERVICIO_REPARACION_ARS': 'Servicio Rep. (Efectivo)',
-                'INGRESO_COBRO_DEUDA_ARS': 'Cobro Deuda (Efectivo)',
-                'PAGO_PROVEEDOR_ARS': 'Pago Proveedor (Efectivo)',
+                'INGRESO_VENTA': 'Venta Celular',
+                'INGRESO_VENTA_VIRTUAL_ARS': 'Venta Celular (Virtual)',
+                'INGRESO_VENTA_VIRTUAL_USD': 'Venta Celular (Virtual USD)',
+                'INGRESO_SERVICIO_REPARACION_ARS': 'Servicio Técnico / Accesorios',
+                 # Estos son los nuevos (Venta Rápida)
+                'INGRESO_VENTA_RAPIDA_ARS': 'Venta Rápida de Accesorios',
+                'INGRESO_VENTA_RAPIDA_USD': 'Venta Rápida de Accesorios (USD)',
+                
+                # Estos se mantienen como estaban (Servicios y Reparaciones)
+                #'INGRESO_SERVICIO_REPARACION_ARS': 'Servicio Técnico / Reparación',
+                #'INGRESO_SERVICIO_REPARACION_USD': 'Servicio Técnico / Reparación (USD)',
+                
+                'INGRESO_COBRO_DEUDA_ARS': 'Cobro Cta. Cte. Cliente',
+                'INGRESO_COBRO_DEUDA_USD': 'Cobro Cta. Cte. Cliente (USD)',
+                'EGRESO_PAGO_PROVEEDOR_ARS': 'Pago a Proveedor',
+                'EGRESO_PAGO_PROVEEDOR_USD': 'Pago a Proveedor (USD)',
                 'INGRESO_MANUAL_ARS': 'Ingreso Manual',
-                'EGRESO_MANUAL_ARS': 'Egreso Manual'
+                'EGRESO_MANUAL_ARS': 'Egreso Manual',
+                'INGRESO_MANUAL_USD': 'Ingreso Manual (USD)',
+                'EGRESO_MANUAL_USD': 'Egreso Manual (USD)',
+                'PAGO_TECNICO_ARS': 'Pago de Comisión a Técnico'
             }
+            # Si el tipo técnico está en el mapeo, lo cambiamos por el legible
             if mov['tipo_transaccion'] in mapping:
                 mov['tipo_transaccion'] = mapping[mov['tipo_transaccion']]
-
-        elif mov['categoria'] == 'CUENTA_CORRIENTE':
-            # Mostrar el método de pago en la descripción si no es obvio
-            mov['tipo_transaccion'] += f" ({mov['metodo_pago_filtro']})"
+            else:
+                # Limpiamos guiones bajos si no está en el mapa
+                mov['tipo_transaccion'] = mov['tipo_transaccion'].replace('_', ' ')
 
         movimientos_diarios.append(mov)
 
@@ -5058,8 +5309,6 @@ def libro_diario():
                            end_date=end_date_display,
                            filtro_forma_pago=filtro_forma_pago,
                            filtro_origen=filtro_origen)
-# ... (otras importaciones y código) ...
-
 # ... (otras importaciones y código) ...
 
 @app.route('/reportes/listado_diario')
@@ -5448,13 +5697,13 @@ def api_buscar_repuestos():
 @app.route('/api/buscar_nombres_repuestos_limpios')
 @login_required
 def api_buscar_nombres_repuestos_limpios():
-    q = request.args.get('q', '').strip().upper()
+    q = request.args.get('q', '').strip().lower()
     if not q:
         return jsonify(results=[])
 
     # SQL que busca la cadena en cualquier parte y devuelve nombres únicos
     # El UPPER garantiza que 'glas' traiga 'GLASS'
-    sql = "SELECT DISTINCT nombre_parte FROM repuestos WHERE UPPER(nombre_parte) LIKE ? ORDER BY nombre_parte ASC LIMIT 50"
+    sql = "SELECT DISTINCT nombre_parte FROM repuestos WHERE LOWER(nombre_parte) LIKE ? ORDER BY nombre_parte ASC LIMIT 50"
     params = (f"%{q}%",)
     
     resultados = db_query(sql, params)
@@ -5469,7 +5718,7 @@ def api_buscar_nombres_repuestos_limpios():
 @app.route('/api/buscar_nombres_repuestos')
 @login_required
 def api_buscar_nombres_repuestos():
-    q = request.args.get('q', '').strip().upper() # Convertimos a Mayúsculas para comparar
+    q = request.args.get('q', '').strip().lower() # Convertimos a Mayúsculas para comparar
     
     # Buscamos nombres únicos
     sql = "SELECT DISTINCT nombre_parte FROM repuestos"
@@ -5477,7 +5726,7 @@ def api_buscar_nombres_repuestos():
     
     if q:
         # Buscamos cualquier coincidencia sin importar mayúsculas/minúsculas
-        sql += " WHERE UPPER(nombre_parte) LIKE ?"
+        sql += " WHERE LOWER(nombre_parte) LIKE ?"
         params.append(f"%{q}%") 
     
     sql += " ORDER BY nombre_parte ASC LIMIT 200" # Aumentamos el límite
@@ -5491,7 +5740,7 @@ def api_buscar_nombres_repuestos():
 @app.route('/api/buscar_modelos_por_nombre')
 @login_required
 def api_buscar_modelos_por_nombre():
-    nombre = request.args.get('nombre', '').strip()
+    nombre = request.args.get('nombre', '').strip().lower()
     q = request.args.get('q', '').strip().lower()
     if not nombre:
         return jsonify(results=[])
@@ -5671,6 +5920,119 @@ def exportar_libro_diario():
         mimetype="text/csv", 
         headers={"Content-Disposition": f"attachment;filename={filename}"}
     )
+
+
+
+@app.route('/exportar/listado_diario')
+@login_required
+@admin_required
+def exportar_listado_diario():
+    selected_date_str = request.args.get('selected_date', datetime.now().strftime('%Y-%m-%d'))
+    selected_date_start = selected_date_str + " 00:00:00"
+    selected_date_end = selected_date_str + " 23:59:59"
+
+    # 1. Obtener datos de Arqueo
+    arqueo_raw = db_query("SELECT * FROM arqueo_caja WHERE fecha_apertura LIKE ?", (selected_date_str + '%',))
+    
+    # 2. Obtener movimientos de Caja (Efectivo)
+    caja_movs = db_query("""
+        SELECT cm.*, u.username
+        FROM caja_movimientos cm
+        JOIN users u ON cm.user_id = u.id
+        WHERE cm.fecha BETWEEN ? AND ?
+        ORDER BY cm.fecha ASC
+    """, (selected_date_start, selected_date_end))
+
+    # 3. Obtener movimientos del Sistema
+    system_movs = db_query("""
+        SELECT m.fecha, u.username, m.tipo_movimiento, m.tipo_item, m.detalles
+        FROM movimientos m
+        JOIN users u ON m.user_id = u.id
+        WHERE m.fecha BETWEEN ? AND ?
+        ORDER BY m.fecha ASC
+    """, (selected_date_start, selected_date_end))
+
+    output = io.StringIO()
+    output.write('\ufeff') # BOM para Excel
+    writer = csv.writer(output, delimiter=';')
+
+    # --- SECCIÓN 1: RESUMEN DE ARQUEO ---
+    writer.writerow(['RESUMEN DE ARQUEO DIARIO - FECHA: ' + selected_date_str])
+    if arqueo_raw:
+        arq = arqueo_raw[0]
+        writer.writerow(['Estado', arq['estado'], 'Usuario', arq['user_id']])
+        writer.writerow(['Monto Inicial ARS', f"{arq['monto_inicial_ars']:.2f}", 'Monto Inicial USD', f"{arq['monto_inicial_usd']:.2f}"])
+        writer.writerow(['Monto Final ARS', f"{arq['monto_contado_fisico_ars']:.2f}", 'Monto Final USD', f"{arq['monto_contado_fisico_usd']:.2f}"])
+        writer.writerow(['Diferencia ARS', f"{arq['diferencia_ars']:.2f}", 'Diferencia USD', f"{arq['diferencia_usd']:.2f}"])
+    else:
+        writer.writerow(['No se registró arqueo cerrado para este día'])
+    
+    writer.writerow([]) # Espacio
+
+    # --- SECCIÓN 2: MOVIMIENTOS DE CAJA ---
+    writer.writerow(['MOVIMIENTOS DE CAJA (EFECTIVO)'])
+    writer.writerow(['Hora', 'Usuario', 'Tipo', 'Sub-Rubro', 'Ingreso ARS', 'Egreso ARS', 'Ingreso USD', 'Egreso USD', 'Descripción'])
+    
+    t_ing_ars = 0; t_egr_ars = 0; t_ing_usd = 0; t_egr_usd = 0
+
+    for m in caja_movs:
+        # Lógica de montos similar al HTML
+        es_ingreso = any(x in m['tipo'] for x in ['INGRESO', 'APERTURA'])
+        es_egreso = any(x in m['tipo'] for x in ['EGRESO', 'PAGO_PROVEEDOR', 'CIERRE'])
+        
+        ing_ars = m['monto_ars'] if es_ingreso else 0
+        egr_ars = m['monto_ars'] if es_egreso else 0
+        ing_usd = m['monto_usd'] if es_ingreso else 0
+        egr_usd = m['monto_usd'] if es_egreso else 0
+
+        writer.writerow([
+            m['fecha'].split(' ')[1],
+            m['username'],
+            m['tipo'],
+            m['sub_categoria'] or 'N/A',
+            f"{ing_ars:.2f}", f"{egr_ars:.2f}",
+            f"{ing_usd:.2f}", f"{egr_usd:.2f}",
+            m['descripcion']
+        ])
+        t_ing_ars += ing_ars; t_egr_ars += egr_ars
+        t_ing_usd += ing_usd; t_egr_usd += egr_usd
+
+    writer.writerow(['TOTALES', '', '', '', f"{t_ing_ars:.2f}", f"{t_egr_ars:.2f}", f"{t_ing_usd:.2f}", f"{t_egr_usd:.2f}"])
+    writer.writerow([]) # Espacio
+
+    # --- SECCIÓN 3: OTROS MOVIMIENTOS ---
+    writer.writerow(['OTROS MOVIMIENTOS DEL SISTEMA (LOGS)'])
+    writer.writerow(['Hora', 'Usuario', 'Tipo Movimiento', 'Ítem', 'Detalles'])
+    
+    for s in system_movs:
+        # Limpiar JSON de detalles para que sea legible en Excel
+        detalles_raw = s['detalles']
+        detalles_limpios = ""
+        if detalles_raw:
+            try:
+                import json
+                d = json.loads(detalles_raw)
+                detalles_limpios = " | ".join([f"{k}: {v}" for k, v in d.items()])
+            except:
+                detalles_limpios = detalles_raw
+
+        writer.writerow([
+            s['fecha'].split(' ')[1],
+            s['username'],
+            s['tipo_movimiento'],
+            s['tipo_item'] or 'N/A',
+            detalles_limpios
+        ])
+
+    output.seek(0)
+    filename = f"Listado_Diario_{selected_date_str}.csv"
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment;filename={filename}"}
+    )
+
+
 
 
 @app.route('/exportar/auditoria')
@@ -6354,8 +6716,8 @@ def ajuste_stock_insumos():
 @login_required
 @superadmin_required
 def crear_item_base():
-    nombre = request.form.get('nombre').upper().strip()
-    modelo = request.form.get('modelo').upper().strip() or 'Universal'
+    nombre = request.form.get('nombre').lower().strip()
+    modelo = request.form.get('modelo').lower().strip() or 'universal'
     categoria = request.form.get('categoria') # 'REPUESTO', 'ACCESORIO', 'OTROS'
     costo = float(request.form.get('costo_usd', 0))
     stock_inicial = int(request.form.get('stock_inicial', 0))
