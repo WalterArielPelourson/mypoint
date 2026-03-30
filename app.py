@@ -3703,18 +3703,65 @@ def procesar_pago(venta_id):
                 """, (venta_id, a_id))
 
         # 5. PROCESAR PARTE DE PAGO (EQUIPO RECIBIDO)
-        usar_parte_pago = 'usar_parte_pago' in request.form
-        celular_parte_pago_id = request.form.get('celular_parte_pago_id') if usar_parte_pago else None
-        valor_pp_usd = float(request.form.get('valor_celular_parte_pago_usd', 0) or 0) if usar_parte_pago else 0
+        #usar_parte_pago = 'usar_parte_pago' in request.form
+        #celular_parte_pago_id = request.form.get('celular_parte_pago_id') if usar_parte_pago else None
+        #valor_pp_usd = float(request.form.get('valor_celular_parte_pago_usd', 0) or 0) if usar_parte_pago else 0
         
-        if usar_parte_pago and celular_parte_pago_id:
-            db_execute_func(db_conn, """
-                UPDATE celulares SET 
-                    stock = 1, es_parte_pago = 1, costo_usd = ?, 
-                    observaciones = COALESCE(observaciones, '') || ? 
-                WHERE id = ?
-            """, (valor_pp_usd, f", Reingreso Venta ID {venta_id}", celular_parte_pago_id))
+        #if usar_parte_pago and celular_parte_pago_id:
+        #    db_execute_func(db_conn, """
+        #        UPDATE celulares SET 
+        #            stock = 1, es_parte_pago = 1, costo_usd = ?, 
+        #            observaciones = COALESCE(observaciones, '') || ? 
+        #        WHERE id = ?
+        #    """, (valor_pp_usd, f", Reingreso Venta ID {venta_id}", celular_parte_pago_id))
 
+        # 5. PROCESAR PARTE DE PAGO (HASTA 4 EQUIPOS RECIBIDOS)
+        usar_parte_pago = 'usar_parte_pago' in request.form
+        valor_pp_usd = 0.0
+        
+        # Recolectamos los IDs y Valores de los 4 posibles equipos
+        pp_inputs = [
+            {
+                'id': request.form.get('celular_parte_pago_id'),
+                'valor': float(request.form.get('valor_celular_parte_pago_usd', 0) or 0)
+            },
+            {
+                'id': request.form.get('celular_parte_pago_2_id'),
+                'valor': float(request.form.get('valor_celular_parte_pago_2_usd', 0) or 0)
+            },
+            {
+                'id': request.form.get('celular_parte_pago_3_id'),
+                'valor': float(request.form.get('valor_celular_parte_pago_3_usd', 0) or 0)
+            },
+            {
+                'id': request.form.get('celular_parte_pago_4_id'),
+                'valor': float(request.form.get('valor_celular_parte_pago_4_usd', 0) or 0)
+            }
+        ]
+        
+        if usar_parte_pago:
+            for item in pp_inputs:
+                c_id = item['id']
+                v_usd = item['valor']
+                
+                # Si el slot tiene un equipo seleccionado, lo procesamos
+                if c_id:
+                    db_execute_func(db_conn, """
+                        UPDATE celulares SET 
+                            stock = 1, es_parte_pago = 1, costo_usd = ?, 
+                            observaciones = COALESCE(observaciones, '') || ? 
+                        WHERE id = ?
+                    """, (v_usd, f", Reingreso Venta ID {venta_id}", c_id))
+                    
+                    # Sumamos al total para el cálculo financiero de la venta
+                    valor_pp_usd += v_usd
+
+        # --- A partir de aquí la variable total_valor_pp_usd reemplaza a valor_pp_usd ---
+        # --- en los cálculos de saldo_pendiente_usd y total_pagado_usd_para_financiar ---
+        
+        
+        
+        
         # 6. CÁLCULOS FINANCIEROS Y SALDO PENDIENTE
         total_a_cobrar_usd = venta['precio_final_usd']
         
@@ -3750,6 +3797,37 @@ def procesar_pago(venta_id):
         # 8. ACTUALIZACIÓN DE TABLA VENTAS
         # IMPORTANTE: Aquí NO sumamos el anticipo al monto_cobrado_usd. 
         # Esto evita que el anticipo se tome nuevamente en el DEBE de la Cuenta Corriente.
+        #valor_pp_ars_historico = valor_pp_usd * valor_dolar_pago
+        #saldo_pendiente_ars = saldo_pendiente_usd * valor_dolar_pago
+
+        #db_execute_func(db_conn, """
+        #    UPDATE ventas 
+        #    SET status = 'COMPLETADA', monto_cobrado_ars = ?, monto_cobrado_usd = ?,
+        #        monto_transferencia_ars = ?, monto_debito_ars = ?, monto_credito_ars = ?, monto_mp_ars = ?,
+        #        monto_virtual_usd = ?, celular_parte_pago_id = ?, valor_celular_parte_pago = ?, 
+        #        saldo_pendiente = ?, valor_dolar_momento = ?, cantidad_cuotas = ?
+        #    WHERE id = ?
+        #""", (
+        #    monto_efectivo_ars, 
+        #    monto_efectivo_usd, # Solo dinero físico nuevo de hoy
+        #    monto_transferencia_ars, 
+        #    monto_debito_ars, 
+        #    monto_credito_ars, 
+        #    monto_mp_ars,
+        #    monto_virtual_usd, 
+        #    celular_parte_pago_id, 
+        #    valor_pp_ars_historico, 
+        #    saldo_pendiente_ars, 
+        #    valor_dolar_pago, 
+        #    cantidad_cuotas, 
+        #    venta_id
+        #))
+        
+        # 8. ACTUALIZACIÓN DE TABLA VENTAS
+        # IMPORTANTE: Aquí NO sumamos el anticipo al monto_cobrado_usd. 
+        # Esto evita que el anticipo se tome nuevamente en el DEBE de la Cuenta Corriente.
+        
+        # Usamos el TOTAL de los equipos recibidos calculado en el punto 5
         valor_pp_ars_historico = valor_pp_usd * valor_dolar_pago
         saldo_pendiente_ars = saldo_pendiente_usd * valor_dolar_pago
 
@@ -3757,8 +3835,15 @@ def procesar_pago(venta_id):
             UPDATE ventas 
             SET status = 'COMPLETADA', monto_cobrado_ars = ?, monto_cobrado_usd = ?,
                 monto_transferencia_ars = ?, monto_debito_ars = ?, monto_credito_ars = ?, monto_mp_ars = ?,
-                monto_virtual_usd = ?, celular_parte_pago_id = ?, valor_celular_parte_pago = ?, 
-                saldo_pendiente = ?, valor_dolar_momento = ?, cantidad_cuotas = ?
+                monto_virtual_usd = ?, 
+                celular_parte_pago_id = ?, 
+                celular_parte_pago_2_id = ?, 
+                celular_parte_pago_3_id = ?, 
+                celular_parte_pago_4_id = ?,
+                valor_celular_parte_pago = ?, 
+                saldo_pendiente = ?, 
+                valor_dolar_momento = ?, 
+                cantidad_cuotas = ?
             WHERE id = ?
         """, (
             monto_efectivo_ars, 
@@ -3768,13 +3853,17 @@ def procesar_pago(venta_id):
             monto_credito_ars, 
             monto_mp_ars,
             monto_virtual_usd, 
-            celular_parte_pago_id, 
+            pp_inputs[0]['id'], # ID Equipo 1
+            pp_inputs[1]['id'], # ID Equipo 2
+            pp_inputs[2]['id'], # ID Equipo 3
+            pp_inputs[3]['id'], # ID Equipo 4
             valor_pp_ars_historico, 
             saldo_pendiente_ars, 
             valor_dolar_pago, 
             cantidad_cuotas, 
             venta_id
-        ))
+        ))     
+        
         
         db_execute_func(db_conn, "UPDATE celulares SET stock = 0 WHERE id = ?", (venta['celular_id'],))
         
@@ -6827,6 +6916,9 @@ def ejecutar_migraciones_y_configuracion():
             )
         """)
 
+       
+        
+        
         # ==========================================
         # 2. MIGRACIONES DE COLUMNAS (ALTER TABLE)
         # ==========================================
@@ -6848,7 +6940,13 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("ventas", "cantidad_cuotas", "INTEGER DEFAULT 1")
         agregar_columna("ventas", "observaciones", "TEXT")
         agregar_columna("ventas", "monto_virtual_usd", "REAL DEFAULT 0.0") # <--- AÑADE ESTA LÍNEA
-        agregar_columna("ventas_cuotas", "monto_original_ars", "REAL")
+        agregar_columna("ventas_cuotas", "monto_original_ars", "REAL") 
+        agregar_columna("ventas", "celular_parte_pago_2_id", "INTEGER") # Toma celulares
+        agregar_columna("ventas", "valor_celular_parte_pago_2_usd", "REAL") # Toma celulares
+        agregar_columna("ventas", "celular_parte_pago_3_id", "INTEGER") # Toma celulares
+        agregar_columna("ventas", "valor_celular_parte_pago_3_usd", "REAL") # Toma celulares
+        agregar_columna("ventas", "celular_parte_pago_4_id", "INTEGER") # Toma celulares
+        agregar_columna("ventas", "valor_celular_parte_pago_4_usd", "REAL") # Toma celulares   
         agregar_columna("servicios_reparacion", "tipo_servicio", "TEXT DEFAULT 'REPARACION'")
         agregar_columna("servicios_reparacion", "saldo_pendiente", "REAL DEFAULT 0.0")
         agregar_columna("servicios_reparacion", "tecnico_id", "INTEGER")

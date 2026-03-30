@@ -25,8 +25,10 @@
     .text-información { font-size: 0.85rem; opacity: 0.8; }
     .detalle-toma-box { background-color: #ffffff; border: 1px dashed #0dcaf0; border-radius: 8px; }
     
-    /* Estilo para la nueva sección de anticipos */
     .bg-anticipo { background-color: #fffdf0; border: 1px solid #ffecb5; border-left: 5px solid #ffc107; }
+    
+    /* Estilo para los slots de equipos */
+    .pp-slot { border-left: 4px solid #0dcaf0; background: #fdfdfd; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
 </style>
 {% endblock %}
 
@@ -102,16 +104,13 @@
                 </div>
             </div>
 
-            <!-- NUEVO: SECCIÓN DE ANTICIPOS / SEÑAS (Solo aparece si el cliente tiene saldo) -->
+            <!-- SECCIÓN DE ANTICIPOS -->
             <div id="seccion_anticipos" class="card mb-4 shadow-sm bg-anticipo d-none">
                 <div class="card-header bg-warning text-dark fw-bold border-0">
                     <i class="bi bi-star-fill me-2"></i>Anticipos / Saldo a Favor Disponible
                 </div>
                 <div class="card-body">
-                    <p class="small mb-2 text-muted">Marque las señas que desea aplicar a esta venta:</p>
-                    <div id="lista_anticipos">
-                        <!-- Se llena vía AJAX -->
-                    </div>
+                    <div id="lista_anticipos"></div>
                     <div class="mt-3 text-end">
                         <span class="badge bg-dark fs-6">Total Anticipos: u$d <span id="display_total_anticipos">0.00</span></span>
                     </div>
@@ -170,40 +169,67 @@
                     </div>
                 </div>
 
-                <!-- SECCIÓN PARTE DE PAGO REESTRUCTURADA -->
+                <!-- SECCIÓN PARTE DE PAGO REESTRUCTURADA (HASTA 4 EQUIPOS) - MOSTRADOS UNO DEBAJO DEL OTRO -->
                 <div class="col-md-12">
-                    <div class="form-check form-switch bg-light p-3 rounded border border-info">
+                    <div class="form-check form-switch bg-light p-3 rounded border border-info shadow-sm">
                         <input class="form-check-input ms-0 me-2" type="checkbox" id="usar_parte_pago" name="usar_parte_pago">
-                        <label class="form-check-label fw-bold text-info" for="usar_parte_pago">¿Toma equipo como parte de pago?</label>
+                        <label class="form-check-label fw-bold text-info" for="usar_parte_pago">¿Toma equipos como parte de pago? (Máximo 4)</label>
                     </div>
                 </div>
 
-                <div class="col-md-12 parte-pago-fields form-group-hidden" id="container_parte_pago">
+                <div class="col-md-12 form-group-hidden" id="container_parte_pago">
                     <div class="card border-info shadow-sm">
-                        <div class="card-body">
+                        <div class="card-body bg-light">
                             <div class="row g-3">
+                                <!-- SLOT 1 (col-12 para que ocupe todo el ancho) -->
                                 <div class="col-12">
-                                    <label class="form-label fw-bold"><i class="bi bi-search me-1"></i>1. Buscar Equipo Registrado (IMEI o Modelo):</label>
-                                    <select class="form-select select2-celulares-parte-pago" id="celular_parte_pago_id" name="celular_parte_pago_id">
-                                        <option value="">Escriba para buscar...</option>
-                                    </select>
-                                </div>
-                                <div class="col-12 mt-3 p-3 detalle-toma-box">
-                                    <div class="row align-items-center">
-                                        <div class="col-md-7 border-end">
-                                            <small class="text-muted d-block text-uppercase fw-bold">Equipo Seleccionado:</small>
-                                            <div id="detalle_equipo_info" class="fw-bold text-dark fs-5">
-                                                <span class="text-muted small">Ningún equipo seleccionado</span>
-                                            </div>
+                                    <div class="pp-slot border border-info shadow-sm">
+                                        <label class="form-label fw-bold small text-info">Equipo 1</label>
+                                        <select class="form-select select2-celulares-parte-pago" name="celular_parte_pago_id">
+                                            <option value="">Buscar equipo 1...</option>
+                                        </select>
+                                        <div class="input-group mt-2">
+                                            <span class="input-group-text bg-info text-white">u$d</span>
+                                            <input type="number" step="0.01" class="form-control pago-input fw-bold valor-pp" name="valor_celular_parte_pago_usd" value="0.00">
                                         </div>
-                                        <div class="col-md-5 ps-md-4">
-                                            <label class="form-label fw-bold text-primary">2. Valor de Toma (u$d):</label>
-                                            <div class="input-group">
-                                                <span class="input-group-text bg-primary text-white">u$d</span>
-                                                <input type="number" step="0.01" class="form-control form-control-lg border-primary pago-input fw-bold" 
-                                                       id="valor_celular_parte_pago_usd" name="valor_celular_parte_pago_usd" value="0.00">
-                                            </div>
-                                            <div id="preview_ars_pp" class="text-muted small mt-1">≈ $ 0.00 ARS</div>
+                                    </div>
+                                </div>
+                                <!-- SLOT 2 (col-12) -->
+                                <div class="col-12">
+                                    <div class="pp-slot border border-secondary shadow-sm">
+                                        <label class="form-label fw-bold small text-secondary">Equipo 2</label>
+                                        <select class="form-select select2-celulares-parte-pago" name="celular_parte_pago_2_id">
+                                            <option value="">Buscar equipo 2...</option>
+                                        </select>
+                                        <div class="input-group mt-2">
+                                            <span class="input-group-text bg-secondary text-white">u$d</span>
+                                            <input type="number" step="0.01" class="form-control pago-input fw-bold valor-pp" name="valor_celular_parte_pago_2_usd" value="0.00">
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- SLOT 3 (col-12) -->
+                                <div class="col-12">
+                                    <div class="pp-slot border border-secondary shadow-sm">
+                                        <label class="form-label fw-bold small text-secondary">Equipo 3</label>
+                                        <select class="form-select select2-celulares-parte-pago" name="celular_parte_pago_3_id">
+                                            <option value="">Buscar equipo 3...</option>
+                                        </select>
+                                        <div class="input-group mt-2">
+                                            <span class="input-group-text bg-secondary text-white">u$d</span>
+                                            <input type="number" step="0.01" class="form-control pago-input fw-bold valor-pp" name="valor_celular_parte_pago_3_usd" value="0.00">
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- SLOT 4 (col-12) -->
+                                <div class="col-12">
+                                    <div class="pp-slot border border-secondary shadow-sm">
+                                        <label class="form-label fw-bold small text-secondary">Equipo 4</label>
+                                        <select class="form-select select2-celulares-parte-pago" name="celular_parte_pago_4_id">
+                                            <option value="">Buscar equipo 4...</option>
+                                        </select>
+                                        <div class="input-group mt-2">
+                                            <span class="input-group-text bg-secondary text-white">u$d</span>
+                                            <input type="number" step="0.01" class="form-control pago-input fw-bold valor-pp" name="valor_celular_parte_pago_4_usd" value="0.00">
                                         </div>
                                     </div>
                                 </div>
@@ -286,9 +312,7 @@
         const precioTotalVentaUSD = parseFloat("{{ venta.precio_final_usd }}") || 0;
         const clienteId = "{{ venta.cliente_id }}";
 
-        // ==========================================================
-        // === NUEVO: LOGICA AJAX PARA ANTICIPOS ===
-        // ==========================================================
+        // AJAX ANTICIPOS
         $.getJSON(`/api/anticipos_disponibles/${clienteId}?imputacion=EQUIPOS`, function(data) {
             if (data && data.length > 0) {
                 $('#seccion_anticipos').removeClass('d-none');
@@ -325,12 +349,16 @@
 
             let totalUSD = 0;
             
-            // 1. Sumar Dólares Directos e Inputs
+            // 1. Dólares Directos
             totalUSD += parseFloat($('#monto_efectivo_usd').val()) || 0;
             totalUSD += parseFloat($('#monto_virtual_usd').val()) || 0;
-            totalUSD += parseFloat($('#valor_celular_parte_pago_usd').val()) || 0;
             
-            // 2. NUEVO: Sumar Anticipos Seleccionados
+            // 2. SUMAR LOS 4 EQUIPOS DE PARTE DE PAGO
+            $('.valor-pp').each(function() {
+                totalUSD += parseFloat($(this).val()) || 0;
+            });
+            
+            // 3. Anticipos
             let totalAnticipos = 0;
             $('.anticipo-check:checked').each(function() {
                 totalAnticipos += parseFloat($(this).data('monto')) || 0;
@@ -338,7 +366,7 @@
             totalUSD += totalAnticipos;
             $('#display_total_anticipos').text(totalAnticipos.toFixed(2));
 
-            // 3. Sumar Pesos convertidos a Dólares
+            // 4. Pesos convertidos
             const idsARS = ['#monto_efectivo_ars', '#monto_transferencia_ars'];
             idsARS.forEach(id => {
                 totalUSD += (parseFloat($(id).val()) || 0) / cotiz;
@@ -346,7 +374,7 @@
 
             const restanteUSD = precioTotalVentaUSD - totalUSD;
 
-            // Actualización de Monitor
+            // Actualización Monitor
             $('#display_pagando_hoy_usd').text(totalUSD.toFixed(2));
             $('#display_restante_usd').text(Math.max(0, restanteUSD).toFixed(2));
             $('#monto_a_financiar_usd_txt').text(Math.max(0, restanteUSD).toFixed(2));
@@ -357,11 +385,7 @@
             $('#info_restante_ars').text(fmtARS(restanteUSD));
             $('#resumen_pago_ars').text(fmtARS(totalUSD));
 
-            // Preview de ARS para la parte de pago
-            let valUSD_PP = parseFloat($('#valor_celular_parte_pago_usd').val()) || 0;
-            $('#preview_ars_pp').text('≈ $ ' + (valUSD_PP * cotiz).toLocaleString('es-AR', {minimumFractionDigits: 2}) + ' ARS');
-
-            // Gestión de botones y crédito
+            // Gestión de botones
             const btn = $('#btn-confirmar');
             const cardMonitor = $('#card_financiar_monitor');
 
@@ -409,15 +433,19 @@
         $('.pago-input, .cuotas-trigger').on('input', calcularTotalPagado);
         
         $('#usar_parte_pago').on('change', function() {
-            $('.parte-pago-fields').toggleClass('form-group-hidden', !this.checked);
-            if(!this.checked) {
-                $('#valor_celular_parte_pago_usd').val(0);
-                $('#detalle_equipo_info').html('<span class="text-muted small">Ningún equipo seleccionado</span>');
+            if(this.checked){
+                $('#container_parte_pago').show();
+            } else {
+                $('#container_parte_pago').hide();
+                // Limpiar valores al desmarcar
+                $('.valor-pp').val('0.00');
+                $('.select2-celulares-parte-pago').val(null).trigger('change');
             }
             calcularTotalPagado();
         });
 
-        $('#celular_parte_pago_id').select2({
+        // INICIALIZAR TODOS LOS SELECT2 DE EQUIPOS
+        $('.select2-celulares-parte-pago').select2({
             ajax: {
                 url: '{{ url_for("api_buscar_celulares_parte_pago") }}',
                 dataType: 'json',
@@ -426,9 +454,10 @@
             placeholder: "Buscar equipo..."
         }).on('select2:select', function(e) {
             const data = e.params.data;
-            $('#detalle_equipo_info').html('<i class="bi bi-phone-vibrate text-info me-2"></i>' + data.text);
+            // El input de valor que está en el mismo slot que el select
+            const $inputValor = $(this).closest('.pp-slot').find('.valor-pp');
             if (data.costo_usd) {
-                $('#valor_celular_parte_pago_usd').val(parseFloat(data.costo_usd).toFixed(2)).trigger('input');
+                $inputValor.val(parseFloat(data.costo_usd).toFixed(2)).trigger('input');
             }
         });
 
