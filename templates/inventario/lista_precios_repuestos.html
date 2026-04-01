@@ -61,6 +61,15 @@
             font-weight: bold;
             text-transform: uppercase;
         }
+        /* Estilo para los campos editables */
+        .input-precio-sync {
+            transition: all 0.2s;
+        }
+        .input-precio-sync:focus {
+            background-color: #fff;
+            border-color: #0d6efd;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        }
     </style>
 {% endblock %}
 
@@ -72,7 +81,7 @@
         <div class="alert alert-info bg-usd-logic shadow-sm">
             <h6 class="alert-heading fw-bold"><i class="bi bi-shield-check me-2"></i>Lógica de Protección de Margen Activa</h6>
             <p class="mb-1"><strong>Dólar de Venta Actual:</strong> ARS {{ valor_dolar_venta|default(0)|round(2) }}</p>
-            <small class="text-muted">Nota: Los precios sugeridos se calculan sumando el margen al costo USD y convirtiendo a pesos al valor de venta actual para asegurar la reposición de stock.</small>
+            <small class="text-muted">Nota: Puede editar el precio en Pesos o en Dólares. El sistema calculará el equivalente automáticamente basado en el valor de venta actual.</small>
         </div>
         
         <input type="hidden" id="valorDolarVentaJs" value="{{ valor_dolar_venta|default(0)|round(2) }}">
@@ -175,8 +184,8 @@
                                 <th>Descripción del Ítem</th>
                                 <th class="text-end">Costo Unit. (USD)</th>
                                 <th class="text-end">Costo Real Pagado (ARS)</th>
-                                <th class="text-end bg-primary-subtle">Precio Venta (ARS)</th> 
-                                <th class="text-end">Precio Venta (USD)</th> 
+                                <th class="text-end bg-primary-subtle">Venta (ARS)</th> 
+                                <th class="text-end bg-success-subtle">Venta (USD)</th> 
                             </tr>
                         </thead>
                         <tbody>
@@ -198,17 +207,25 @@
                                     <td class="text-end text-muted">
                                         ARS {{ repuesto.costo_ars|default(0)|round(2) }}
                                     </td>
+                                    <!-- CAMBIO: Campo ARS editable con clase de sincronización -->
                                     <td class="text-end bg-primary-subtle">
-                                        <input type="number" step="0.01" class="form-control form-control-sm text-end precio-ars-input fw-bold border-primary shadow-sm"
+                                        <input type="number" step="0.01" 
+                                               class="form-control form-control-sm text-end precio-ars-input fw-bold border-primary shadow-sm input-precio-sync"
                                                name="precio_venta_ars_{{ repuesto.id }}"
+                                               id="ars_in_{{ repuesto.id }}"
                                                value="{{ repuesto.precio_venta_sugerido_ars|default(0)|round(2) }}"
-                                               data-repuesto-id="{{ repuesto.id }}">
+                                               data-repuesto-id="{{ repuesto.id }}"
+                                               oninput="sincronizarHaciaUSD('{{ repuesto.id }}')">
                                     </td>
-                                    <td class="text-end">
-                                        <input type="number" step="0.01" class="form-control form-control-sm text-end precio-usd-output bg-white border-0 text-muted"
+                                    <!-- CAMBIO: Campo USD ahora es EDITABLE con clase de sincronización -->
+                                    <td class="text-end bg-success-subtle">
+                                        <input type="number" step="0.01" 
+                                               class="form-control form-control-sm text-end precio-usd-input fw-bold border-success shadow-sm input-precio-sync"
                                                name="precio_venta_usd_{{ repuesto.id }}"
+                                               id="usd_in_{{ repuesto.id }}"
                                                value="{{ repuesto.precio_venta_sugerido_usd|default(0)|round(2) }}"
-                                               data-repuesto-id="{{ repuesto.id }}" readonly>
+                                               data-repuesto-id="{{ repuesto.id }}"
+                                               oninput="sincronizarHaciaARS('{{ repuesto.id }}')">
                                     </td>
                                 </tr>
                             {% endfor %}
@@ -243,23 +260,29 @@
             strategyFixedRadio.addEventListener('change', togglePricingOptions);
             togglePricingOptions();
 
-            function updateUsdPrice(event) {
-                const arsInput = event.target;
-                const repuestoId = arsInput.dataset.repuestoId;
-                const usdOutput = document.querySelector(`.precio-usd-output[data-repuesto-id="${repuestoId}"]`);
-                const arsValue = parseFloat(arsInput.value);
+            // --- NUEVAS FUNCIONES DE SINCRONIZACIÓN ---
 
-                if (!isNaN(arsValue) && arsValue >= 0 && valorDolarVenta > 0) {
-                    const usdValue = arsValue / valorDolarVenta;
-                    usdOutput.value = usdValue.toFixed(2);
+            window.sincronizarHaciaUSD = function(id) {
+                const arsVal = parseFloat(document.getElementById(`ars_in_${id}`).value);
+                const usdIn = document.getElementById(`usd_in_${id}`);
+                
+                if (!isNaN(arsVal) && arsVal >= 0 && valorDolarVenta > 0) {
+                    usdIn.value = (arsVal / valorDolarVenta).toFixed(2);
                 } else {
-                    usdOutput.value = (0).toFixed(2);
+                    usdIn.value = "0.00";
                 }
             }
 
-            document.querySelectorAll('.precio-ars-input').forEach(input => {
-                input.addEventListener('input', updateUsdPrice);
-            });
+            window.sincronizarHaciaARS = function(id) {
+                const usdVal = parseFloat(document.getElementById(`usd_in_${id}`).value);
+                const arsIn = document.getElementById(`ars_in_${id}`);
+                
+                if (!isNaN(usdVal) && usdVal >= 0 && valorDolarVenta > 0) {
+                    arsIn.value = (usdVal * valorDolarVenta).toFixed(2);
+                } else {
+                    arsIn.value = "0.00";
+                }
+            }
 
             $('#select_repuestos').select2({
                 placeholder: 'Buscar productos...',

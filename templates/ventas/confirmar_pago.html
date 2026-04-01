@@ -27,8 +27,11 @@
     
     .bg-anticipo { background-color: #fffdf0; border: 1px solid #ffecb5; border-left: 5px solid #ffc107; }
     
-    /* Estilo para los slots de equipos */
+    /* Estilo original para los slots de equipos (Vertical) */
     .pp-slot { border-left: 4px solid #0dcaf0; background: #fdfdfd; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
+    
+    /* Estilos para la tabla de pagos virtuales */
+    .table-virtual input { font-size: 0.9rem; padding: 0.25rem 0.5rem; }
 </style>
 {% endblock %}
 
@@ -40,8 +43,8 @@
     <div class="col-md-4">
         <div class="card border-0 shadow-sm bg-dark text-white">
             <div class="card-body py-3 text-center">
-                <small class="text-uppercase fw-bold opacity-75">Total del Equipo</small>
-                <div class="display-6 fw-bold">u$d {{ "{:,.2f}".format(venta.precio_final_usd) }}</div>
+                <small class="text-uppercase fw-bold opacity-75">Total Venta (Con Recargos)</small>
+                <div class="display-6 fw-bold">u$d <span id="display_total_venta_usd">{{ "{:,.2f}".format(venta.precio_final_usd) }}</span></div>
                 <div class="text-información" id="info_total_ars">ARS 0.00 (Informativo)</div>
             </div>
         </div>
@@ -77,7 +80,7 @@
                 <p class="mb-0"><strong>Equipo:</strong> {{ venta.marca }} {{ venta.modelo }}</p>
             </div>
             <div class="col-md-6 text-md-end">
-                <p class="text-muted small text-uppercase fw-bold mb-0">Valor Final Pactado</p>
+                <p class="text-muted small text-uppercase fw-bold mb-0">Valor Base Pactado</p>
                 <h2 class="text-primary fw-bold">u$d {{ "{:,.2f}".format(venta.precio_final_usd) }}</h2>
             </div>
         </div>
@@ -119,10 +122,10 @@
 
             <div class="row g-4">
                 <!-- COLUMNA CAJA FÍSICA -->
-                <div class="col-md-6">
+                <div class="col-md-12 col-lg-5">
                     <div class="card h-100 bg-caja">
                         <div class="card-header bg-success text-white fw-bold">
-                            <i class="bi bi-wallet2 me-2"></i>CAJA FÍSICA (Billetes)
+                            <i class="bi bi-wallet2 me-2"></i>CAJA FÍSICA (Efectivo)
                         </div>
                         <div class="card-body">
                             <div class="mb-3">
@@ -133,43 +136,55 @@
                                 <label class="form-label fw-bold text-success">Dólares en Billete (USD):</label>
                                 <input type="number" step="0.01" class="form-control pago-input bg-usd-input fw-bold" id="monto_efectivo_usd" name="monto_efectivo_usd" value="0.00">
                             </div>
-                            <input type="hidden" name="cuenta_destino_usd" value="EFECTIVO">
                         </div>
                     </div>
                 </div>
 
-                <!-- COLUMNA CUENTA VIRTUAL -->
-                <div class="col-md-6">
+                <!-- COLUMNA CUENTAS VIRTUALES CON RECARGOS -->
+                <div class="col-md-12 col-lg-7">
                     <div class="card h-100 bg-virtual">
                         <div class="card-header bg-primary text-white fw-bold">
-                            <i class="bi bi-bank me-2"></i>CUENTA VIRTUAL (Digital)
+                            <i class="bi bi-bank me-2"></i>PAGOS VIRTUALES / TRANSFERENCIAS (Con Recargo)
                         </div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <label class="form-label fw-bold">Seleccionar Cuenta Destino:</label>
-                                <select name="cuenta_destino_virtual" class="form-select border-primary fw-bold">
-                                    {% for cuenta in cuentas_entidades %}
-                                        <option value="{{ cuenta.nombre }}">{{ cuenta.nombre }}</option>
-                                    {% endfor %}
-                                </select>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover mb-0 table-virtual align-middle">
+                                    <thead class="table-light">
+                                        <tr class="small text-uppercase">
+                                            <th class="ps-3">Cuenta</th>
+                                            <th>Monto ARS</th>
+                                            <th>Monto USD</th>
+                                            <th style="width: 80px;">% Rec.</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for cuenta in cuentas_entidades %}
+                                        {% if cuenta.nombre != 'EFECTIVO' %}
+                                        <tr>
+                                            <td class="ps-3">
+                                                <span class="fw-bold small">{{ cuenta.nombre }}</span>
+                                                <input type="hidden" name="cuenta_virtual_id[]" value="{{ cuenta.id }}">
+                                            </td>
+                                            <td>
+                                                <input type="number" step="0.01" name="monto_v_ars[]" class="form-control form-control-sm pago-input virtual-ars" placeholder="0.00">
+                                            </td>
+                                            <td>
+                                                <input type="number" step="0.01" name="monto_v_usd[]" class="form-control form-control-sm pago-input virtual-usd bg-light" placeholder="0.00">
+                                            </td>
+                                            <td class="pe-3">
+                                                <input type="number" step="0.1" name="recargo_v_pct[]" class="form-control form-control-sm recargo-input" value="0">
+                                            </td>
+                                        </tr>
+                                        {% endif %}
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
                             </div>
-                            <div class="row g-2">
-                                <div class="col-6">
-                                    <label class="form-label small fw-bold">Deposito (ARS):</label>
-                                    <input type="number" step="0.01" name="monto_transferencia_ars" id="monto_transferencia_ars" class="form-control pago-input" value="0.00">
-                                </div>
-                                <div class="col-12 mt-3">
-                                    <label class="form-label fw-bold text-purple" style="color: #6f42c1;">Deposito (USD):</label>
-                                    <input type="number" step="0.01" name="monto_virtual_usd" id="monto_virtual_usd" class="form-control pago-input bg-usd-virtual fw-bold" style="color: #6f42c1;" value="0.00">
-                                </div>
-                            </div>
-                            <input type="hidden" name="monto_mp_ars" value="0">
-                            <input type="hidden" name="monto_credito_ars" value="0">
                         </div>
                     </div>
                 </div>
 
-                <!-- SECCIÓN PARTE DE PAGO REESTRUCTURADA (HASTA 4 EQUIPOS) - MOSTRADOS UNO DEBAJO DEL OTRO -->
+                <!-- SECCIÓN PARTE DE PAGO (RESTABLECIDA A FORMATO VERTICAL ORIGINAL) -->
                 <div class="col-md-12">
                     <div class="form-check form-switch bg-light p-3 rounded border border-info shadow-sm">
                         <input class="form-check-input ms-0 me-2" type="checkbox" id="usar_parte_pago" name="usar_parte_pago">
@@ -181,7 +196,7 @@
                     <div class="card border-info shadow-sm">
                         <div class="card-body bg-light">
                             <div class="row g-3">
-                                <!-- SLOT 1 (col-12 para que ocupe todo el ancho) -->
+                                <!-- SLOT 1 (Fiel a tu distribución anterior) -->
                                 <div class="col-12">
                                     <div class="pp-slot border border-info shadow-sm">
                                         <label class="form-label fw-bold small text-info">Equipo 1</label>
@@ -194,7 +209,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <!-- SLOT 2 (col-12) -->
+                                <!-- SLOT 2 -->
                                 <div class="col-12">
                                     <div class="pp-slot border border-secondary shadow-sm">
                                         <label class="form-label fw-bold small text-secondary">Equipo 2</label>
@@ -207,7 +222,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <!-- SLOT 3 (col-12) -->
+                                <!-- SLOT 3 -->
                                 <div class="col-12">
                                     <div class="pp-slot border border-secondary shadow-sm">
                                         <label class="form-label fw-bold small text-secondary">Equipo 3</label>
@@ -220,7 +235,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <!-- SLOT 4 (col-12) -->
+                                <!-- SLOT 4 -->
                                 <div class="col-12">
                                     <div class="pp-slot border border-secondary shadow-sm">
                                         <label class="form-label fw-bold small text-secondary">Equipo 4</label>
@@ -279,7 +294,7 @@
                 <!-- RESUMEN FINAL -->
                 <div class="col-12 mt-2">
                     <div class="alert alert-primary d-flex justify-content-between align-items-center mb-0 shadow-sm">
-                        <span class="fw-bold">TOTAL PERCIBIDO HOY:</span>
+                        <span class="fw-bold">TOTAL PERCIBIDO HOY (Con Recargos):</span>
                         <div class="text-end">
                             <span class="fs-4 fw-bold">u$d <span id="total_pagado_usd_final">0.00</span></span>
                             <div class="text-información fw-bold" id="resumen_pago_ars">ARS 0.00</div>
@@ -309,7 +324,7 @@
 
     (function () {
         'use strict';
-        const precioTotalVentaUSD = parseFloat("{{ venta.precio_final_usd }}") || 0;
+        const precioBaseVentaUSD = parseFloat("{{ venta.precio_final_usd }}") || 0;
         const clienteId = "{{ venta.cliente_id }}";
 
         // AJAX ANTICIPOS
@@ -347,43 +362,59 @@
             
             if (cotiz <= 0 || isNaN(cotiz)) cotiz = 1;
 
-            let totalUSD = 0;
+            let totalPagadoHoyUSD = 0;
+            let totalRecargosUSD = 0;
             
-            // 1. Dólares Directos
-            totalUSD += parseFloat($('#monto_efectivo_usd').val()) || 0;
-            totalUSD += parseFloat($('#monto_virtual_usd').val()) || 0;
-            
-            // 2. SUMAR LOS 4 EQUIPOS DE PARTE DE PAGO
-            $('.valor-pp').each(function() {
-                totalUSD += parseFloat($(this).val()) || 0;
+            // 1. Dólares Directos en Caja
+            totalPagadoHoyUSD += parseFloat($('#monto_efectivo_usd').val()) || 0;
+
+            // 2. Pagos Virtuales con sus Recargos
+            $('.table-virtual tbody tr').each(function() {
+                const $fila = $(this);
+                const ars = parseFloat($fila.find('.virtual-ars').val()) || 0;
+                const usd = parseFloat($fila.find('.virtual-usd').val()) || 0;
+                const pct = parseFloat($fila.find('.recargo-input').val()) || 0;
+
+                if (ars > 0 || usd > 0) {
+                    const baseUSD = (ars / cotiz) + usd;
+                    const montoRecargoUSD = baseUSD * (pct / 100);
+                    
+                    totalRecargosUSD += montoRecargoUSD;
+                    totalPagadoHoyUSD += (baseUSD + montoRecargoUSD);
+                }
             });
             
-            // 3. Anticipos
+            // 3. Equipos de Parte de Pago
+            $('.valor-pp').each(function() {
+                totalPagadoHoyUSD += parseFloat($(this).val()) || 0;
+            });
+            
+            // 4. Anticipos
             let totalAnticipos = 0;
             $('.anticipo-check:checked').each(function() {
                 totalAnticipos += parseFloat($(this).data('monto')) || 0;
             });
-            totalUSD += totalAnticipos;
+            totalPagadoHoyUSD += totalAnticipos;
             $('#display_total_anticipos').text(totalAnticipos.toFixed(2));
 
-            // 4. Pesos convertidos
-            const idsARS = ['#monto_efectivo_ars', '#monto_transferencia_ars'];
-            idsARS.forEach(id => {
-                totalUSD += (parseFloat($(id).val()) || 0) / cotiz;
-            });
+            // 5. Pesos Efectivo
+            totalPagadoHoyUSD += (parseFloat($('#monto_efectivo_ars').val()) || 0) / cotiz;
 
-            const restanteUSD = precioTotalVentaUSD - totalUSD;
+            // --- CÁLCULO DE NUEVO PRECIO TOTAL (Base + Recargos) ---
+            const precioFinalVentaUSD = precioBaseVentaUSD + totalRecargosUSD;
+            const restanteUSD = precioFinalVentaUSD - totalPagadoHoyUSD;
 
             // Actualización Monitor
-            $('#display_pagando_hoy_usd').text(totalUSD.toFixed(2));
+            $('#display_total_venta_usd').text(precioFinalVentaUSD.toFixed(2));
+            $('#display_pagando_hoy_usd').text(totalPagadoHoyUSD.toFixed(2));
             $('#display_restante_usd').text(Math.max(0, restanteUSD).toFixed(2));
             $('#monto_a_financiar_usd_txt').text(Math.max(0, restanteUSD).toFixed(2));
 
             const fmtARS = (val) => "ARS " + (val * cotiz).toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            $('#info_total_ars').text(fmtARS(precioTotalVentaUSD));
-            $('#info_pagando_ars').text(fmtARS(totalUSD));
+            $('#info_total_ars').text(fmtARS(precioFinalVentaUSD));
+            $('#info_pagando_ars').text(fmtARS(totalPagadoHoyUSD));
             $('#info_restante_ars').text(fmtARS(restanteUSD));
-            $('#resumen_pago_ars').text(fmtARS(totalUSD));
+            $('#resumen_pago_ars').text(fmtARS(totalPagadoHoyUSD));
 
             // Gestión de botones
             const btn = $('#btn-confirmar');
@@ -404,7 +435,7 @@
                 btn.prop('disabled', false).attr('class', 'btn btn-success fw-bold px-5 shadow').html('CONFIRMAR VENTA');
             }
             
-            $('#total_pagado_usd_final').text(totalUSD.toFixed(2));
+            $('#total_pagado_usd_final').text(totalPagadoHoyUSD.toFixed(2));
         };
 
         window.generarPlanCuotas = function(saldoUSD, cotiz) {
@@ -430,31 +461,29 @@
             }
         };
 
-        $('.pago-input, .cuotas-trigger').on('input', calcularTotalPagado);
+        $('.pago-input, .cuotas-trigger, .recargo-input').on('input', calcularTotalPagado);
         
         $('#usar_parte_pago').on('change', function() {
             if(this.checked){
                 $('#container_parte_pago').show();
             } else {
                 $('#container_parte_pago').hide();
-                // Limpiar valores al desmarcar
                 $('.valor-pp').val('0.00');
                 $('.select2-celulares-parte-pago').val(null).trigger('change');
             }
             calcularTotalPagado();
         });
 
-        // INICIALIZAR TODOS LOS SELECT2 DE EQUIPOS
         $('.select2-celulares-parte-pago').select2({
             ajax: {
                 url: '{{ url_for("api_buscar_celulares_parte_pago") }}',
                 dataType: 'json',
                 processResults: data => ({ results: data.results })
             },
-            placeholder: "Buscar equipo..."
+            placeholder: "Buscar equipo...",
+            width: '100%'
         }).on('select2:select', function(e) {
             const data = e.params.data;
-            // El input de valor que está en el mismo slot que el select
             const $inputValor = $(this).closest('.pp-slot').find('.valor-pp');
             if (data.costo_usd) {
                 $inputValor.val(parseFloat(data.costo_usd).toFixed(2)).trigger('input');

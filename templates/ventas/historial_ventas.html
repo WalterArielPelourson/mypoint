@@ -10,40 +10,46 @@
     </a>
 </div>
 
+{# Filtros #}
 <div class="card mb-4 shadow-sm">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-funnel me-2"></i>Filtros de Historial</h5>
+    </div>
     <div class="card-body">
         <form method="GET" action="{{ url_for('historial_ventas') }}" class="row g-3 align-items-end">
-            <div class="col-md-3">
-                <label class="form-label fw-bold">Desde:</label>
-                <input type="date" class="form-control" name="start_date" value="{{ start_date }}">
+            <div class="col-md-2">
+                <label for="start_date" class="form-label fw-bold">Desde:</label>
+                <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}">
             </div>
-            <div class="col-md-3">
-                <label class="form-label fw-bold">Hasta:</label>
-                <input type="date" class="form-control" name="end_date" value="{{ end_date }}">
+            <div class="col-md-2">
+                <label for="end_date" class="form-label fw-bold">Hasta:</label>
+                <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}">
             </div>
+
             <div class="col-md-3">
-                <label class="form-label fw-bold">Cliente:</label>
-                <select class="form-select" name="cliente">
-                    <option value="">Todos los clientes</option>
-                    {% for cli in clientes_disponibles %}
-                        <option value="{{ cli.id }}" {% if filtros_activos.cliente|string == cli.id|string %}selected{% endif %}>
-                            {{ cli.razon_social or (cli.nombre + ' ' + cli.apellido) }}
-                        </option>
-                    {% endfor %}
-                </select>
+                <label for="cliente" class="form-label fw-bold">Cliente:</label>
+                <!-- CAMBIO: Select por Input de texto -->
+                <input type="text" 
+                       class="form-control" 
+                       id="cliente" 
+                       name="cliente" 
+                       placeholder="Nombre, apellido o razón..." 
+                       value="{{ filtros_activos.cliente }}">
             </div>
+
             <div class="col-md-3">
-                <label class="form-label fw-bold">Equipo/IMEI:</label>
-                <input type="text" class="form-control" name="producto" value="{{ filtros_activos.producto }}" placeholder="Buscar...">
+                <label for="producto" class="form-label fw-bold">Equipo / IMEI:</label>
+                <input type="text" 
+                       class="form-control" 
+                       id="producto" 
+                       name="producto" 
+                       placeholder="Marca, modelo o IMEI..." 
+                       value="{{ filtros_activos.producto }}">
             </div>
-            <div class="col-md-12 text-end">
-                <!-- BOTONES DE FILTRO -->
-                <button type="submit" class="btn btn-primary px-4">
-                    <i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros
-                </button>
-                <a href="{{ url_for('historial_ventas') }}" class="btn btn-secondary px-4">
-                    <i class="bi bi-arrow-clockwise me-1"></i>Limpiar Filtros
-                </a>
+
+            <div class="col-md-2 text-end">
+                <button type="submit" class="btn btn-primary w-100 mb-1"><i class="bi bi-search me-1"></i>Buscar</button>
+                <a href="{{ url_for('historial_ventas') }}" class="btn btn-secondary w-100"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar</a>
             </div>
         </form>
     </div>

@@ -35,41 +35,43 @@
 </div>
 
 {# Filtros #}
+{# Filtros #}
 <div class="card mb-4 shadow-sm">
-    <div class="card-header">
+    <div class="card-header bg-primary text-white">
         <h5 class="mb-0"><i class="bi bi-funnel me-2"></i>Filtros de Búsqueda</h5>
     </div>
     <div class="card-body">
-        <form method="GET" action="{{ url_for('listar_compras') }}" class="row g-3 align-items-end">
-            <div class="col-md-4">
-                <label for="start_date" class="form-label">Desde:</label>
-                <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}">
+        <form method="GET" action="{{ url_for('listar_compras') }}" class="row g-3 mb-4">
+            <!-- Filtro de Proveedor (Texto libre) -->
+            <div class="col-md-3">
+                <label class="form-label">Proveedor (Nombre o ID)</label>
+                <input type="text" name="proveedor" class="form-control" 
+                    placeholder="Buscar proveedor..." 
+                    value="{{ filtros_activos.proveedor }}">
             </div>
-            <div class="col-md-4">
-                <label for="end_date" class="form-label">Hasta:</label>
-                <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}">
+
+            <!-- Filtro de Fecha Inicio -->
+            <div class="col-md-2">
+                <label class="form-label">Desde</label>
+                <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
             </div>
-            <div class="col-md-4">
-                <label for="proveedor" class="form-label">Proveedor:</label>
-                <select class="form-select select2-persona" id="proveedor" name="proveedor" data-rol="proveedor">
-                    <option value="">Todos los proveedores</option>
-                    {% for prov in proveedores_disponibles %}
-                        <option value="{{ prov.id }}" {% if filtros_activos.proveedor|string == prov.id|string %}selected{% endif %}>
-                            {{ prov.razon_social or (prov.nombre + ' ' + prov.apellido) }}
-                        </option>
-                    {% endfor %}
-                </select>
+
+            <!-- Filtro de Fecha Fin -->
+            <div class="col-md-2">
+                <label class="form-label">Hasta</label>
+                <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
             </div>
+
             <div class="col-md-4">
-                <label for="tipo_item" class="form-label">Tipo de Ítem:</label>
+                <label for="tipo_item" class="form-label fw-bold">Tipo de Ítem:</label>
                 <select class="form-select" id="tipo_item" name="tipo_item">
                     <option value="">Todos los ítems</option>
-                    <option value="CELULAR" {% if filtros_activos.tipo_item == 'CELULAR' %}selected{% endif %}>Celular</option>
-                    <option value="REPUESTO" {% if filtros_activos.tipo_item == 'REPUESTO' %}selected{% endif %}>Repuesto</option>
+                    <option value="CELULAR" {% if filtros_activos.tipo_item == 'CELULAR' %}selected{% endif %}>Celular / Equipo</option>
+                    <option value="REPUESTO" {% if filtros_activos.tipo_item == 'REPUESTO' %}selected{% endif %}>Repuesto / Accesorio</option>
                 </select>
             </div>
             <div class="col-md-4">
-                <label for="estado_pago" class="form-label">Estado de Pago:</label>
+                <label for="estado_pago" class="form-label fw-bold">Estado de Pago:</label>
                 <select class="form-select" id="estado_pago" name="estado_pago">
                     <option value="">Todos los estados</option>
                     <option value="PENDIENTE" {% if filtros_activos.estado_pago == 'PENDIENTE' %}selected{% endif %}>Pendiente</option>
@@ -78,8 +80,8 @@
                 </select>
             </div>
             <div class="col-md-4 text-end">
-                <button type="submit" class="btn btn-primary"><i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros</button>
-                <a href="{{ url_for('listar_compras') }}" class="btn btn-secondary"><i class="bi bi-x-circle me-1"></i>Limpiar</a>
+                <button type="submit" class="btn btn-primary"><i class="bi bi-search me-1"></i>Buscar</button>
+                <a href="{{ url_for('listar_compras') }}" class="btn btn-secondary"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar</a>
             </div>
         </form>
     </div>

@@ -150,7 +150,7 @@
                     <span><i class="bi bi-currency-exchange me-2"></i>Cotización y Moneda</span>
                     <div class="d-flex align-items-center gap-2">
                         <label class="small mb-0">Moneda Insumos:</label>
-                        <select name="moneda_presupuesto" id="moneda_presupuesto" class="form-select form-select-sm w-auto border-dark fw-bold">
+                        <select name="moneda_presupuesto" id="moneda_presupuesto" class="form-select form-select-sm w-auto border-dark fw-bold" onchange="calcularTotalesServicio()">
                             <option value="USD" selected>USD (Dólares)</option>
                             <option value="ARS">ARS (Pesos)</option>
                         </select>
@@ -207,9 +207,25 @@
 
             <h4 class="mt-4 mb-3"><i class="bi bi-cash me-2"></i>Resumen de Costos y Precios</h4>
             <div class="row g-3 bg-light p-3 rounded border shadow-sm">
+                <!-- CAMBIO APLICADO: MANO DE OBRA BIMONETARIA -->
                 <div class="col-md-3" id="mano_obra_group">
-                    <label for="precio_mano_obra_ars" class="form-label fw-bold">Mano de Obra (ARS) <span class="text-danger">*</span>:</label>
-                    <input type="number" step="0.01" class="form-control border-primary fw-bold" id="precio_mano_obra_ars" name="precio_mano_obra_ars" value="{{ form_data.get('precio_mano_obra_ars', '0.00') }}" min="0" required oninput="calcularTotalesServicio()">
+                    <label for="precio_mano_obra" class="form-label fw-bold">Mano de Obra <span class="text-danger">*</span>:</label>
+                    <div class="input-group">
+                        <select class="form-select border-primary fw-bold" name="moneda_mano_obra" id="moneda_mano_obra" style="max-width: 90px;" onchange="calcularTotalesServicio()">
+                            <option value="ARS" selected>ARS </option>
+                            <option value="USD">USD </option>
+                        </select>
+                        <input type="number" 
+                            step="0.01" 
+                            class="form-control border-primary fw-bold" 
+                            id="precio_mano_obra" 
+                            name="precio_mano_obra" 
+                            value="{{ form_data.get('precio_mano_obra_ars', '0.00') }}" 
+                            min="0" 
+                            required 
+                            oninput="calcularTotalesServicio()">
+                    </div>
+                    <div id="m_o_informativa" class="text-muted small mt-1" style="font-size: 0.75rem;"></div>
                 </div>
 
                 <div class="col-md-3">
@@ -224,7 +240,7 @@
                 <div class="col-md-12 mt-3">
                     <label class="form-label fw-bold fs-5">PRECIO FINAL A COBRAR (ARS):</label>
                     <input type="text" class="form-control form-control-lg bg-success text-white fw-bold text-center shadow-sm" id="precio_final_ars_display" readonly value="ARS 0.00">
-                    <small class="text-muted d-block text-center mt-1">Cálculo: (Items Convertidos) + Mano Obra ARS</small>
+                    <small class="text-muted d-block text-center mt-1">Cálculo: (Items Convertidos) + Mano Obra Convertida</small>
                 </div>
             </div>
 
@@ -258,11 +274,9 @@
         const addManualItemButton = $('#add-manual-item-btn');
         const itemStockTemplateHtml = $('#item-stock-template').html();
         const itemManualTemplateHtml = $('#item-manual-template').html();
-        const precioManoObraArsInput = $('#precio_mano_obra_ars');
 
         let itemCounter = 0;
 
-        // --- FUNCIÓN PARA ACTUALIZAR ETIQUETAS DINÁMICAMENTE (ARS/USD) ---
         function actualizarEtiquetasMoneda() {
             const moneda = $('#moneda_presupuesto').val();
             $('.item-row').each(function() {
@@ -274,7 +288,6 @@
             });
         }
 
-        // --- Obtener cotización actual del select ---
         function getCotizacion() {
             const tipoDolar = $('#tipo_dolar').val();
             if (tipoDolar === 'manual') {
@@ -296,13 +309,13 @@
         };
 
         window.calcularTotalesServicio = function() {
-            const moneda = $('#moneda_presupuesto').val();
+            const monedaPresupuesto = $('#moneda_presupuesto').val();
             const cotizacion = getCotizacion();
             
             let totalItemsEnMonedaElegida = 0; 
 
             $('#cotiz_aplicada_display').val('$ ' + cotizacion.toFixed(2));
-            $('#label_subtotal_items').text(`Subtotal Items (${moneda}):`);
+            $('#label_subtotal_items').text(`Subtotal Items (${monedaPresupuesto}):`);
 
             itemsContainer.find('.item-row').each(function() {
                 const itemType = $(this).data('item-type');
@@ -323,22 +336,33 @@
                 totalItemsEnMonedaElegida += (cantidad * precioUnitario);
             });
 
-            $('#precio_venta_total_items_usd_display').val(moneda + ' ' + totalItemsEnMonedaElegida.toFixed(2));
+            $('#precio_venta_total_items_usd_display').val(monedaPresupuesto + ' ' + totalItemsEnMonedaElegida.toFixed(2));
             
-            const manoObraArs = parseFloat(precioManoObraArsInput.val()) || 0;
+            // --- NUEVA LÓGICA CALCULO MANO DE OBRA ---
+            const moMonto = parseFloat($('#precio_mano_obra').val()) || 0;
+            const moMoneda = $('#moneda_mano_obra').val();
+            let moEnArs = 0;
+
+            if (moMoneda === 'USD') {
+                moEnArs = moMonto * cotizacion;
+                $('#m_o_informativa').text(`Equivale a: ARS $${moEnArs.toLocaleString('es-AR', {minimumFractionDigits: 2})}`);
+            } else {
+                moEnArs = moMonto;
+                $('#m_o_informativa').text(`Equivale a: USD u$d ${(moEnArs / cotizacion).toFixed(2)}`);
+            }
             
             let precioTotalServicioArs = 0;
-            if (moneda === 'USD') {
-                precioTotalServicioArs = (totalItemsEnMonedaElegida * cotizacion) + manoObraArs;
+            // Sumamos items + Mano de obra, todo llevado a ARS
+            if (monedaPresupuesto === 'USD') {
+                precioTotalServicioArs = (totalItemsEnMonedaElegida * cotizacion) + moEnArs;
             } else {
-                precioTotalServicioArs = totalItemsEnMonedaElegida + manoObraArs;
+                precioTotalServicioArs = totalItemsEnMonedaElegida + moEnArs;
             }
 
             $('#precio_final_ars_display').val('ARS ' + precioTotalServicioArs.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
             actualizarEtiquetasMoneda();
         }
 
-        // --- Lógica de cambio de moneda ---
         $('#moneda_presupuesto').on('change', function() {
             const nuevaMoneda = $(this).val();
             const cotizacion = getCotizacion();
@@ -356,24 +380,19 @@
             calcularTotalesServicio();
         });
 
-        // --- CORRECCIÓN SELECT2 PARA CLIENTE (COMPATIBLE CON results) ---
         $('.select2-persona').select2({
             theme: 'bootstrap-5',
             placeholder: 'Escriba nombre o CUIT para buscar...',
             allowClear: true,
-            minimumInputLength: 1, // Reducido a 1 para mejor UX
+            minimumInputLength: 1,
             ajax: {
                 url: '{{ url_for("api_buscar_personas") }}',
                 dataType: 'json',
                 delay: 250,
                 data: function (params) { 
-                    return { 
-                        q: params.term, 
-                        rol: $(this).data('rol') // Toma 'cliente' del atributo HTML
-                    }; 
+                    return { q: params.term, rol: $(this).data('rol') }; 
                 },
                 processResults: function (data) { 
-                    // CAMBIO CLAVE: Adaptar al nuevo formato {"results": [...]}
                     return { results: data.results }; 
                 },
                 cache: true
@@ -480,7 +499,6 @@
             const isReparacion = $(this).val() === 'REPARACION';
             $('#mano_obra_group').toggle(isReparacion);
             $('#imei_equipo').prop('disabled', !isReparacion);
-            if (!isReparacion) precioManoObraArsInput.val('0.00');
             calcularTotalesServicio();
         }).trigger('change');
 
