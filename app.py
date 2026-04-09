@@ -1209,6 +1209,147 @@ def registrar_compra_repuesto():
 
 
 
+@app.route('/compras/eliminar/<int:compra_id>', methods=['POST'])
+@login_required
+@superadmin_required # Solo superadmin por ser una operación crítica
+def eliminar_compra(compra_id):
+    db_conn = get_db()
+    try:
+        # 1. Obtener datos de la compra
+        compra = db_query("SELECT * FROM compras WHERE id = ?", (compra_id,))
+        if not compra:
+            flash("Compra no encontrada.", "danger")
+            return redirect(url_for('listar_compras'))
+        
+        c = compra[0]
+        tipo_item = c['tipo_item']
+        item_id = c['item_id']
+        cantidad_comprada = c['cantidad']
+        
+        # Categorías de equipos (según tu lógica en app.py)
+        categorias_equipos = ['CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO']
+        
+        db_conn.execute("BEGIN TRANSACTION")
+
+        # 2. REVERTIR STOCK
+        if tipo_item in categorias_equipos:
+            # Verificar si el celular sigue en stock
+            celular = db_query_func(db_conn, "SELECT stock, imei FROM celulares WHERE id = ?", (item_id,))[0]
+            if celular['stock'] == 0:
+                db_conn.rollback()
+                flash(f"No se puede eliminar la compra: El equipo con IMEI {celular['imei']} ya figura como VENDIDO.", "danger")
+                return redirect(url_for('listar_compras'))
+            
+            # Si está en stock, lo eliminamos (o lo marcamos como eliminado)
+            db_execute_func(db_conn, "DELETE FROM celulares WHERE id = ?", (item_id,))
+        
+        else:
+            # Es un repuesto o accesorio
+            repuesto = db_query_func(db_conn, "SELECT stock, nombre_parte FROM repuestos WHERE id = ?", (item_id,))[0]
+            if repuesto['stock'] < cantidad_comprada:
+                # Opcional: Permitir eliminar igual, pero aquí avisamos
+                flash(f"Aviso: El stock actual de {repuesto['nombre_parte']} es menor a la cantidad de la compra que intentas eliminar.", "warning")
+            
+            # Descontamos la cantidad del stock
+            db_execute_func(db_conn, "UPDATE repuestos SET stock = MAX(0, stock - ?) WHERE id = ?", (cantidad_comprada, item_id))
+
+        # 3. ELIMINAR PAGOS ASOCIADOS (Limpia la Cuenta Corriente)
+        # Esto elimina los abonos hechos a esta factura específica
+        db_execute_func(db_conn, "DELETE FROM pagos_proveedores WHERE compra_id = ?", (compra_id,))
+
+        # 4. ELIMINAR LA COMPRA
+        db_execute_func(db_conn, "DELETE FROM compras WHERE id = ?", (compra_id,))
+
+        # 5. REGISTRAR EN AUDITORÍA
+        detalles_audit = {
+            'compra_id': compra_id,
+            'item': c['imei_celular'] if c['imei_celular'] else f"Item ID: {item_id}",
+            'proveedor_id': c['proveedor_id'],
+            'monto_usd': c['costo_total_usd']
+        }
+        registrar_movimiento(current_user.id, 'ELIMINACION_COMPRA', 'COMPRA', compra_id, detalles_audit)
+
+        db_conn.commit()
+        flash("Compra eliminada exitosamente. Se ajustó el stock y se eliminaron los pagos vinculados.", "success")
+
+    except Exception as e:
+        db_conn.rollback()
+        app.logger.error(f"Error al eliminar compra {compra_id}: {e}", exc_info=True)
+        flash(f"Error crítico: {e}", "danger")
+        
+    return redirect(url_for('listar_compras'))
+
+
+@app.route('/compras/editar/<int:compra_id>', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def editar_compra(compra_id):
+    db_conn = get_db()
+    # Obtener la compra con datos del ítem
+    compra_data = db_query("""
+        SELECT co.*, p.razon_social, p.nombre, p.apellido 
+        FROM compras co 
+        JOIN personas p ON co.proveedor_id = p.id 
+        WHERE co.id = ?""", (compra_id,))
+    
+    if not compra_data:
+        flash("Compra no encontrada.", "danger")
+        return redirect(url_for('listar_compras'))
+    
+    compra = dict(compra_data[0])
+    proveedores = db_query("SELECT * FROM personas WHERE es_proveedor = 1 ORDER BY razon_social, apellido")
+
+    if request.method == 'POST':
+        try:
+            # Capturar nuevos datos
+            nuevo_proveedor_id = int(request.form.get('proveedor_id'))
+            nuevo_costo_usd = float(request.form.get('costo_unitario_usd'))
+            nueva_cantidad = int(request.form.get('cantidad'))
+            nueva_cotizacion = float(request.form.get('valor_dolar_momento'))
+            
+            # Cálculos
+            nuevo_total_usd = nuevo_costo_usd * nueva_cantidad
+            nuevo_total_ars = nuevo_total_usd * nueva_cotizacion
+            
+            db_conn.execute("BEGIN TRANSACTION")
+
+            # --- AJUSTE DE STOCK ---
+            dif_cantidad = nueva_cantidad - compra['cantidad']
+            
+            if compra['tipo_item'] in ['CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO']:
+                # En equipos la cantidad suele ser 1, pero si se cambia el costo, actualizamos el celular
+                db_execute_func(db_conn, "UPDATE celulares SET costo_usd = ? WHERE id = ?", (nuevo_costo_usd, compra['item_id']))
+            else:
+                # En repuestos, ajustamos el stock sumando/restando la diferencia
+                db_execute_func(db_conn, "UPDATE repuestos SET stock = stock + ? WHERE id = ?", (dif_cantidad, compra['item_id']))
+
+            # --- ACTUALIZAR REGISTRO DE COMPRA ---
+            db_execute_func(db_conn, """
+                UPDATE compras SET 
+                    proveedor_id = ?, costo_unitario_usd = ?, costo_total_usd = ?, 
+                    valor_dolar_momento = ?, costo_total_ars = ?, cantidad = ?
+                WHERE id = ?""", 
+                (nuevo_proveedor_id, nuevo_costo_usd, nuevo_total_usd, nueva_cotizacion, nuevo_total_ars, nueva_cantidad, compra_id))
+
+            # --- REGISTRAR EN AUDITORÍA ---
+            registrar_movimiento(current_user.id, 'MODIFICACION_COMPRA', 'COMPRA', compra_id, {
+                'antes': {'qty': compra['cantidad'], 'costo': compra['costo_unitario_usd']},
+                'ahora': {'qty': nueva_cantidad, 'costo': nuevo_costo_usd}
+            })
+
+            db_conn.commit()
+            flash("Compra actualizada correctamente. Se ajustaron los saldos y el stock.", "success")
+            return redirect(url_for('listar_compras'))
+
+        except Exception as e:
+            db_conn.rollback()
+            flash(f"Error al modificar: {e}", "danger")
+
+    return render_template('compras/editar_compra.html', compra=compra, proveedores=proveedores)
+
+
+
+
 
 @app.route('/inventario/celulares/editar/<int:celular_id>', methods=['GET', 'POST'])
 @login_required

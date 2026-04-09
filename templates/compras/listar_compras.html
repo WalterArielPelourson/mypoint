@@ -35,7 +35,6 @@
 </div>
 
 {# Filtros #}
-{# Filtros #}
 <div class="card mb-4 shadow-sm">
     <div class="card-header bg-primary text-white">
         <h5 class="mb-0"><i class="bi bi-funnel me-2"></i>Filtros de Búsqueda</h5>
@@ -104,7 +103,7 @@
                 <th scope="col">Dólar Momento</th>
                 <th scope="col">Total ARS</th>
                 <th scope="col">Estado Pago</th>
-                <th scope="col">Acciones</th>
+                <th scope="col" style="min-width: 150px;">Acciones</th>
             </tr>
         </thead>
         <tbody>
@@ -131,13 +130,29 @@
                     {% endif %}
                 </td>
                 <td>
-                    {% if compra.estado_pago != 'PAGADO_TOTAL' %}
-                        <a href="{{ url_for('registrar_pago_proveedor', proveedor_id=compra.proveedor_id) }}" class="btn btn-sm btn-outline-primary" title="Registrar pago a este proveedor">
-                            <i class="bi bi-wallet2"></i> Pagar
+                    <div class="d-flex gap-1">
+                        {% if compra.estado_pago != 'PAGADO_TOTAL' %}
+                            <a href="{{ url_for('registrar_pago_proveedor', proveedor_id=compra.proveedor_id) }}" class="btn btn-sm btn-outline-primary" title="Registrar pago">
+                                <i class="bi bi-wallet2"></i>
+                            </a>
+                        {% else %}
+                            <button class="btn btn-sm btn-outline-secondary" disabled title="Pagado Totalmente"><i class="bi bi-check-lg"></i></button>
+                        {% endif %}
+
+                        {# BOTÓN MODIFICAR #}
+                        <a href="{{ url_for('editar_compra', compra_id=compra.id) }}" class="btn btn-sm btn-outline-warning" title="Modificar Compra">
+                            <i class="bi bi-pencil"></i>
                         </a>
-                    {% else %}
-                        <button class="btn btn-sm btn-outline-secondary" disabled><i class="bi bi-check-lg"></i> Pagado</button>
-                    {% endif %}
+
+                        {# Botón Eliminar solo para SuperAdmin #}
+                        {% if current_user.role == 'superadmin' %}
+                        <form action="{{ url_for('eliminar_compra', compra_id=compra.id) }}" method="POST" onsubmit="return confirm('¿ESTÁ SEGURO? Esta acción es irreversible.\n\n- Se eliminará el registro de compra.\n- Se descontará el ítem del stock (si no fue vendido).\n- Se borrarán los abonos vinculados en la Cta. Cte.');">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar Compra">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
                 </td>
             </tr>
             {% else %}
@@ -170,7 +185,7 @@
                     };
                 },
                 processResults: function (data) {
-                    return { results: data };
+                    return { results: data.results };
                 },
                 cache: true
             },
