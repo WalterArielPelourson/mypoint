@@ -1211,7 +1211,8 @@ def registrar_compra_repuesto():
 
 @app.route('/compras/eliminar/<int:compra_id>', methods=['POST'])
 @login_required
-@superadmin_required # Solo superadmin por ser una operación crítica
+
+#@superadmin_required # Solo superadmin por ser una operación crítica
 def eliminar_compra(compra_id):
     db_conn = get_db()
     try:
@@ -1282,7 +1283,7 @@ def eliminar_compra(compra_id):
 
 @app.route('/compras/editar/<int:compra_id>', methods=['GET', 'POST'])
 @login_required
-@admin_required
+
 def editar_compra(compra_id):
     db_conn = get_db()
     # Obtener la compra con datos del ítem

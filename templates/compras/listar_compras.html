@@ -145,13 +145,12 @@
                         </a>
 
                         {# Botón Eliminar solo para SuperAdmin #}
-                        {% if current_user.role == 'superadmin' %}
+                        {# Botón Eliminar habilitado para todos los roles #}
                         <form action="{{ url_for('eliminar_compra', compra_id=compra.id) }}" method="POST" onsubmit="return confirm('¿ESTÁ SEGURO? Esta acción es irreversible.\n\n- Se eliminará el registro de compra.\n- Se descontará el ítem del stock (si no fue vendido).\n- Se borrarán los abonos vinculados en la Cta. Cte.');">
                             <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar Compra">
                                 <i class="bi bi-trash"></i>
                             </button>
                         </form>
-                        {% endif %}
                     </div>
                 </td>
             </tr>
