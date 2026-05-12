@@ -38,37 +38,41 @@
     </div>
     <div class="collapse show" id="collapseFilters">
         <div class="card-body">
-            <form method="GET" class="row g-3">
-                <div class="col-md-5">
-                    <label for="cliente" class="form-label">Cliente:</label>
-                    <select class="form-select select2-persona" id="cliente" name="cliente" data-rol="cliente">
-                        <option value="">Todos los clientes</option>
-                        {# Los clientes_disponibles se cargan en la ruta de Flask #}
-                        {% for cli in clientes_disponibles %}
-                        <option value="{{ cli.id }}" {% if filtros_activos.cliente|string == cli.id|string %}selected{% endif %}>
-                            {{ cli.razon_social or (cli.nombre + ' ' + cli.apellido) }} (CUIT/CUIL: {{ cli.cuit_cuil or 'N/A' }})
-                        </option>
-                        {% endfor %}
+           <form method="GET" action="{{ url_for('listar_presupuestos_reparacion') }}" class="row g-3 bg-light p-3 rounded border">
+               <div class="col-md-5">
+                    <label for="cliente" class="form-label fw-bold">Filtrar por Cliente:</label>
+                    <select class="form-select select2-persona" id="cliente" name="cliente">
+                        {% if filtros_activos.cliente %}
+                            {# Esto mantiene el cliente seleccionado después de filtrar #}
+                            <option value="{{ filtros_activos.cliente }}" selected>Cargando cliente seleccionado...</option>
+                        {% else %}
+                            <option value="">Todos los clientes</option>
+                        {% endif %}
                     </select>
                 </div>
-                <div class="col-md-5">
-                    <label for="imei" class="form-label">IMEI del Equipo:</label>
-                    <input type="text" class="form-control" id="imei" name="imei" value="{{ filtros_activos.imei }}">
+                
+                <div class="col-md-3">
+                    <label for="imei" class="form-label fw-bold">IMEI del Equipo:</label>
+                    <input type="text" id="imei" name="imei" value="{{ filtros_activos.imei }}" 
+                        class="form-control" placeholder="IMEI...">
                 </div>
-                {# Nuevo filtro por tipo de servicio #}
-                <div class="col-md-5">
-                    <label for="tipo_servicio" class="form-label">Tipo de Servicio:</label>
+
+                <div class="col-md-3">
+                    <label for="tipo_servicio" class="form-label fw-bold">Tipo de Servicio:</label>
                     <select class="form-select" id="tipo_servicio" name="tipo_servicio">
                         <option value="">Todos los tipos</option>
                         <option value="REPARACION" {% if filtros_activos.tipo_servicio == 'REPARACION' %}selected{% endif %}>Reparación</option>
                         <option value="VENTA_ACCESORIO" {% if filtros_activos.tipo_servicio == 'VENTA_ACCESORIO' %}selected{% endif %}>Venta de Accesorio/Producto</option>
                     </select>
                 </div>
-                <div class="col-md-2 d-flex justify-content-start align-items-end mt-3">
-                    <button type="submit" class="btn btn-primary me-2"><i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros</button>
-                    {% if request.args %}
-                        <a href="{{ url_for('listar_presupuestos_reparacion') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar</a>
-                    {% endif %}
+
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2 w-100">
+                        <i class="bi bi-funnel-fill"></i> Filtrar
+                    </button>
+                    <a href="{{ url_for('listar_presupuestos_reparacion') }}" class="btn btn-outline-secondary w-100">
+                        <i class="bi bi-arrow-clockwise"></i> Limpiar
+                    </a>
                 </div>
             </form>
         </div>
@@ -144,51 +148,52 @@
 {% endblock %}
 
 {% block scripts_extra %}
-<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script> {# Asegúrate de incluir Select2 JS #}
+<!-- Cargar Select2 JS -->
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
 <script>
     $(document).ready(function() {
-        // Select2 para el filtro de clientes
+        // 1. Inicialización de Select2 para el filtro de clientes
         $('#cliente').select2({
             placeholder: 'Seleccione un cliente',
             allowClear: true,
+            width: '100%',
             ajax: {
-                url: '{{ url_for('api_buscar_personas') }}',
+                url: "{{ url_for('api_buscar_personas') }}",
                 dataType: 'json',
                 delay: 250,
                 data: function (params) {
                     return {
                         q: params.term,
-                        rol: $(this).data('rol')
+                        rol: 'cliente'
                     };
                 },
                 processResults: function (data) {
-                    // Mapear los resultados para añadir la descripción del CUIT/CUIL
-                    const formattedResults = data.map(item => ({
-                        id: item.id,
-                        text: item.text // Ya debería venir formateado con CUIT/CUIL desde la API
-                    }));
                     return {
-                        results: formattedResults
+                        results: data.results
                     };
                 },
                 cache: true
             },
-            minimumInputLength: 3 // Requiere al menos 3 caracteres para buscar
+            minimumInputLength: 3
         });
 
-        // Si ya hay un cliente seleccionado en los filtros, precargarlo en Select2
+        // 2. Pre-cargar el cliente si ya está seleccionado en los filtros
         {% if filtros_activos.cliente %}
+            var clienteId = "{{ filtros_activos.cliente }}";
             $.ajax({
                 type: 'GET',
-                // La API buscar_personas con 'q=""' y 'id' busca por ID directamente
-                url: '{{ url_for('api_buscar_personas', q="", rol="cliente") }}' + '&id=' + '{{ filtros_activos.cliente }}'
+                url: "{{ url_for('api_buscar_personas') }}",
+                data: { q: clienteId, rol: 'cliente' }
             }).then(function (data) {
                 if (data.results && data.results.length > 0) {
-                    var option = new Option(data.results[0].text, data.results[0].id, true, true);
+                    var item = data.results.find(x => x.id == clienteId) || data.results[0];
+                    var option = new Option(item.text, item.id, true, true);
                     $('#cliente').append(option).trigger('change');
                 }
             });
         {% endif %}
     });
 </script>
-{% endblock %}
+
+{% endblock %} {# <--- ESTE ES EL QUE CIERRA EL BLOQUE DE CONTENIDO O SCRIPTS #}

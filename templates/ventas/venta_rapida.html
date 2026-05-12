@@ -54,33 +54,49 @@
                             <span class="badge bg-secondary mt-2" id="total_display_usd">u$d 0.00</span>
                         </div>
 
+                        <!-- CONTENEDOR DE PAGOS MÚLTIPLES -->
                         <div class="mb-3">
-                            <label class="form-label fw-bold">Medio de Cobro</label>
-                            <select name="metodo_pago" class="form-select form-select-lg border-primary" required>
-                                <option value="EFECTIVO">💰 EFECTIVO (Caja)</option>
-                                {% for c in cuentas_entidades %}
-                                <option value="{{ c.nombre }}">💳 {{ c.nombre }}</option>
-                                {% endfor %}
-                            </select>
+                            <label class="form-label fw-bold d-flex justify-content-between">
+                                Formas de Cobro 
+                                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none" id="btn-agregar-pago">
+                                    <i class="bi bi-plus-circle-fill"></i> Agregar otro
+                                </button>
+                            </label>
+                            
+                            <div id="contenedor-pagos">
+                                <!-- Primera fila de pago (obligatoria) -->
+                                <div class="pago-row bg-white border rounded p-2 mb-2">
+                                    <div class="mb-2">
+                                        <select name="metodo_pago[]" class="form-select form-select-sm border-primary" required>
+                                            <option value="EFECTIVO">💰 EFECTIVO (Caja)</option>
+                                            {% for c in cuentas_entidades %}
+                                            <option value="{{ c.nombre }}">💳 {{ c.nombre }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="row g-2">
+                                        <div class="col-7">
+                                            <input type="number" step="0.01" name="monto_recibido[]" class="form-control form-control-sm border-success monto-pago-input" placeholder="Monto" required>
+                                        </div>
+                                        <div class="col-5">
+                                            <select name="moneda_pago[]" class="form-select form-select-sm moneda-pago-input">
+                                                <option value="ARS">ARS</option>
+                                                <option value="USD">USD</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
-                        <div class="mb-3">
-                            <label class="form-label fw-bold">Moneda del Cliente</label>
-                            <select name="moneda_pago" id="moneda_pago" class="form-select">
-                                <option value="ARS">Pesos (ARS)</option>
-                                <option value="USD">Dólares (USD)</option>
-                            </select>
-                        </div>
-
-                        <div class="mb-4">
-                            <label class="form-label fw-bold">Monto Recibido</label>
-                            <input type="number" step="0.01" name="monto_recibido" id="monto_recibido" class="form-control form-control-lg border-success" placeholder="0.00" required>
+                        <div id="alerta-pago" class="alert alert-info small py-2 mb-3 d-none">
+                            Total ingresado: <span id="suma-pagos-display" class="fw-bold">$ 0.00</span>
                         </div>
 
                         <!-- Aquí JS inyectará los items seleccionados -->
                         <div id="wrapper_items_ocultos"></div>
 
-                        <button type="submit" class="btn btn-success btn-lg w-100 shadow py-3">
+                        <button type="submit" class="btn btn-success btn-lg w-100 shadow py-3 mt-2" id="btn-finalizar">
                             <i class="bi bi-check-circle-fill me-2"></i>FINALIZAR VENTA
                         </button>
                     </div>
@@ -88,16 +104,17 @@
             </form>
         </div>
     </div>
-</div>
+</div>        
 {% endblock %}
 
 {# --- TODO EL SCRIPT SE MUEVE AL BLOQUE EXTRA PARA ASEGURAR QUE JQUERY EXISTA --- #}
 {% block scripts_extra %}
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
 $(document).ready(function() {
     let itemsVenta = [];
 
-    // SELECT2: Configuración robusta para búsqueda remota
+    // --- 1. CONFIGURACIÓN DEL BUSCADOR DE PRODUCTOS (SELECT2) ---
     $('#buscador_productos').select2({
         theme: 'bootstrap-5',
         placeholder: "Escriba nombre o modelo del producto...",
@@ -109,33 +126,27 @@ $(document).ready(function() {
             dataType: 'json',
             delay: 250,
             data: function (params) {
-                return {
-                    q: params.term // El término que el usuario escribe se envía como 'q'
-                };
+                return { q: params.term };
             },
             processResults: function (data) {
-                // Tu app.py devuelve un objeto con la llave "results"
-                return {
-                    results: data.results
-                };
+                return { results: data.results };
             },
             cache: true
         }
     }).on('select2:select', function(e) {
         agregarProducto(e.params.data);
-        $(this).val(null).trigger('change'); // Limpiar el buscador
+        $(this).val(null).trigger('change'); 
     });
 
+    // --- 2. GESTIÓN DE PRODUCTOS (CARRITO) ---
     function agregarProducto(prod) {
         const existe = itemsVenta.find(i => i.id === prod.id);
         if (existe) {
             existe.cantidad++;
         } else {
-            // Cálculo inicial de precio según la moneda de la pantalla
             const cotiz = parseFloat($('#cotiz_manual').val()) || 1;
             let precioArs = 0;
             
-            // Priorizamos el precio_venta_ars que venga de la base de datos
             if (prod.precio_venta_ars && prod.precio_venta_ars > 0) {
                 precioArs = prod.precio_venta_ars;
             } else {
@@ -167,12 +178,12 @@ $(document).ready(function() {
             tbody.append(`
                 <tr>
                     <td class="small">${item.nombre}</td>
-                    <td>
+                    <td style="width: 80px;">
                         <input type="number" class="form-control form-control-sm" 
                                value="${item.cantidad}" min="1" 
                                onchange="updateCant(${item.id}, this.value)">
                     </td>
-                    <td>
+                    <td style="width: 120px;">
                         <div class="input-group input-group-sm">
                             <span class="input-group-text">$</span>
                             <input type="number" class="form-control" 
@@ -189,7 +200,6 @@ $(document).ready(function() {
                 </tr>
             `);
 
-            // Inputs para enviar al POST de Flask
             wrapper.append(`<input type="hidden" name="item_id[]" value="${item.id}">`);
             wrapper.append(`<input type="hidden" name="cantidad[]" value="${item.cantidad}">`);
             wrapper.append(`<input type="hidden" name="precio_unitario[]" value="${item.precio}">`);
@@ -201,15 +211,71 @@ $(document).ready(function() {
         $('#total_display_ars').text(`$ ${totalArs.toLocaleString('es-AR', {minimumFractionDigits: 2})}`);
         $('#total_display_usd').text(`u$d ${totalUsd.toFixed(2)}`);
         
-        // Autocompletar el monto recibido si está vacío o es igual al total anterior
-        if ($('#moneda_pago').val() === 'ARS') {
-            $('#monto_recibido').val(totalArs.toFixed(2));
-        } else {
-            $('#monto_recibido').val(totalUsd.toFixed(2));
+        // Si hay un solo pago y está vacío, ayudar al usuario autocompletando el total
+        const filasPago = $('.pago-row');
+        if (filasPago.length === 1) {
+            const inputMonto = filasPago.find('.monto-pago-input');
+            if (inputMonto.val() === "" || parseFloat(inputMonto.val()) === 0) {
+                const moneda = filasPago.find('.moneda-pago-input').val();
+                inputMonto.val(moneda === 'ARS' ? totalArs.toFixed(2) : totalUsd.toFixed(2));
+            }
         }
+        
+        calcularSumaPagos();
     }
 
-    // Funciones globales necesarias para los eventos en el HTML inyectado
+    // --- 3. GESTIÓN DE PAGOS MÚLTIPLES ---
+
+    // Botón agregar forma de pago
+    $('#btn-agregar-pago').click(function() {
+        let nuevaFila = $('.pago-row:first').clone();
+        nuevaFila.find('input').val(''); // Limpiar el monto
+        // Añadir botón eliminar a la nueva fila
+        nuevaFila.append('<button type="button" class="btn btn-sm btn-outline-danger w-100 mt-2 btn-quitar-pago" style="font-size: 0.7rem;">Quitar este pago</button>');
+        $('#contenedor-pagos').append(nuevaFila);
+        calcularSumaPagos();
+    });
+
+    // Botón quitar forma de pago
+    $(document).on('click', '.btn-quitar-pago', function() {
+        $(this).closest('.pago-row').remove();
+        calcularSumaPagos();
+    });
+
+    // Escuchar cambios en montos, monedas o cotización
+    $(document).on('input change', '.monto-pago-input, .moneda-pago-input, #cotiz_manual', function() {
+        calcularSumaPagos();
+    });
+
+    function calcularSumaPagos() {
+        let totalPagadoARS = 0;
+        let cotiz = parseFloat($('#cotiz_manual').val()) || 1;
+
+        // Recorrer cada fila de pago y sumar
+        $('.pago-row').each(function() {
+            let monto = parseFloat($(this).find('.monto-pago-input').val()) || 0;
+            let moneda = $(this).find('.moneda-pago-input').val();
+
+            if (moneda === 'USD') {
+                totalPagadoARS += (monto * cotiz);
+            } else {
+                totalPagadoARS += monto;
+            }
+        });
+
+        // Mostrar indicador visual de cuánto se está cobrando
+        if (totalPagadoARS > 0) {
+            $('#alerta-pago').removeClass('d-none');
+            $('#suma-pagos-display').text('$ ' + totalPagadoARS.toLocaleString('es-AR', {minimumFractionDigits: 2}));
+        } else {
+            $('#alerta-pago').addClass('d-none');
+        }
+
+        // Validación simple: Si el monto ingresado es menor al total del carrito, avisar (opcional)
+        // Aquí podrías cambiar el color del botón finalizar si quisieras
+    }
+
+    // --- 4. FUNCIONES GLOBALES PARA EVENTOS EN TABLA ---
     window.updateCant = (id, val) => { 
         const item = itemsVenta.find(i => i.id === id);
         if (item) item.cantidad = parseInt(val) || 1; 
@@ -225,8 +291,8 @@ $(document).ready(function() {
         renderTabla(); 
     };
     
-    // Escuchar cambios en parámetros globales
-    $('#cotiz_manual, #moneda_pago').on('change', renderTabla);
+    // Al cambiar la moneda o cotización, refrescar cálculos
+    $('#cotiz_manual').on('change', renderTabla);
 });
 </script>
 {% endblock %}

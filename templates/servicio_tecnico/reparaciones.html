@@ -22,15 +22,14 @@
             {# Incluimos los campos de fecha (Desde/Hasta) #}
             {% include '_filtro_fechas.html' %}
 
-            <div class="col-md-3">
+           <div class="col-md-4">
                 <label for="cliente" class="form-label fw-bold">Cliente:</label>
-                <select class="form-select select2-persona" id="cliente" name="cliente" data-rol="cliente">
-                    <option value="">Todos los clientes</option>
-                    {% for cli in clientes_disponibles %}
-                    <option value="{{ cli.id }}" {% if filtros_activos.cliente|string == cli.id|string %}selected{% endif %}>
-                        {{ cli.razon_social or (cli.nombre + ' ' + cli.apellido) }}
-                    </option>
-                    {% endfor %}
+                <select class="form-select select2-persona" id="cliente" name="cliente">
+                    {% if filtros_activos.cliente %}
+                        <option value="{{ filtros_activos.cliente }}" selected>Cargando...</option>
+                    {% else %}
+                        <option value="">Todos los clientes</option>
+                    {% endif %}
                 </select>
             </div>
             <div class="col-md-3">
@@ -98,23 +97,25 @@
 {% block scripts_extra %}
 <script>
     $(document).ready(function() {
-        // Select2 para el filtro de clientes
+        // 1. Inicialización de Select2 para el filtro de clientes en el Historial
         $('#cliente').select2({
             placeholder: 'Seleccione un cliente',
             allowClear: true,
+            width: '100%', // Asegura que ocupe todo el ancho de la columna
             ajax: {
-                url: '{{ url_for('api_buscar_personas') }}',
+                url: '{{ url_for("api_buscar_personas") }}',
                 dataType: 'json',
                 delay: 250,
                 data: function (params) {
                     return {
-                        q: params.term,
-                        rol: $(this).data('rol')
+                        q: params.term, // Lo que el usuario escribe
+                        rol: 'cliente'  // Filtramos solo por clientes
                     };
                 },
                 processResults: function (data) {
+                    // Accedemos a data.results porque el servidor devuelve {"results": [...]}
                     return {
-                        results: data
+                        results: data.results
                     };
                 },
                 cache: true
@@ -129,14 +130,21 @@
             }
         });
 
-        // Si ya hay un cliente seleccionado en los filtros, precargarlo en Select2
+        // 2. Lógica de Pre-cargado: Si ya hay un cliente seleccionado en los filtros, mostrar su nombre al recargar
         {% if filtros_activos.cliente %}
+            var clienteId = "{{ filtros_activos.cliente }}";
             $.ajax({
                 type: 'GET',
-                url: '{{ url_for('api_buscar_personas', q="", rol="cliente") }}' + '&id=' + '{{ filtros_activos.cliente }}'
+                url: '{{ url_for("api_buscar_personas") }}',
+                data: {
+                    q: clienteId, // Enviamos el ID para que la API lo encuentre
+                    rol: 'cliente'
+                }
             }).then(function (data) {
                 if (data.results && data.results.length > 0) {
-                    var option = new Option(data.results[0].text, data.results[0].id, true, true);
+                    // Buscamos el objeto que coincida con nuestro ID
+                    var item = data.results.find(x => x.id == clienteId) || data.results[0];
+                    var option = new Option(item.text, item.id, true, true);
                     $('#cliente').append(option).trigger('change');
                 }
             });

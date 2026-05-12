@@ -42,13 +42,16 @@
     <div class="card-body">
         <form method="GET" action="{{ url_for('listar_compras') }}" class="row g-3 mb-4">
             <!-- Filtro de Proveedor (Texto libre) -->
-            <div class="col-md-3">
-                <label class="form-label">Proveedor (Nombre o ID)</label>
-                <input type="text" name="proveedor" class="form-control" 
-                    placeholder="Buscar proveedor..." 
-                    value="{{ filtros_activos.proveedor }}">
+           <div class="col-md-4">
+                <label for="proveedor" class="form-label fw-bold">Proveedor:</label>
+                <select class="form-select select2-proveedor" id="proveedor" name="proveedor">
+                    {% if filtros_activos.proveedor %}
+                        <option value="{{ filtros_activos.proveedor }}" selected>Cargando proveedor...</option>
+                    {% else %}
+                        <option value="">Todos los proveedores</option>
+                    {% endif %}
+                </select>
             </div>
-
             <!-- Filtro de Fecha Inicio -->
             <div class="col-md-2">
                 <label class="form-label">Desde</label>
@@ -66,7 +69,8 @@
                 <select class="form-select" id="tipo_item" name="tipo_item">
                     <option value="">Todos los ítems</option>
                     <option value="CELULAR" {% if filtros_activos.tipo_item == 'CELULAR' %}selected{% endif %}>Celular / Equipo</option>
-                    <option value="REPUESTO" {% if filtros_activos.tipo_item == 'REPUESTO' %}selected{% endif %}>Repuesto / Accesorio</option>
+                    <option value="repuesto" {% if filtros_activos.tipo_item == 'repuesto' %}selected{% endif %}>Repuesto </option>
+                    <option value="accesorio" {% if filtros_activos.tipo_item == 'accesorio' %}selected{% endif %}>Accesorio</option>
                 </select>
             </div>
             <div class="col-md-4">
@@ -166,38 +170,52 @@
 {% endblock %}
 
 {% block scripts_extra %}
+<!-- Cargar Select2 JS -->
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
+    $(document).ready(function() {
         const proveedorFilterSelect = $('#proveedor');
+
+        // 1. Inicialización de Select2 para el filtro de Proveedores
         proveedorFilterSelect.select2({
             placeholder: 'Buscar proveedor por nombre o CUIT/CUIL...',
             allowClear: true,
+            width: '100%', // Asegura que se adapte al ancho de la columna
             ajax: {
-                url: '{{ url_for('api_buscar_personas') }}',
+                url: '{{ url_for("api_buscar_personas") }}',
                 dataType: 'json',
                 delay: 250,
                 data: function (params) {
                     return {
-                        q: params.term,
-                        rol: 'proveedor'
+                        q: params.term, // Lo que el usuario escribe
+                        rol: 'proveedor' // Filtramos específicamente por proveedores
                     };
                 },
                 processResults: function (data) {
+                    // Accedemos a data.results que es la estructura que envía tu Flask
                     return { results: data.results };
                 },
                 cache: true
             },
-            minimumInputLength: 0
+            minimumInputLength: 3 // REQUERIMIENTO: 3 caracteres para iniciar búsqueda
         });
 
+        // 2. Lógica de Pre-cargado: Mantiene el nombre del proveedor visible después de filtrar
         {% if filtros_activos.proveedor %}
+            var proveedorId = "{{ filtros_activos.proveedor }}";
             $.ajax({
                 type: 'GET',
-                url: '{{ url_for('api_buscar_personas') }}?q=&rol=proveedor&id={{ filtros_activos.proveedor }}' 
+                url: '{{ url_for("api_buscar_personas") }}',
+                data: {
+                    q: proveedorId, // Enviamos el ID para que la API traiga el nombre
+                    rol: 'proveedor'
+                }
             }).then(function (data) {
                 if (data.results && data.results.length > 0) {
-                    var option = new Option(data.results[0].text, data.results[0].id, true, true);
+                    // Buscamos el proveedor que coincida con el ID filtrado
+                    var item = data.results.find(x => x.id == proveedorId) || data.results[0];
+                    var option = new Option(item.text, item.id, true, true);
                     proveedorFilterSelect.append(option).trigger('change');
                 }
             });

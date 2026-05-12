@@ -684,6 +684,7 @@ def index():
 # =================================================================
 @app.route('/personas')
 @login_required
+@tecnico_required
 def listar_personas():
     filtro_nombre = request.args.get('nombre', '').strip()
     filtro_cuit = request.args.get('cuit_cuil', '').strip()
@@ -711,7 +712,8 @@ def listar_personas():
 
 @app.route('/personas/nueva', methods=['GET', 'POST'])
 @login_required
-@admin_required
+#@admin_required
+@tecnico_required
 def agregar_persona():
     if request.method == 'POST':
         # Recolectar todos los datos del formulario al principio del POST
@@ -774,7 +776,8 @@ def agregar_persona():
         
 @app.route('/personas/editar/<int:persona_id>', methods=['GET', 'POST'])
 @login_required
-@admin_required
+#@admin_required
+@tecnico_required
 def editar_persona(persona_id):
     persona_data_db = db_query("SELECT * FROM personas WHERE id = ?", (persona_id,))
     if not persona_data_db:
@@ -1522,7 +1525,7 @@ def editar_repuesto(repuesto_id):
 # --- Nueva Ruta para Lista de Precios de Repuestos ---
 @app.route('/inventario/repuestos/lista_precios', methods=['GET', 'POST'])
 @login_required
-@admin_required
+#@admin_required
 @tecnico_required
 def lista_precios_repuestos():
     dolar_info_from_context = inject_dolar_values()
@@ -1639,7 +1642,8 @@ def lista_precios_repuestos():
     
 @app.route('/inventario/repuestos/imprimir_precios')
 @login_required
-@admin_required
+#@admin_required
+@tecnico_required
 def imprimir_precios_repuestos():
     # Retrieve selected repuesto IDs from URL parameter
     selected_repuestos_ids_str = request.args.get('repuesto_ids')
@@ -1740,10 +1744,9 @@ def listar_compras():
 
     # Definimos categorías para los JOINs
     categorias_celulares = "('CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO')"
-    categorias_repuestos = "('REPUESTO', 'ACCESORIO', 'PRODUCTO', 'OTRO')"
+    categorias_repuestos = "('REPUESTO', 'repuesto', 'accesorio', 'REPUESTOS', 'ACCESORIO', 'ACCESORIOS', 'PRODUCTO', 'PRODUCTOS', 'INSUMO', 'INSUMOS', 'OTRO', 'OTROS')"
 
     # 2. Construcción de la Query Base
-    # Usamos COALESCE para evitar valores NULL en las concatenaciones de búsqueda
     query = f"""
         SELECT co.*, p.razon_social, p.nombre, p.apellido, u.username,
                CASE
@@ -1762,26 +1765,22 @@ def listar_compras():
     """
     params = []
 
-    # 3. FILTRO DE PROVEEDOR (Búsqueda por texto o ID)
+    # 3. FILTRO DE PROVEEDOR (Optimizado para Select2)
     if filtro_proveedor:
-        # Buscamos en un solo bloque de texto combinando todos los campos posibles
-        # Esto permite buscar "Juan" o "Perez" o "Razon Social" indistintamente
-        query += """ AND (
-            LOWER(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, '') || ' ' || COALESCE(p.razon_social, '')) LIKE LOWER(?)
-            OR p.id = ?
-        )"""
-        search_term = f"%{filtro_proveedor}%"
-        
-        # Intentamos ver si lo ingresado es un ID numérico
-        try:
-            p_id = int(filtro_proveedor)
-        except ValueError:
-            p_id = -1
-            
-        params.extend([search_term, p_id])
+        # Si el filtro es un número, asumimos que viene de la selección del Select2 (ID)
+        if filtro_proveedor.isdigit():
+            query += " AND p.id = ?"
+            params.append(int(filtro_proveedor))
+        else:
+            # Fallback por si llega a enviarse texto plano (Búsqueda universal)
+            query += """ AND (
+                LOWER(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, '') || ' ' || COALESCE(p.razon_social, '')) LIKE LOWER(?)
+                OR p.cuit_cuil LIKE ?
+            )"""
+            search_term = f"%{filtro_proveedor}%"
+            params.extend([search_term, search_term])
     
-    # 4. FILTRO DE FECHAS (Solo aplica si NO se está buscando un proveedor específico, 
-    # o puedes dejarlo para que siempre filtre. Aquí lo dejo para que siempre filtre)
+    # 4. FILTRO DE FECHAS
     query += " AND co.fecha_compra BETWEEN ? AND ?"
     params.extend([start_date, end_date_query])
 
@@ -1797,7 +1796,7 @@ def listar_compras():
     
     compras = db_query(query, tuple(params))
     
-    # Lista de proveedores para el selector (en caso de que lo uses)
+    # Lista de proveedores para el selector (En caso de que se use para carga inicial)
     proveedores_disponibles = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_proveedor = 1 ORDER BY razon_social, apellido")
 
     return render_template('compras/listar_compras.html', 
@@ -1806,7 +1805,6 @@ def listar_compras():
                            end_date=end_date_display,
                            filtros_activos={'proveedor': filtro_proveedor, 'tipo_item': filtro_tipo_item, 'estado_pago': filtro_estado_pago},
                            proveedores_disponibles=proveedores_disponibles)
-    
     
     
     
@@ -2779,7 +2777,7 @@ def ver_detalle_cc_cliente(cliente_id):
             movimientos.append({
                 'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': monto_reg, 
                 'moneda_display': 'USD', 'descripcion': desc_pago, 
-                'rubro': 'EQUIPOS', 'es_cuota': False, 'ref': p['id']
+                'rubro': 'EQUIPOS', 'es_cuota': False, 'ref': f"{p['id'] or ''} {p['observaciones']}"#'ref':  p['observaciones'] + p['id']
             })
         else:
             # --- LÓGICA PARA SERVICIOS / VARIOS (ARS) ---
@@ -3435,10 +3433,10 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                     total_precio_venta_items_usd += p_usd_momento * c
                     has_any_valid_item = True
 
-            if not has_any_valid_item:
-                flash("Debe añadir al menos un ítem.", "danger")
-                db_conn.rollback()
-                return redirect(url_for('crear_presupuesto_reparacion'))
+            #if not has_any_valid_item:
+            #    flash("Debe añadir al menos un ítem.", "danger")
+            #    db_conn.rollback()
+            #    return redirect(url_for('crear_presupuesto_reparacion'))
 
             # --- CÁLCULO FINAL ARS ---
             # Independientemente de la moneda del presupuesto, el final a cobrar se guarda en ARS calculando USD * Cotización + MO
@@ -3500,57 +3498,115 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
         
         
     # ... (el resto de tu archivo app.py continúa aquí) ...
+#@app.route('/presupuestos/reparaciones') 
+#@login_required
+#@tecnico_required
+#def listar_presupuestos_reparacion():
+#    filtro_cliente = request.args.get('cliente', '')
+#    filtro_imei = request.args.get('imei', '').strip()
+#    filtro_tipo_servicio = request.args.get('tipo_servicio', '')
+#
+#    query = "SELECT s.*, p.nombre, p.apellido, p.razon_social FROM servicios_reparacion s JOIN personas p ON s.cliente_id = p.id WHERE s.status = 'PRESUPUESTO'"
+#    params = []
+#
+#    if filtro_cliente:
+#        #query += " AND p.id = ?"
+#        #params.append(filtro_cliente)
+#        query += """ AND (
+#        LOWER(p.nombre) LIKE LOWER(?) OR 
+#        LOWER(p.apellido) LIKE LOWER(?) OR 
+#        LOWER(p.razon_social) LIKE LOWER(?) OR
+#        LOWER(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, '')) LIKE LOWER(?)
+#    )"""
+#    term = f"%{filtro_cliente}%"
+#    params.extend([term, term, term, term])
+        
+        
+#    if filtro_imei:
+#        query += " AND s.imei_equipo LIKE ?"
+#        params.append(f"%{filtro_imei}%")
+#    if filtro_tipo_servicio:
+#        query += " AND s.tipo_servicio = ?"
+#        params.append(filtro_tipo_servicio)
+
+
+ #   query += " ORDER BY s.fecha_servicio DESC"
+ #   presupuestos = db_query(query, tuple(params))
+ #   
+ #   clientes_disponibles = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY razon_social, apellido")
+
+ #   return render_template('presupuestos/listar_reparaciones.html', 
+ #                          presupuestos=presupuestos,
+ #                          filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tipo_servicio': filtro_tipo_servicio},
+  #                         clientes_disponibles=clientes_disponibles)
+
 @app.route('/presupuestos/reparaciones') 
 @login_required
 @tecnico_required
 def listar_presupuestos_reparacion():
-    filtro_cliente = request.args.get('cliente', '')
+    # Ahora 'filtro_cliente' será un ID (ej: "5")
+    filtro_cliente = request.args.get('cliente', '').strip()
     filtro_imei = request.args.get('imei', '').strip()
     filtro_tipo_servicio = request.args.get('tipo_servicio', '')
 
-    query = "SELECT s.*, p.nombre, p.apellido, p.razon_social FROM servicios_reparacion s JOIN personas p ON s.cliente_id = p.id WHERE s.status = 'PRESUPUESTO'"
+    query = """
+        SELECT s.*, p.nombre, p.apellido, p.razon_social 
+        FROM servicios_reparacion s 
+        JOIN personas p ON s.cliente_id = p.id 
+        WHERE s.status = 'PRESUPUESTO'
+    """
     params = []
 
-    if filtro_cliente:
+    # Si hay un ID seleccionado, filtramos por ese ID exacto
+    if filtro_cliente and filtro_cliente.isdigit():
         query += " AND p.id = ?"
-        params.append(filtro_cliente)
+        params.append(int(filtro_cliente))
+
     if filtro_imei:
         query += " AND s.imei_equipo LIKE ?"
         params.append(f"%{filtro_imei}%")
+
     if filtro_tipo_servicio:
         query += " AND s.tipo_servicio = ?"
         params.append(filtro_tipo_servicio)
 
-
     query += " ORDER BY s.fecha_servicio DESC"
-    presupuestos = db_query(query, tuple(params))
     
-    clientes_disponibles = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY razon_social, apellido")
+    presupuestos = db_query(query, tuple(params))
 
     return render_template('presupuestos/listar_reparaciones.html', 
                            presupuestos=presupuestos,
-                           filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tipo_servicio': filtro_tipo_servicio},
-                           clientes_disponibles=clientes_disponibles)
-
-
+                           filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tipo_servicio': filtro_tipo_servicio})
+    
+    
 @app.route('/servicio_tecnico/reparaciones/historial')
 @login_required
 @tecnico_required
 def listar_reparaciones_completadas():
     start_date, end_date_display, end_date_query = get_date_filters()
-    filtro_cliente = request.args.get('cliente', '')
+    
+    # Capturamos el ID del cliente desde Select2
+    filtro_cliente = request.args.get('cliente', '').strip()
     filtro_imei = request.args.get('imei', '').strip()
     filtro_tipo_servicio = request.args.get('tipo_servicio', '')
 
-    query = "SELECT s.*, p.nombre, p.apellido, p.razon_social FROM servicios_reparacion s JOIN personas p ON s.cliente_id = p.id WHERE s.status = 'COMPLETADO' AND s.fecha_servicio BETWEEN ? AND ?"
+    query = """
+        SELECT s.*, p.nombre, p.apellido, p.razon_social 
+        FROM servicios_reparacion s 
+        JOIN personas p ON s.cliente_id = p.id 
+        WHERE s.status = 'COMPLETADO' AND s.fecha_servicio BETWEEN ? AND ?
+    """
     params = [start_date, end_date_query]
 
-    if filtro_cliente:
+    # CAMBIO AQUÍ: Filtrar por ID exacto
+    if filtro_cliente and filtro_cliente.isdigit():
         query += " AND p.id = ?"
-        params.append(filtro_cliente)
+        params.append(int(filtro_cliente))
+        
     if filtro_imei:
         query += " AND s.imei_equipo LIKE ?"
         params.append(f"%{filtro_imei}%")
+        
     if filtro_tipo_servicio:
         query += " AND s.tipo_servicio = ?"
         params.append(filtro_tipo_servicio)
@@ -3558,13 +3614,15 @@ def listar_reparaciones_completadas():
     query += " ORDER BY s.fecha_servicio DESC"
     reparaciones = db_query(query, tuple(params))
     
-    clientes_disponibles = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY razon_social, apellido")
-
-    return render_template('servicio_tecnico/reparaciones.html', reparaciones=reparaciones, titulo="Historial de Servicios Completados", 
-                           start_date=start_date, end_date=end_date_display,
-                           filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tipo_servicio': filtro_tipo_servicio},
-                           clientes_disponibles=clientes_disponibles)
-
+    return render_template('servicio_tecnico/reparaciones.html', 
+                           reparaciones=reparaciones, 
+                           titulo="Historial de Servicios Completados", 
+                           start_date=start_date, 
+                           end_date=end_date_display,
+                           filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tipo_servicio': filtro_tipo_servicio})
+    
+    
+    
 @app.route('/servicio_tecnico/reparacion/<int:servicio_id>')
 @login_required
 def view_reparacion(servicio_id):
@@ -3597,8 +3655,17 @@ def listar_presupuestos_venta():
     params = []
 
     if filtro_cliente:
-        query += " AND p.id = ?"
-        params.append(filtro_cliente)
+       # query += " AND p.id = ?"
+        #params.append(filtro_cliente)
+         query += """ AND (
+        LOWER(p.nombre) LIKE LOWER(?) OR 
+        LOWER(p.apellido) LIKE LOWER(?) OR 
+        LOWER(p.razon_social) LIKE LOWER(?) OR
+        LOWER(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, '')) LIKE LOWER(?)
+    )"""
+    term = f"%{filtro_cliente}%"
+    params.extend([term, term, term, term])
+        
     if filtro_producto:
         query += " AND (c.marca LIKE ? OR c.modelo LIKE ? OR c.imei LIKE ?)"
         params.extend([f"%{filtro_producto}%", f"%{filtro_producto}%", f"%{filtro_producto}%"])
@@ -3749,25 +3816,53 @@ def venta_rapida():
                     "INSERT INTO personas (nombre, apellido, razon_social, cuit_cuil, es_cliente) VALUES (?,?,?,?,?)",
                     ('Venta', 'Generica', 'CONSUMIDOR FINAL', '99999999', 1), return_id=True)
 
-            # 2. CAPTURA DE DATOS
+            # 2. CAPTURA DE DATOS DE PRODUCTOS
             items_ids = request.form.getlist('item_id[]')
             cantidades = request.form.getlist('cantidad[]')
             precios_unitarios = request.form.getlist('precio_unitario[]')
             
-            metodo_pago = request.form.get('metodo_pago', 'EFECTIVO')
-            monto_recibido = float(request.form.get('monto_recibido', 0) or 0)
-            moneda_pago = request.form.get('moneda_pago', 'ARS')
-            cotiz_manual = float(request.form.get('cotiz_manual') or valor_dolar)
-
             if not items_ids:
                 flash("No se seleccionaron productos.", "warning")
                 return redirect(url_for('venta_rapida'))
 
-            # 3. CÁLCULO DE TOTALES
-            total_venta_ars = monto_recibido if moneda_pago == 'ARS' else monto_recibido * cotiz_manual
-            total_venta_usd = total_venta_ars / cotiz_manual if cotiz_manual > 0 else 0
+            # --- NUEVA LÓGICA DE CAPTURA DE PAGOS MÚLTIPLES ---
+            metodos_pago_list = request.form.getlist('metodo_pago[]')
+            montos_recibidos_list = request.form.getlist('monto_recibido[]')
+            monedas_pago_list = request.form.getlist('moneda_pago[]')
+            cotiz_manual = float(request.form.get('cotiz_manual') or valor_dolar)
 
-            # 4. INSERTAR EN servicios_reparacion (10 Signos de pregunta, 10 Valores)
+            # 3. CÁLCULO DE TOTALES (Sumamos todos los pagos para obtener el total de la venta)
+            total_venta_ars = 0.0
+            pagos_a_procesar = []
+
+            for i in range(len(metodos_pago_list)):
+                monto_f = float(montos_recibidos_list[i] or 0)
+                if monto_f > 0:
+                    metodo = metodos_pago_list[i]
+                    moneda = monedas_pago_list[i]
+                    
+                    # Convertimos a ARS contable para el total de la venta
+                    m_ars_contable = monto_f if moneda == 'ARS' else monto_f * cotiz_manual
+                    m_usd_contable = monto_f if moneda == 'USD' else monto_f / cotiz_manual
+                    
+                    total_venta_ars += m_ars_contable
+                    
+                    pagos_a_procesar.append({
+                        'metodo': metodo,
+                        'monto_nominal': monto_f,
+                        'moneda': moneda,
+                        'm_ars_contable': m_ars_contable,
+                        'm_usd_contable': m_usd_contable
+                    })
+
+            if not pagos_a_procesar:
+                flash("Debe ingresar al menos una forma de pago con monto mayor a 0.", "danger")
+                db_conn.rollback()
+                return redirect(url_for('venta_rapida'))
+
+            total_venta_usd_total = total_venta_ars / cotiz_manual if cotiz_manual > 0 else 0
+
+            # 4. INSERTAR EN servicios_reparacion (Encabezado de la venta)
             sql_servicio = """
                 INSERT INTO servicios_reparacion 
                 (cliente_id, tecnico_nombre, falla_reportada, precio_final_ars, status, 
@@ -3782,9 +3877,8 @@ def venta_rapida():
                 'COMPLETADO', 
                 'VENTA_ACCESORIO', 
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                #obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S"), 
                 0, 
-                total_venta_usd, 
+                total_venta_usd_total, 
                 0
             )
             servicio_id = db_execute_func(db_conn, sql_servicio, valores_servicio, return_id=True)
@@ -3798,43 +3892,50 @@ def venta_rapida():
                 # Descontar Stock
                 db_execute_func(db_conn, "UPDATE repuestos SET stock = stock - ? WHERE id = ?", (cant, id_rep))
                 
-                # Precio unitario en USD para el registro
-                p_unit_usd = p_unit if moneda_pago == 'USD' else p_unit / cotiz_manual
+                # Precio unitario en USD para el registro histórico
+                p_unit_usd = p_unit if (len(pagos_a_procesar) == 1 and pagos_a_procesar[0]['moneda'] == 'USD') else p_unit / cotiz_manual
                 
                 db_execute_func(db_conn, """
                     INSERT INTO repuestos_usados (servicio_id, repuesto_id, cantidad, costo_usd_momento) 
                     VALUES (?, ?, ?, ?)
                 """, (servicio_id, id_rep, cant, p_unit_usd))
 
-            # 6. IMPACTO EN CAJA
-            #tipo_mov = 'INGRESO_SERVICIO_REPARACION_ARS' if moneda_pago == 'ARS' else 'INGRESO_VENTA_USD'
-            #m_ars = total_venta_ars if moneda_pago == 'ARS' else 0
-            #m_usd = total_venta_usd if moneda_pago == 'USD' else 0
-            
-            #registrar_movimiento_caja(current_user.id, tipo_mov, m_ars, m_usd, 
-            #                          f"Venta Rápida Accesorios #{servicio_id}", None, servicio_id, metodo_pago)
+            # --- 6 y 7. IMPACTO EN CAJA Y CUENTA CORRIENTE (POR CADA PAGO) ---
+            for pago in pagos_a_procesar:
+                # Determinar tipo de movimiento para caja
+                tipo_mov = 'INGRESO_VENTA_RAPIDA_ARS' if pago['moneda'] == 'ARS' else 'INGRESO_VENTA_RAPIDA_USD'
+                m_ars_fisico = pago['monto_nominal'] if pago['moneda'] == 'ARS' else 0
+                m_usd_fisico = pago['monto_nominal'] if pago['moneda'] == 'USD' else 0
 
-            # Busca esta parte dentro de @app.route('/ventas/rapida'...)
-            # 6. IMPACTO EN CAJA
-            # CAMBIAMOS EL TIPO A "VENTA_RAPIDA" para diferenciarlo de los servicios normales
-            tipo_mov = 'INGRESO_VENTA_RAPIDA_ARS' if moneda_pago == 'ARS' else 'INGRESO_VENTA_RAPIDA_USD'
-            m_ars = total_venta_ars if moneda_pago == 'ARS' else 0
-            m_usd = total_venta_usd if moneda_pago == 'USD' else 0
+                # Registro en Caja
+                registrar_movimiento_caja(
+                    current_user.id, 
+                    tipo_mov, 
+                    m_ars_fisico, 
+                    m_usd_fisico, 
+                    f"Venta Rápida #{servicio_id} - Pago: {pago['metodo']}", 
+                    None, 
+                    servicio_id, 
+                    pago['metodo']
+                )
 
-            registrar_movimiento_caja(current_user.id, tipo_mov, m_ars, m_usd, 
-                                    f"Venta Rápida Accesorios #{servicio_id}", None, servicio_id, metodo_pago)
-
-            
-            
-            # 7. REGISTRAR COBRO PARA CC
-            db_execute_func(db_conn, """
-                INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, imputacion)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                  total_venta_ars, m_usd, metodo_pago, f"Pago Venta Rápida #{servicio_id}", 'REPARACIONES'))
+                # Registro de Cobro para Cuenta Corriente
+                db_execute_func(db_conn, """
+                    INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, imputacion)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    cliente_id, 
+                    current_user.id, 
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                    pago['m_ars_contable'], 
+                    pago['m_usd_contable'], 
+                    pago['metodo'], 
+                    f"Pago Venta Rápida #{servicio_id}", 
+                    'REPARACIONES'
+                ))
 
             db_conn.commit()
-            flash(f"Venta Rápida #{servicio_id} procesada con éxito.", "success")
+            flash(f"Venta Rápida #{servicio_id} procesada con éxito ({len(pagos_a_procesar)} pagos registrados).", "success")
             return redirect(url_for('venta_rapida'))
 
         except Exception as e:
@@ -3844,7 +3945,6 @@ def venta_rapida():
             return redirect(url_for('venta_rapida'))
 
     return render_template('ventas/venta_rapida.html', valor_dolar=valor_dolar)
-
 
 
 @app.route('/ventas/procesar_pago/<int:venta_id>', methods=['POST'])

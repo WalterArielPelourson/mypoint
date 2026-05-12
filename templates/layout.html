@@ -46,7 +46,7 @@
                             <i class="bi bi-boxes me-1"></i>Inventario
                         </a>
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="navbarDropdownInventario">
-                            {% if current_user.role in ['usuario', 'vendedor', 'admin', 'superadmin'] %}
+                            {% if current_user.role in ['usuario', 'vendedor', 'admin', 'superadmin', 'tecnico'] %}
                             <li><a class="dropdown-item" href="{{ url_for('inventario_celulares') }}"><i class="bi bi-phone me-1"></i>Celulares / Equipos</a></li>
                             {% endif %}
                             
@@ -104,21 +104,29 @@
                         </ul>
                     </li>
 
+                   
+
                     {# --- PERSONAS Y CC --- #}
-                    {% if current_user.role in ['usuario', 'vendedor', 'admin', 'superadmin'] %}
+                    {% if current_user.role in ['tecnico', 'usuario', 'admin', 'superadmin'] %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle {% if request.endpoint.startswith('personas') or 'cuentas_corrientes' in request.endpoint %}active{% endif %}" href="#" id="navbarDropdownPersonas" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="bi bi-people-fill me-1"></i>Personas
                         </a>
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="navbarDropdownPersonas">
+                            {# Acceso para todos, incluido el técnico #}
                             <li><a class="dropdown-item" href="{{ url_for('listar_personas') }}"><i class="bi bi-list-ul me-1"></i>Listar Personas</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('agregar_persona') }}"><i class="bi bi-person-plus me-1"></i>Agregar Persona</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{{ url_for('pago_anticipado_cliente') }}">Registrar Seña/Anticipo</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('listar_clientes_cc') }}"><i class="bi bi-cash-coin me-1"></i>Cta. Cte. Clientes (Cobrar)</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('listar_proveedores_cc') }}"><i class="bi bi-credit-card me-1"></i>Cta. Cte. Proveedores (Pagar)</a></li>
+                            
+                            {# Ocultamos la parte financiera si el usuario es técnico #}
+                            {% if current_user.role != 'tecnico' %}
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{{ url_for('pago_anticipado_cliente') }}">Registrar Seña/Anticipo</a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('listar_clientes_cc') }}"><i class="bi bi-cash-coin me-1"></i>Cta. Cte. Clientes (Cobrar)</a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('listar_proveedores_cc') }}"><i class="bi bi-credit-card me-1"></i>Cta. Cte. Proveedores (Pagar)</a></li>
+                            {% endif %}
                         </ul>
                     </li>
+                    
 
                     {# --- CAJA --- #}
                     <li class="nav-item dropdown">
