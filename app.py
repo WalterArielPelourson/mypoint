@@ -3657,14 +3657,14 @@ def listar_presupuestos_venta():
     if filtro_cliente:
        # query += " AND p.id = ?"
         #params.append(filtro_cliente)
-         query += """ AND (
+        query += """ AND (
         LOWER(p.nombre) LIKE LOWER(?) OR 
         LOWER(p.apellido) LIKE LOWER(?) OR 
         LOWER(p.razon_social) LIKE LOWER(?) OR
         LOWER(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, '')) LIKE LOWER(?)
-    )"""
-    term = f"%{filtro_cliente}%"
-    params.extend([term, term, term, term])
+        )"""
+        term = f"%{filtro_cliente}%"
+        params.extend([term, term, term, term])
         
     if filtro_producto:
         query += " AND (c.marca LIKE ? OR c.modelo LIKE ? OR c.imei LIKE ?)"
