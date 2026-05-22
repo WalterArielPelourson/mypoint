@@ -3313,6 +3313,7 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 'tipo_servicio': servicio['tipo_servicio'],
                 'imei_equipo': servicio['imei_equipo'] or '', 
                 'falla_reportada': servicio['falla_reportada'] or '',
+                'observaciones': servicio['observaciones'] or '',
                 'solucion_aplicada': servicio['solucion_aplicada'] or '',
                 'precio_mano_obra_ars': f"{servicio['precio_mano_obra_ars']:.2f}",
                 'repuesto_stock_id[]': [],
@@ -3321,7 +3322,10 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 'precio_venta_usd_stock[]': [], 
                 'manual_item_nombre[]': [],
                 'cantidad_manual[]': [],
-                'precio_venta_usd_manual[]': []
+                'precio_venta_usd_manual[]': [],
+                'moneda_presupuesto': servicio['moneda_presupuesto'] or 'ARS', # <-- Agrega esta línea
+                'precio_mano_obra_original': f"{servicio['m_o_valor_original']:.2f}" if servicio['m_o_valor_original'] else "0.00", 
+                'moneda_mano_obra': servicio['moneda_mano_obra'] or 'ARS', # <--- AGREGA ESTA LÍNEA
             }
             
             for item in items_usados:
@@ -3371,7 +3375,16 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             tipo_servicio = form_data_raw.get('tipo_servicio', [''])[0].strip()
             imei_equipo = form_data_raw.get('imei_equipo', [''])[0].strip() if form_data_raw.get('imei_equipo') else ''
             falla_reportada = form_data_raw.get('falla_reportada', [''])[0].strip() if form_data_raw.get('falla_reportada') else ''
+            observaciones = form_data_raw.get('observaciones', [''])[0].strip() if form_data_raw.get('observaciones') else ''
             solucion_aplicada = form_data_raw.get('solucion_aplicada', [''])[0].strip() if form_data_raw.get('solucion_aplicada') else ''
+            # --- Busca este bloque en el POST ---
+            moneda_m_o = form_data_raw.get('moneda_mano_obra', ['ARS'])[0] # <--- Capturar
+            m_o_input = float(form_data_raw.get('precio_mano_obra', ['0'])[0] or 0)
+            # --- PUNTO A: Captura de la moneda del presupuesto ---
+            moneda_presupuesto = form_data_raw.get('moneda_presupuesto', ['ARS'])[0].strip()
+            
+          
+                        
             
             # --- MODIFICACIÓN: MANO DE OBRA BIMONETARIA ---
             m_o_input_str = form_data_raw.get('precio_mano_obra', ['0.00'])[0]
@@ -3444,29 +3457,32 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             
             fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             #fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
-
+            moneda_presupuesto = form_data_raw.get('moneda_presupuesto', ['ARS'])[0]
+            
             if is_edit:
                 db_execute_func(db_conn,
                     """UPDATE servicios_reparacion SET 
                         cliente_id = ?, tecnico_nombre = ?, imei_equipo = ?, falla_reportada = ?, solucion_aplicada = ?, 
                         costo_total_repuestos_usd = ?, precio_mano_obra_ars = ?, precio_final_ars = ?, 
-                        fecha_servicio = ?, tipo_servicio = ?
+                        fecha_servicio = ?,  tipo_servicio = ?, observaciones = ?, moneda_presupuesto = ?, moneda_mano_obra = ?, m_o_valor_original = ?
                        WHERE id = ?""",
                     (cliente_id, tecnico_nombre, imei_equipo, falla_reportada, solucion_aplicada, 
                      total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, 
-                     fecha_actual, tipo_servicio, servicio_id)
+                     fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input, servicio_id)
                 )
                 db_execute_func(db_conn, "DELETE FROM repuestos_usados WHERE servicio_id = ?", (servicio_id,))
             else:
                 servicio_id = db_execute_func(db_conn,
                     """INSERT INTO servicios_reparacion 
                        (cliente_id, tecnico_nombre, imei_equipo, falla_reportada, solucion_aplicada, 
-                        costo_total_repuestos_usd, precio_mano_obra_ars, precio_final_ars, fecha_servicio, status, tipo_servicio) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PRESUPUESTO', ?)""",
+                        costo_total_repuestos_usd, precio_mano_obra_ars, precio_final_ars, fecha_servicio, status, tipo_servicio, observaciones, moneda_presupuesto, moneda_mano_obra, m_o_valor_original) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PRESUPUESTO', ?, ?, ?, ?, ? )""",
                     (cliente_id, tecnico_nombre, imei_equipo, falla_reportada, solucion_aplicada, 
-                     total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, fecha_actual, tipo_servicio),
-                    return_id=True
+                     total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input),
+                return_id=True
                 )
+                
+            # --- INSERTAR REPUESTOS USADOS --
 
             for item in items_para_registrar:
                 db_execute_func(db_conn, "INSERT INTO repuestos_usados (servicio_id, repuesto_id, manual_item_nombre, cantidad, costo_usd_momento) VALUES (?, ?, ?, ?, ?)", 
@@ -4236,6 +4252,27 @@ def editar_presupuesto_venta(venta_id):
             observaciones = request.form.get('observaciones', '').strip()
             
             # --- LÓGICA DE PRECIO Y GANANCIA ---
+            #ganancia_tipo = request.form.get('ganancia_tipo')
+            #costo_base_usd = db_query_func(db_conn, "SELECT costo_usd FROM celulares WHERE id = ?", (venta['celular_id'],))[0]['costo_usd']
+            
+            #precio_final_usd_pre_tax = 0.0
+            #monto_agregado_ars_db = None
+            #monto_agregado_usd_db = None
+            #ganancia_pct_db = None
+
+            #if ganancia_tipo == 'porcentaje':
+            #    ganancia_pct_db = float(request.form.get('ganancia_pct', 0) or 0)
+            #    precio_final_usd_pre_tax = costo_base_usd * (1 + ganancia_pct_db / 100)
+            #else:
+            #    monto_agregado = float(request.form.get('monto_agregado', 0) or 0)
+            #    if request.form.get('monto_agregado_moneda') == 'USD':
+            #        precio_final_usd_pre_tax = costo_base_usd + monto_agregado
+            #        monto_agregado_usd_db = monto_agregado
+            #    else:
+            #        precio_final_usd_pre_tax = costo_base_usd + (monto_agregado / valor_dolar_venta_local)
+            #        monto_agregado_ars_db = monto_agregado
+                    
+            # --- LÓGICA DE PRECIO Y GANANCIA ---
             ganancia_tipo = request.form.get('ganancia_tipo')
             costo_base_usd = db_query_func(db_conn, "SELECT costo_usd FROM celulares WHERE id = ?", (venta['celular_id'],))[0]['costo_usd']
             
@@ -4247,14 +4284,28 @@ def editar_presupuesto_venta(venta_id):
             if ganancia_tipo == 'porcentaje':
                 ganancia_pct_db = float(request.form.get('ganancia_pct', 0) or 0)
                 precio_final_usd_pre_tax = costo_base_usd * (1 + ganancia_pct_db / 100)
+                # Al ser porcentaje, nos aseguramos de que los montos fijos queden vacíos
+                monto_agregado_ars_db = None
+                monto_agregado_usd_db = None
             else:
                 monto_agregado = float(request.form.get('monto_agregado', 0) or 0)
-                if request.form.get('monto_agregado_moneda') == 'USD':
+                moneda_seleccionada = request.form.get('monto_agregado_moneda')
+                
+                if moneda_seleccionada == 'USD':
                     precio_final_usd_pre_tax = costo_base_usd + monto_agregado
                     monto_agregado_usd_db = monto_agregado
+                    # Limpiamos explícitamente el campo ARS
+                    monto_agregado_ars_db = None
                 else:
+                    # Caso ARS
                     precio_final_usd_pre_tax = costo_base_usd + (monto_agregado / valor_dolar_venta_local)
                     monto_agregado_ars_db = monto_agregado
+                    # Limpiamos explícitamente el campo USD
+                    monto_agregado_usd_db = None
+                
+                # Al ser monto fijo, el porcentaje debe ser nulo
+                ganancia_pct_db = None        
+            
 
             # --- ACTUALIZACIÓN DE ÍTEMS ADICIONALES (Venta Accesorios) ---
             db_execute_func(db_conn, "DELETE FROM items_adicionales_venta WHERE venta_id = ?", (venta_id,))
@@ -5003,10 +5054,23 @@ def reporte_rentabilidad():
     dolar_c = dolar_info['valor_dolar_compra'] or 1.0
 
     # --- 1. RESUMEN EQUIPOS POR TIPO ---
+    #resumen_equipos = db_query("""
+    #    SELECT 
+    #        COALESCE(comp.tipo_item, 'CELULAR') as clase,
+    #        COALESCE(SUM(v.precio_final_ars), 0) as total_venta, 
+    #        COALESCE(SUM(c.costo_usd * v.valor_dolar_momento), 0) as total_costo
+    #    FROM ventas v 
+    #    JOIN celulares c ON v.celular_id = c.id
+    #    LEFT JOIN compras comp ON c.id = comp.item_id AND comp.tipo_item IN ('CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO')
+    #    WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
+    #    GROUP BY 1
+    #""", (start_date, end_date_query))
+
     resumen_equipos = db_query("""
         SELECT 
             COALESCE(comp.tipo_item, 'CELULAR') as clase,
-            COALESCE(SUM(v.precio_final_ars), 0) as total_venta, 
+            -- Aplicamos la fórmula: Total / (1 + (Impuestos / 100)) para obtener el valor neto
+            COALESCE(SUM(v.precio_final_ars / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))), 0) as total_venta, 
             COALESCE(SUM(c.costo_usd * v.valor_dolar_momento), 0) as total_costo
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id
@@ -5014,19 +5078,37 @@ def reporte_rentabilidad():
         WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
         GROUP BY 1
     """, (start_date, end_date_query))
-
+    
+    
     # --- 2. RESUMEN INSUMOS ---
+    #resumen_insumos = db_query("""
+    #    SELECT COALESCE(r.categoria, 'MANUAL') as clase,
+    #           COALESCE(SUM(ru.cantidad * ru.costo_usd_momento * ?), 0) as total_venta,
+    #           COALESCE(SUM(ru.cantidad * r.costo_usd * ?), 0) as total_costo
+    #    FROM repuestos_usados ru
+    #    JOIN servicios_reparacion sr ON ru.servicio_id = sr.id
+    #    LEFT JOIN repuestos r ON ru.repuesto_id = r.id
+    #    WHERE sr.status = 'COMPLETADO' AND sr.fecha_servicio BETWEEN ? AND ?
+    #    GROUP BY 1
+    #""", (dolar_c, dolar_c, start_date, end_date_query))
+
+    # --- 2. RESUMEN INSUMOS (Repuestos, Accesorios, etc.) ---
     resumen_insumos = db_query("""
-        SELECT COALESCE(r.categoria, 'MANUAL') as clase,
-               COALESCE(SUM(ru.cantidad * ru.costo_usd_momento * ?), 0) as total_venta,
-               COALESCE(SUM(ru.cantidad * r.costo_usd * ?), 0) as total_costo
+        SELECT 
+            -- Normalizamos a Mayúsculas para que 'funda' y 'FUNDA' se sumen juntas
+            UPPER(COALESCE(r.categoria, 'MANUAL/OTROS')) as clase,
+            -- Suma de ventas (lo que se le cobró al cliente)
+            COALESCE(SUM(ru.cantidad * ru.costo_usd_momento * ?), 0) as total_venta,
+            -- Suma de costos (usamos COALESCE por si el costo_usd es NULL)
+            COALESCE(SUM(ru.cantidad * COALESCE(r.costo_usd, 0) * ?), 0) as total_costo
         FROM repuestos_usados ru
         JOIN servicios_reparacion sr ON ru.servicio_id = sr.id
         LEFT JOIN repuestos r ON ru.repuesto_id = r.id
         WHERE sr.status = 'COMPLETADO' AND sr.fecha_servicio BETWEEN ? AND ?
         GROUP BY 1
     """, (dolar_c, dolar_c, start_date, end_date_query))
-
+    
+    
     # --- 3. MANO DE OBRA VS COMISIONES ---
     res_mo = db_query("""
         SELECT 
@@ -5096,17 +5178,33 @@ def reporte_rentabilidad():
     """, (start_date, end_date_query))
 
     # Detalle de Insumos
+    #insumos_detalle = db_query("""
+    #    SELECT sr.fecha_servicio, COALESCE(r.nombre_parte, ru.manual_item_nombre) as nombre_parte, 
+    #           COALESCE(r.categoria, 'MANUAL') as categoria, ru.cantidad,
+    #           COALESCE(ru.costo_usd_momento * ?, 0) as precio_venta_ars,
+    #           COALESCE(r.costo_usd * ?, 0) as costo_compra_ars
+    #    FROM repuestos_usados ru
+    #    JOIN servicios_reparacion sr ON ru.servicio_id = sr.id
+    #    LEFT JOIN repuestos r ON ru.repuesto_id = r.id
+    #    WHERE sr.status = 'COMPLETADO' AND sr.fecha_servicio BETWEEN ? AND ?
+    #""", (dolar_c, dolar_c, start_date, end_date_query))
+
+    # --- DETALLE DE INSUMOS ---
     insumos_detalle = db_query("""
-        SELECT sr.fecha_servicio, COALESCE(r.nombre_parte, ru.manual_item_nombre) as nombre_parte, 
-               COALESCE(r.categoria, 'MANUAL') as categoria, ru.cantidad,
-               COALESCE(ru.costo_usd_momento * ?, 0) as precio_venta_ars,
-               COALESCE(r.costo_usd * ?, 0) as costo_compra_ars
+        SELECT 
+            sr.fecha_servicio, 
+            COALESCE(r.nombre_parte, ru.manual_item_nombre) as nombre_parte, 
+            UPPER(COALESCE(r.categoria, 'MANUAL')) as categoria, 
+            ru.cantidad,
+            COALESCE(ru.costo_usd_momento * ?, 0) as precio_venta_ars,
+            COALESCE(COALESCE(r.costo_usd, 0) * ?, 0) as costo_compra_ars
         FROM repuestos_usados ru
         JOIN servicios_reparacion sr ON ru.servicio_id = sr.id
         LEFT JOIN repuestos r ON ru.repuesto_id = r.id
         WHERE sr.status = 'COMPLETADO' AND sr.fecha_servicio BETWEEN ? AND ?
     """, (dolar_c, dolar_c, start_date, end_date_query))
-
+    
+    
     return render_template('reportes/rentabilidad.html',
                            resumen_equipos=resumen_equipos,
                            resumen_insumos=resumen_insumos,
@@ -5119,18 +5217,47 @@ def reporte_rentabilidad():
                            start_date=start_date, end_date=end_date_display)
     
 
+#@app.route('/reportes/detalle_ventas_rentabilidad')
+#@login_required
+#@admin_required
+#def detalle_ventas_rentabilidad():
+#    start_date, end_date_display, end_date_query = get_date_filters()
+#    
+#    # Consulta detallada en DÓLARES
+#    ventas = db_query("""
+#        SELECT v.id, v.fecha_venta, c.marca, c.modelo, c.imei, 
+#               v.precio_final_usd, 
+#               COALESCE(c.costo_usd, 0) as costo_usd,
+#               (v.precio_final_usd - COALESCE(c.costo_usd, 0)) as margen_usd
+#        FROM ventas v 
+#        JOIN celulares c ON v.celular_id = c.id 
+#        WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
+#        ORDER BY v.fecha_venta DESC
+#    """, (start_date, end_date_query))
+
+
+#    return render_template('reportes/detalle_ventas.html', 
+#                           ventas=ventas, start_date=start_date, end_date=end_date_display)
+
 @app.route('/reportes/detalle_ventas_rentabilidad')
 @login_required
 @admin_required
 def detalle_ventas_rentabilidad():
     start_date, end_date_display, end_date_query = get_date_filters()
     
-    # Consulta detallada en DÓLARES
+    # Consulta detallada en DÓLARES (Deduciendo Impuestos/Comisiones del precio y del margen)
     ventas = db_query("""
-        SELECT v.id, v.fecha_venta, c.marca, c.modelo, c.imei, 
-               v.precio_final_usd, 
-               COALESCE(c.costo_usd, 0) as costo_usd,
-               (v.precio_final_usd - COALESCE(c.costo_usd, 0)) as margen_usd
+        SELECT 
+            v.id, 
+            v.fecha_venta, 
+            c.marca, 
+            c.modelo, 
+            c.imei, 
+            -- 1. Calculamos el precio de venta NETO (sin impuestos)
+            (v.precio_final_usd / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) as precio_final_usd, 
+            COALESCE(c.costo_usd, 0) as costo_usd,
+            -- 2. Calculamos el margen real: (Precio Neto - Costo)
+            ((v.precio_final_usd / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) - COALESCE(c.costo_usd, 0)) as margen_usd
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id 
         WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
@@ -5139,6 +5266,8 @@ def detalle_ventas_rentabilidad():
 
     return render_template('reportes/detalle_ventas.html', 
                            ventas=ventas, start_date=start_date, end_date=end_date_display)
+
+
 
 @app.route('/exportar/detalle_ventas_usd')
 @login_required
@@ -5740,6 +5869,190 @@ def listado_diario():
                            total_ingresos_caja_usd=total_ingresos_caja_usd,
                            total_egresos_caja_usd=total_egresos_caja_usd,
                            arqueo_info=arqueo_info)
+
+
+@app.route('/reportes/ventas_totales')
+@login_required
+@admin_required
+def reporte_ventas_totales():
+    start_date, end_date_display, end_date_query = get_date_filters()
+    filtro_tipo = request.args.get('tipo', 'TODOS')
+    filtro_vendedor = request.args.get('vendedor', '')
+
+    params_v = [start_date, end_date_query]
+    params_s = [start_date, end_date_query]
+
+    # --- CONSULTA UNIFICADA CORREGIDA ---
+    query = """ 
+    SELECT * FROM (
+        -- VENTAS DE EQUIPOS
+        SELECT 
+            v.fecha_venta as fecha,
+            'EQUIPO' as categoria,
+            v.id as ref_id,
+            -- Lógica blindada para el nombre del cliente
+            CASE 
+                WHEN p.razon_social IS NOT NULL AND p.razon_social != '' THEN p.razon_social
+                ELSE TRIM(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, ''))
+            END as cliente,
+            c.marca || ' ' || c.modelo || ' (' || c.imei || ')' as descripcion,
+            'VENTA DIRECTA' as vendedor,
+            v.precio_final_ars as total_ars,
+            v.precio_final_usd as total_usd,
+            v.status as estado
+        FROM ventas v
+        JOIN personas p ON v.cliente_id = p.id
+        JOIN celulares c ON v.celular_id = c.id
+        WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
+
+        UNION ALL
+
+        -- SERVICIOS Y ACCESORIOS
+        SELECT 
+            s.fecha_servicio as fecha,
+            s.tipo_servicio as categoria,
+            s.id as ref_id,
+            -- Lógica blindada para el nombre del cliente
+            CASE 
+                WHEN p.razon_social IS NOT NULL AND p.razon_social != '' THEN p.razon_social
+                ELSE TRIM(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, ''))
+            END as cliente,
+            s.falla_reportada as descripcion,
+            COALESCE(s.tecnico_nombre, 'SIN ASIGNAR') as vendedor,
+            s.precio_final_ars as total_ars,
+            CASE 
+                WHEN s.precio_final_ars > 0 THEN (s.precio_final_ars / 1000.0) 
+                ELSE 0 
+            END as total_usd,
+            s.status as estado
+        FROM servicios_reparacion s
+        JOIN personas p ON s.cliente_id = p.id
+        WHERE s.status = 'COMPLETADO' AND s.fecha_servicio BETWEEN ? AND ?
+    ) AS unificado
+    WHERE (cliente IS NOT NULL AND cliente != '')
+    """
+    
+    final_params = params_v + params_s
+
+    if filtro_tipo != 'TODOS':
+        query += " AND unificado.categoria = ?"
+        final_params.append(filtro_tipo)
+    
+    if filtro_vendedor:
+        query += " AND unificado.vendedor LIKE ?"
+        final_params.append(f"%{filtro_vendedor}%")
+
+    query += " ORDER BY fecha DESC"
+    
+    ventas = db_query(query, tuple(final_params))
+    total_ars = sum(v['total_ars'] for v in ventas)
+    
+    return render_template('reportes/ventas_totales.html', 
+                           ventas=ventas, 
+                           total_ars=total_ars,
+                           start_date=start_date, 
+                           end_date=end_date_display,
+                           filtros={'tipo': filtro_tipo, 'vendedor': filtro_vendedor})
+
+@app.route('/exportar/ventas_totales')
+@login_required
+@admin_required
+def exportar_ventas_totales():
+    # 1. Obtener los mismos filtros que la vista de pantalla
+    start_date, end_date_display, end_date_query = get_date_filters()
+    filtro_tipo = request.args.get('tipo', 'TODOS')
+    filtro_vendedor = request.args.get('vendedor', '')
+
+    params_v = [start_date, end_date_query]
+    params_s = [start_date, end_date_query]
+
+    # 2. La misma QUERY UNIFICADA (UNION ALL) para que coincidan los datos
+    query = """
+    SELECT * FROM (
+        SELECT 
+            v.fecha_venta as fecha,
+            'EQUIPO' as categoria,
+            v.id as ref_id,
+            CASE 
+                WHEN p.razon_social IS NOT NULL AND p.razon_social != '' THEN p.razon_social
+                ELSE TRIM(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, ''))
+            END as cliente,
+            c.marca || ' ' || c.modelo || ' (' || c.imei || ')' as descripcion,
+            'VENTA DIRECTA' as vendedor,
+            v.precio_final_ars as total_ars,
+            v.precio_final_usd as total_usd
+        FROM ventas v
+        JOIN personas p ON v.cliente_id = p.id
+        JOIN celulares c ON v.celular_id = c.id
+        WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
+
+        UNION ALL
+
+        SELECT 
+            s.fecha_servicio as fecha,
+            s.tipo_servicio as categoria,
+            s.id as ref_id,
+            CASE 
+                WHEN p.razon_social IS NOT NULL AND p.razon_social != '' THEN p.razon_social
+                ELSE TRIM(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, ''))
+            END as cliente,
+            s.falla_reportada as descripcion,
+            COALESCE(s.tecnico_nombre, 'SIN ASIGNAR') as vendedor,
+            s.precio_final_ars as total_ars,
+            CASE WHEN s.precio_final_ars > 0 THEN (s.precio_final_ars / 1000.0) ELSE 0 END as total_usd
+        FROM servicios_reparacion s
+        JOIN personas p ON s.cliente_id = p.id
+        WHERE s.status = 'COMPLETADO' AND s.fecha_servicio BETWEEN ? AND ?
+    ) AS unificado
+    WHERE 1=1
+    """
+    
+    final_params = params_v + params_s
+
+    if filtro_tipo != 'TODOS':
+        query += " AND unificado.categoria = ?"
+        final_params.append(filtro_tipo)
+    
+    if filtro_vendedor:
+        query += " AND unificado.vendedor LIKE ?"
+        final_params.append(f"%{filtro_vendedor}%")
+
+    query += " ORDER BY fecha DESC"
+    
+    # 3. Ejecutar consulta
+    ventas = db_query(query, tuple(final_params))
+
+    # 4. Generar el archivo CSV (Excel)
+    output = io.StringIO()
+    output.write('\ufeff') # BOM para que Excel reconozca tildes
+    writer = csv.writer(output, delimiter=';') # Punto y coma para Excel en español
+    
+    # Encabezados de las columnas
+    writer.writerow(['Fecha', 'Categoría', 'ID Referencia', 'Cliente', 'Descripción / Item',  'Total ARS', 'Total USD'])
+    
+    # Escribir las filas de datos
+    for v in ventas:
+        writer.writerow([
+            v['fecha'],
+            v['categoria'],
+            v['ref_id'],
+            v['cliente'],
+            v['descripcion'],
+            
+            f"{v['total_ars']:.2f}".replace('.', ','), # Formato número para Excel
+            f"{v['total_usd']:.2f}".replace('.', ',')
+        ])
+    
+    output.seek(0)
+    fecha_str = datetime.now().strftime("%Y-%m-%d")
+    filename = f"Reporte_Ventas_Totales_{fecha_str}.csv"
+    
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment;filename={filename}"}
+    )
+
 
 # ... (resto del código de app.py) ...
 # ... (resto del código de app.py) ...
@@ -7200,6 +7513,7 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("ventas", "celular_parte_pago_4_id", "INTEGER") # Toma celulares
         agregar_columna("ventas", "valor_celular_parte_pago_4_usd", "REAL") # Toma celulares   
         agregar_columna("servicios_reparacion", "tipo_servicio", "TEXT DEFAULT 'REPARACION'")
+        
         agregar_columna("servicios_reparacion", "saldo_pendiente", "REAL DEFAULT 0.0")
         agregar_columna("servicios_reparacion", "tecnico_id", "INTEGER")
         agregar_columna("servicios_reparacion", "tecnico_nombre", "TEXT")
@@ -7207,6 +7521,14 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("servicios_reparacion", "pago_tecnico_estado", "TEXT DEFAULT 'PENDIENTE'")
         agregar_columna("servicios_reparacion", "comision_pct", "REAL DEFAULT 0.0")
         agregar_columna("servicios_reparacion", "comision_pagada_ars", "REAL DEFAULT 0.0")
+        # Dentro de ejecutar_migraciones_y_configuracion():
+        agregar_columna("servicios_reparacion", "moneda_presupuesto", "TEXT DEFAULT 'ARS'")
+        # Dentro de ejecutar_migraciones_y_configuracion():
+        agregar_columna("servicios_reparacion", "observaciones", "TEXT")
+        
+        # Dentro de la sección de migraciones de columnas:
+        agregar_columna("servicios_reparacion", "moneda_mano_obra", "TEXT DEFAULT 'ARS'")
+        agregar_columna("servicios_reparacion", "m_o_valor_original", "REAL DEFAULT 0.0")
         agregar_columna("repuestos", "precio_venta_ars", "REAL DEFAULT 0.0")
         agregar_columna("repuestos", "precio_venta_usd", "REAL DEFAULT 0.0")
         agregar_columna("repuestos", "categoria", "TEXT DEFAULT 'REPUESTO'")

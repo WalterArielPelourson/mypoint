@@ -51,6 +51,20 @@
             <p><strong>Solución Aplicada:</strong> {{ reparacion.solucion_aplicada or 'Pendiente / No especificada' }}</p>
         {% endif %}
     </div>
+    <!-- Bloque de Observaciones Internas (Solo visible en sistema) -->
+    {% if reparacion.observaciones %}
+    <div class="card mb-4 border-warning shadow-sm">
+        <div class="card-header bg-warning text-dark fw-bold">
+            <i class="bi bi-eye-slash-fill me-2"></i> OBSERVACIONES INTERNAS (Solo Empleados)
+        </div>
+        <div class="card-body bg-light">
+            <p class="card-text" style="white-space: pre-line; color: #555;">{{ reparacion.observaciones }}</p>
+        </div>
+        <div class="card-footer py-1 text-end">
+            <small class="text-muted italic" style="font-size: 0.8rem;">Esta sección no se muestra en el ticket de impresión.</small>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <div class="card mb-4 shadow-sm">

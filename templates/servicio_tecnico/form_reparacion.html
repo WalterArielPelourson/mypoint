@@ -142,6 +142,15 @@
                     <label for="solucion_aplicada" class="form-label">Solución Aplicada (Solo para Reparación - Opcional):</label>
                     <textarea class="form-control" id="solucion_aplicada" name="solucion_aplicada" rows="2">{{ form_data.get('solucion_aplicada', '') }}</textarea>
                 </div>
+                <div class="col-md-12 mb-3">
+                    <label for="observaciones" class="form-label fw-bold">Observaciones / Detalles extras:</label>
+                    <textarea class="form-control" id="observaciones" name="observaciones" rows="3" 
+                            placeholder="Ej: Rayones en la tapa, el cliente trae cargador, etc.">{{ form_data.observaciones }}</textarea>
+                    <div class="form-text">Este campo es opcional.</div>
+                </div>
+
+
+
             </div>
 
             <!-- SECCIÓN COTIZACIÓN -->
@@ -205,9 +214,9 @@
                 </ul>
             </div>
 
-            <h4 class="mt-4 mb-3"><i class="bi bi-cash me-2"></i>Resumen de Costos y Precios</h4>
+            <!--<h4 class="mt-4 mb-3"><i class="bi bi-cash me-2"></i>Resumen de Costos y Precios</h4>
             <div class="row g-3 bg-light p-3 rounded border shadow-sm">
-                <!-- CAMBIO APLICADO: MANO DE OBRA BIMONETARIA -->
+                <!-- CAMBIO APLICADO: MANO DE OBRA BIMONETARIA 
                 <div class="col-md-3" id="mano_obra_group">
                     <label for="precio_mano_obra" class="form-label fw-bold">Mano de Obra <span class="text-danger">*</span>:</label>
                     <div class="input-group">
@@ -242,7 +251,67 @@
                     <input type="text" class="form-control form-control-lg bg-success text-white fw-bold text-center shadow-sm" id="precio_final_ars_display" readonly value="ARS 0.00">
                     <small class="text-muted d-block text-center mt-1">Cálculo: (Items Convertidos) + Mano Obra Convertida</small>
                 </div>
+            </div> -->
+
+            <h4 class="mt-4 mb-3"><i class="bi bi-cash me-2"></i>Resumen de Costos y Precios</h4>
+            <div class="row g-3 bg-light p-3 rounded border shadow-sm">
+                
+               <!-- 1. MANO DE OBRA -->
+                <div class="col-md-3" id="mano_obra_group">
+                    <label for="precio_mano_obra" class="form-label fw-bold">Mano de Obra <span class="text-danger">*</span>:</label>
+                    <div class="input-group">
+                        <!-- Selector de Moneda: Mantiene la moneda original al editar -->
+                        <select class="form-select border-primary fw-bold" name="moneda_mano_obra" id="moneda_mano_obra" style="max-width: 90px;" onchange="calcularTotalesServicio()">
+                            <option value="ARS" {% if form_data.moneda_mano_obra == 'ARS' or not form_data.moneda_mano_obra %}selected{% endif %}>ARS </option>
+                            <option value="USD" {% if form_data.moneda_mano_obra == 'USD' %}selected{% endif %}>USD </option>
+                        </select>
+
+                        <!-- Input de Monto: Muestra el valor original guardado en la DB si estamos editando -->
+                        <input type="number" 
+                            step="0.01" 
+                            class="form-control border-primary fw-bold" 
+                            id="precio_mano_obra" 
+                            name="precio_mano_obra" 
+                            value="{% if is_edit %}{{ form_data.precio_mano_obra_original }}{% else %}0.00{% endif %}" 
+                            min="0" 
+                            required 
+                            oninput="calcularTotalesServicio()">
+                    </div>
+                    <div id="m_o_informativa" class="text-muted small mt-1" style="font-size: 0.75rem;"></div>
+                </div>
+
+                <!-- 2. SUBTOTAL ITEMS -->
+                <div class="col-md-3">
+                    <label class="form-label fw-bold" id="label_subtotal_items">Subtotal Items (USD):</label>
+                    <input type="text" class="form-control bg-white" id="precio_venta_total_items_usd_display" readonly value="USD 0.00">
+                </div>
+
+                <!-- 3. COTIZACIÓN -->
+                <div class="col-md-3">
+                    <label class="form-label fw-bold text-primary">COTIZACIÓN APLICADA:</label>
+                    <input type="text" class="form-control bg-white fw-bold text-primary border-primary" id="cotiz_aplicada_display" readonly value="$ 1.00">
+                </div>
+
+                <!-- 4. NUEVO: MONEDA DEL PRESUPUESTO (Completa la fila) -->
+                <div class="col-md-3">
+                    <label for="moneda_presupuesto" class="form-label fw-bold">Moneda del Presupuesto:</label>
+                    <select class="form-select border-primary fw-bold" name="moneda_presupuesto" id="moneda_presupuesto" onchange="calcularTotalesServicio()">
+                        <option value="ARS" {% if form_data.moneda_presupuesto == 'ARS' %}selected{% endif %}>ARS ($)</option>
+                        <option value="USD" {% if form_data.moneda_presupuesto == 'USD' %}selected{% endif %}>USD (u$d)</option>
+                    </select>
+                    <div class="form-text small" style="font-size: 0.7rem;">¿En qué moneda se pactó el total?</div>
+                </div>
+                
+                <!-- PRECIO FINAL -->
+                <div class="col-md-12 mt-3">
+                    <label class="form-label fw-bold fs-5">PRECIO FINAL A COBRAR (ARS):</label>
+                    <input type="text" class="form-control form-control-lg bg-success text-white fw-bold text-center shadow-sm" id="precio_final_ars_display" readonly value="ARS 0.00">
+                    <small class="text-muted d-block text-center mt-1">Cálculo: (Items Convertidos) + Mano Obra Convertida</small>
+                </div>
             </div>
+
+
+
 
             <hr class="my-4">
             <div class="d-flex justify-content-end gap-2">

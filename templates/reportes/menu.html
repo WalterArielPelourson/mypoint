@@ -42,6 +42,18 @@
     {# --- REPORTES RESTRINGIDOS: SOLO ADMIN Y SUPERADMIN --- #}
     {% if current_user.role in ['admin', 'superadmin'] %}
 
+        <!-- REPORTE DE VENTAS TOTALES-->
+        <div class="col-md-4 mb-3">
+            <div class="card h-100 shadow-sm border-primary">
+                <div class="card-body text-center">
+                    <i class="bi bi-cash-stack display-4 text-primary mb-3"></i>
+                    <h5 class="card-title">Ventas Totales Unificadas</h5>
+                    <p class="card-text text-muted small">Equipos, Reparaciones y Accesorios en un solo lugar con filtros avanzados.</p>
+                    <a href="{{ url_for('reporte_ventas_totales') }}" class="btn btn-outline-primary">Ver Reporte</a>
+                </div>
+            </div>
+        </div>
+
         <!-- REPORTE DE ACTIVIDAD -->
         <div class="col">
             <div class="card h-100 shadow-sm text-center">

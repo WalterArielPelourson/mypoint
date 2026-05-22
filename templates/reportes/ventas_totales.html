@@ -1,0 +1,86 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-graph-up-arrow me-2"></i>Reporte Total de Ventas</h2>
+        <a href="{{ url_for('exportar_ventas_totales', **request.args) }}" class="btn btn-success">
+            <i class="bi bi-file-earmark-excel me-1"></i> Exportar a Excel (CSV)
+        </a>
+    </div>
+
+    <!-- FILTROS -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="GET" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Desde:</label>
+                    <input type="date" name="start_date" value="{{ start_date }}" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Hasta:</label>
+                    <input type="date" name="end_date" value="{{ end_date }}" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Tipo:</label>
+                    <select name="tipo" class="form-select">
+                        <option value="TODOS">Todos</option>
+                        <option value="EQUIPO" {% if filtros.tipo == 'EQUIPO' %}selected{% endif %}>📱 Equipos</option>
+                        <option value="REPARACION" {% if filtros.tipo == 'REPARACION' %}selected{% endif %}>🛠️ Reparaciones</option>
+                        <option value="VENTA_ACCESORIO" {% if filtros.tipo == 'VENTA_ACCESORIO' %}selected{% endif %}>🎧 Accesorios/Insumos</option>
+                    </select>
+                </div>
+                 <!--<div class="col-md-2">
+                    <label class="form-label">Vendedor/Técnico:</label>
+                    <input type="text" name="vendedor" value="{{ filtros.vendedor }}" class="form-control" placeholder="Nombre...">
+                </div> -->
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">Filtrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- RESUMEN RÁPIDO -->
+    <div class="alert alert-info">
+        <strong>Total Facturado en el periodo (ARS):</strong> ${{ "{:,.2f}".format(total_ars) }}
+    </div>
+
+    <!-- TABLA -->
+    <div class="table-responsive">
+        <table class="table table-striped table-hover border">
+            <thead class="table-dark">
+                <tr>
+                    <th>Fecha</th>
+                    <th>Categoría</th>
+                    <th>Cliente</th>
+                    <th>Descripción / Ítem</th>
+                     <!-- <th>Vendedor</th> -->
+                    <th class="text-end">Total ARS</th>
+                    <th class="text-end">Total USD</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for v in ventas %}
+                <tr>
+                    <td>{{ v.fecha | datetimeformat }}</td>
+                    <td>
+                        {% if v.categoria == 'EQUIPO' %}
+                            <span class="badge bg-primary">EQUIPO</span>
+                        {% elif v.categoria == 'REPARACION' %}
+                            <span class="badge bg-warning text-dark">TÉCNICA</span>
+                        {% else %}
+                            <span class="badge bg-info text-dark">ACCESORIO</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ v.cliente }}</td>
+                    <td><small>{{ v.descripcion }}</small></td>
+                    <!--<td>{{ v.vendedor }}</td> -->
+                    <td class="text-end fw-bold text-success">${{ "{:,.2f}".format(v.total_ars) }}</td>
+                    <td class="text-end text-muted">u$d {{ "{:,.2f}".format(v.total_usd) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
