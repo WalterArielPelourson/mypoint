@@ -28,6 +28,24 @@
         background-color: #f8f9fa;
         position: relative;
     }
+
+     .item-bloque {
+        transition: all 0.3s ease;
+        border-left: 8px solid #dee2e6; /* Borde gris por defecto */
+    }
+
+    /* Estilo cuando el repuesto YA EXISTE (Verde) */
+    .fila-existente {
+        background-color: #d1e7dd !important; 
+        border-left: 8px solid #198754 !important;
+    }
+
+    /* Estilo cuando el repuesto es NUEVO (Amarillo) */
+    .fila-nueva {
+        background-color: #fff3cd !important;
+        border-left: 8px solid #ffc107 !important;
+    }
+
     .item-bloque .remove-item {
         position: absolute;
         top: 10px;
@@ -272,11 +290,40 @@
         const container = $('#items-container');
         const itemType = "{{ item_type }}";
 
+        // --- PUNTO 3: FUNCIÓN PARA VERIFICAR SI EL PRODUCTO YA EXISTE Y CAMBIAR COLOR ---
+        function verificarExistencia(row) {
+            const nombre = row.find('.select2-repuesto-nombre').val();
+            const modelo = row.find('.select2-repuesto-modelo').val();
+
+            // Solo consultamos si ambos campos tienen valor
+            if (nombre && modelo) {
+                $.getJSON("{{ url_for('api_verificar_existencia_repuesto') }}", {
+                    nombre: nombre,
+                    modelo: modelo
+                }, function(data) {
+                    if (data.existe) {
+                        // Si existe: Verde
+                        row.addClass('fila-existente').removeClass('fila-nueva');
+                    } else {
+                        // Si es nuevo: Amarillo
+                        row.addClass('fila-nueva').removeClass('fila-existente');
+                    }
+                });
+            } else {
+                // Si falta algún campo, quitamos colores
+                row.removeClass('fila-existente fila-nueva');
+            }
+        }
+
         function inicializarSelectsDinámicos(row) {
+            const selectNombre = row.find('.select2-repuesto-nombre');
+            const selectModelo = row.find('.select2-repuesto-modelo');
+
             // Buscador de Nombres
-            row.find('.select2-repuesto-nombre').select2({
+            selectNombre.select2({
                 tags: true,
                 placeholder: 'Escriba o seleccione...',
+                width: '100%',
                 ajax: {
                     url: '/api/buscar_nombres_repuestos_limpios',
                     dataType: 'json',
@@ -287,12 +334,10 @@
             });
 
             // Buscador de Modelos
-            const selectModelo = row.find('.select2-repuesto-modelo');
-            const selectNombre = row.find('.select2-repuesto-nombre');
-
             selectModelo.select2({
                 tags: true,
                 placeholder: 'Seleccione modelo...',
+                width: '100%',
                 ajax: {
                     url: '/api/buscar_modelos_por_nombre',
                     dataType: 'json',
@@ -302,8 +347,20 @@
                 }
             });
 
-            selectNombre.on('change', function() {
-                selectModelo.val(null).trigger('change');
+            // --- LISTENERS PARA CAMBIO DE COLOR (OPTIMIZADOS) ---
+            // Usamos select2:select para detectar el clic en la lista inmediatamente
+            // y change para cuando se escribe a mano y se sale del foco
+            selectNombre.on('select2:select select2:unselect change', function() {
+                // Al cambiar el nombre, reseteamos el modelo asociado para evitar inconsistencias
+                // Solo disparamos el reset si fue una selección de la lista
+                if (event && event.type === 'select2:select') {
+                    selectModelo.val(null).trigger('change');
+                }
+                verificarExistencia(row);
+            });
+
+            selectModelo.on('select2:select select2:unselect change', function() {
+                verificarExistencia(row);
             });
         }
 

@@ -1212,6 +1212,20 @@ def registrar_compra_repuesto():
 
 
 
+@app.route('/api/verificar_existencia_repuesto')
+@login_required
+def api_verificar_existencia_repuesto():
+    nombre = request.args.get('nombre', '').strip().lower()
+    modelo = request.args.get('modelo', '').strip().lower()
+    
+    # IMPORTANTE: Busca en minúsculas para que coincida siempre
+    existe = db_query("SELECT id FROM repuestos WHERE LOWER(nombre_parte) = ? AND LOWER(modelo_compatible) = ?", (nombre, modelo))
+    
+    return jsonify({'existe': len(existe) > 0})
+
+
+
+
 @app.route('/compras/eliminar/<int:compra_id>', methods=['POST'])
 @login_required
 
@@ -1813,7 +1827,8 @@ def listar_compras():
 ## NUEVAS MODIFICACIONES (Punto 3 de Requerimientos) ##
 @app.route('/cuentas_corrientes/proveedores')
 @login_required
-@admin_required
+#@admin_required
+@tecnico_required
 def listar_proveedores_cc():
     proveedores = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_proveedor = 1 ORDER BY razon_social, apellido, nombre")
     estados_cuenta = []
@@ -1864,6 +1879,7 @@ def listar_proveedores_cc():
 
 @app.route('/cuentas_corrientes/clientes')
 @login_required
+@tecnico_required
 def listar_clientes_cc():
     # 1. Obtener todos los clientes
     clientes = db_query("SELECT id, nombre, apellido, razon_social, telefono FROM personas WHERE es_cliente = 1 ORDER BY apellido, nombre, razon_social")
@@ -2301,6 +2317,7 @@ def reporte_cuotas_pendientes():
     
 @app.route('/cuentas_corrientes/cobrar_cliente/<int:cliente_id>', methods=['GET', 'POST'])
 @login_required
+@tecnico_required
 def cobrar_cliente(cliente_id):
     # 1. Obtener los datos del cliente
     cliente_res = db_query("SELECT * FROM personas WHERE id = ?", (cliente_id,))
@@ -2460,7 +2477,8 @@ def cobrar_cliente(cliente_id):
     
 @app.route('/cuentas_corrientes/registrar_pago/<int:proveedor_id>', methods=['GET', 'POST'])
 @login_required
-@admin_required
+#@admin_required
+@tecnico_required
 def registrar_pago_proveedor(proveedor_id):
     proveedor = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE id = ? AND es_proveedor = 1", (proveedor_id,))
     if not proveedor:
@@ -2602,6 +2620,7 @@ def registrar_pago_proveedor(proveedor_id):
 
 @app.route('/cuentas_corrientes/cliente/detalle/<int:cliente_id>')
 @login_required
+@tecnico_required
 def ver_detalle_cc_cliente(cliente_id):
     cliente = db_query("SELECT * FROM personas WHERE id = ?", (cliente_id,))[0]
     movimientos = []
@@ -2886,6 +2905,7 @@ def pagar_cuota(cuota_id):
 
 @app.route('/cuentas_corrientes/proveedor/detalle/<int:proveedor_id>')
 @login_required
+@tecnico_required
 def ver_detalle_cc_proveedor(proveedor_id):
     # 1. Obtener datos del proveedor
     proveedor_data = db_query("SELECT * FROM personas WHERE id = ?", (proveedor_id,))
@@ -3300,6 +3320,7 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             
             items_usados = db_query("""
                 SELECT ru.repuesto_id, ru.manual_item_nombre, ru.cantidad, ru.costo_usd_momento,
+                       ru.moneda_item, ru.valor_original_item,
                        r.nombre_parte, r.modelo_compatible
                 FROM repuestos_usados ru
                 LEFT JOIN repuestos r ON ru.repuesto_id = r.id
@@ -3330,16 +3351,32 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             
             for item in items_usados:
                 if item['repuesto_id']:
+                    # Datos básicos del repuesto de stock
                     form_data['repuesto_stock_id[]'].append(item['repuesto_id'])
                     nombre_repuesto = f"{item['nombre_parte']} ({item['modelo_compatible'] or 'Genérico'})"
                     form_data['repuesto_nombre_display[]'].append(nombre_repuesto)
                     form_data['cantidad_stock[]'].append(item['cantidad'])
-                    form_data['precio_venta_usd_stock[]'].append(f"{item['costo_usd_momento']:.2f}") 
+                    
+                    # --- PUNTO 1: CARGAR VALOR ORIGINAL (STOCK) ---
+                    # Si existe valor_original_item (registro nuevo), lo usamos. 
+                    # Si es None (registro viejo), usamos costo_usd_momento como fallback.
+                    valor_a_mostrar = item['valor_original_item'] if item['valor_original_item'] is not None else item['costo_usd_momento']
+                    
+                    # Agregamos UNA SOLA VEZ a la lista
+                    form_data['precio_venta_usd_stock[]'].append(f"{valor_a_mostrar:.2f}") 
+
                 else:
+                    # Datos básicos del ítem manual
                     nombre_manual = item['manual_item_nombre'] if item['manual_item_nombre'] else "Ítem manual"
                     form_data['manual_item_nombre[]'].append(nombre_manual)
                     form_data['cantidad_manual[]'].append(item['cantidad'])
-                    form_data['precio_venta_usd_manual[]'].append(f"{item['costo_usd_momento']:.2f}")
+                    
+                    # --- PUNTO 1: CARGAR VALOR ORIGINAL (MANUAL) ---
+                    valor_a_mostrar_m = item['valor_original_item'] if item['valor_original_item'] is not None else item['costo_usd_momento']
+                    
+                    # Agregamos UNA SOLA VEZ a la lista
+                    form_data['precio_venta_usd_manual[]'].append(f"{valor_a_mostrar_m:.2f}")
+                    
         else:
             form_data = {
                 'precio_mano_obra_ars': '0.00', 
@@ -3424,7 +3461,7 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                     # Si el presupuesto se hizo en ARS, convertimos el precio editado a USD para la DB
                     pv_usd_momento = pv_input / valor_dolar_servicio if moneda_presupuesto == 'ARS' else pv_input
                     
-                    items_para_registrar.append({'repuesto_id': r_id, 'manual_item_nombre': None, 'cantidad': cant, 'costo_usd_momento': pv_usd_momento})
+                    items_para_registrar.append({'repuesto_id': r_id, 'manual_item_nombre': None, 'cantidad': cant, 'costo_usd_momento': pv_usd_momento, 'valor_original': pv_input})
                     total_precio_venta_items_usd += pv_usd_momento * cant
                     has_any_valid_item = True
             
@@ -3442,7 +3479,7 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                     # Conversión si es necesario
                     p_usd_momento = p_input / valor_dolar_servicio if moneda_presupuesto == 'ARS' else p_input
                     
-                    items_para_registrar.append({'repuesto_id': None, 'manual_item_nombre': n, 'cantidad': c, 'costo_usd_momento': p_usd_momento})
+                    items_para_registrar.append({'repuesto_id': None, 'manual_item_nombre': n, 'cantidad': c, 'costo_usd_momento': p_usd_momento, 'valor_original': p_input})
                     total_precio_venta_items_usd += p_usd_momento * c
                     has_any_valid_item = True
 
@@ -3485,8 +3522,8 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             # --- INSERTAR REPUESTOS USADOS --
 
             for item in items_para_registrar:
-                db_execute_func(db_conn, "INSERT INTO repuestos_usados (servicio_id, repuesto_id, manual_item_nombre, cantidad, costo_usd_momento) VALUES (?, ?, ?, ?, ?)", 
-                                (servicio_id, item['repuesto_id'], item['manual_item_nombre'], item['cantidad'], item['costo_usd_momento']))
+                db_execute_func(db_conn, "INSERT INTO repuestos_usados (servicio_id, repuesto_id, manual_item_nombre, cantidad, costo_usd_momento, moneda_item, valor_original_item) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                                (servicio_id, item['repuesto_id'], item['manual_item_nombre'], item['cantidad'], item['costo_usd_momento'], moneda_presupuesto, item['valor_original']))
             
             db_conn.commit()
             flash(f'Presupuesto guardado exitosamente.', 'success')
@@ -7525,6 +7562,9 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("servicios_reparacion", "moneda_presupuesto", "TEXT DEFAULT 'ARS'")
         # Dentro de ejecutar_migraciones_y_configuracion():
         agregar_columna("servicios_reparacion", "observaciones", "TEXT")
+        # Dentro de ejecutar_migraciones_y_configuracion():
+        agregar_columna("repuestos_usados", "moneda_item", "TEXT DEFAULT 'USD'")
+        agregar_columna("repuestos_usados", "valor_original_item", "REAL DEFAULT 0.0")
         
         # Dentro de la sección de migraciones de columnas:
         agregar_columna("servicios_reparacion", "moneda_mano_obra", "TEXT DEFAULT 'ARS'")

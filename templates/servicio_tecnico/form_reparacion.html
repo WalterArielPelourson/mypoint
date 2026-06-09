@@ -159,9 +159,10 @@
                     <span><i class="bi bi-currency-exchange me-2"></i>Cotización y Moneda</span>
                     <div class="d-flex align-items-center gap-2">
                         <label class="small mb-0">Moneda Insumos:</label>
+                        <!-- CAMBIO: Mantiene la moneda guardada (USD o ARS) al editar -->
                         <select name="moneda_presupuesto" id="moneda_presupuesto" class="form-select form-select-sm w-auto border-dark fw-bold" onchange="calcularTotalesServicio()">
-                            <option value="USD" selected>USD (Dólares)</option>
-                            <option value="ARS">ARS (Pesos)</option>
+                            <option value="USD" {% if form_data.moneda_presupuesto == 'USD' %}selected{% endif %}>USD (Dólares)</option>
+                            <option value="ARS" {% if form_data.moneda_presupuesto == 'ARS' %}selected{% endif %}>ARS (Pesos)</option>
                         </select>
                     </div>
                 </div>
@@ -186,24 +187,32 @@
             <h4 class="mt-4 mb-3" id="items-heading"><i class="bi bi-gear me-2"></i>Items / Repuestos / Accesorios</h4>
             <div id="items-container">
                 {% if form_data.get('repuesto_stock_id[]') or form_data.get('manual_item_nombre[]') %}
+                    
+                    {# --- BLOQUE DE ITEMS DE STOCK --- #}
                     {% for i in range(form_data.get('repuesto_stock_id[]')|length if form_data.get('repuesto_stock_id[]') else 0) %}
                         <div class="item-row-initial" data-item-type="stock"
-                             data-repuesto-id="{{ form_data.get('repuesto_stock_id[]')[i] }}"
-                             data-repuesto-nombre="{{ form_data.get('repuesto_nombre_display[]')[i] }}"
-                             data-cantidad="{{ form_data.get('cantidad_stock[]')[i] }}"
-                             data-precio-venta-usd="{{ form_data.get('precio_venta_usd_stock[]')[i] }}">
+                            data-repuesto-id="{{ form_data.get('repuesto_stock_id[]')[i] }}"
+                            data-repuesto-nombre="{{ form_data.get('repuesto_nombre_display[]')[i] }}"
+                            data-cantidad="{{ form_data.get('cantidad_stock[]')[i] }}"
+                            {# IMPORTANTE: Usa el valor original (Punto 3 y B) enviado desde Python #}
+                            data-precio-venta-usd="{{ form_data.get('precio_venta_usd_stock[]')[i] }}">
                         </div>
                     {% endfor %}
+
+                    {# --- BLOQUE DE ITEMS MANUALES --- #}
                     {% for i in range(form_data.get('manual_item_nombre[]')|length if form_data.get('manual_item_nombre[]') else 0) %}
                         <div class="item-row-initial" data-item-type="manual"
-                             data-manual-nombre="{{ form_data.get('manual_item_nombre[]')[i] }}"
-                             data-cantidad="{{ form_data.get('cantidad_manual[]')[i] }}"
-                             data-precio-venta-usd="{{ form_data.get('precio_venta_usd_manual[]')[i] }}">
+                            data-manual-nombre="{{ form_data.get('manual_item_nombre[]')[i] }}"
+                            data-cantidad="{{ form_data.get('cantidad_manual[]')[i] }}"
+                            {# IMPORTANTE: Usa el valor original (Punto 3 y B) enviado desde Python #}
+                            data-precio-venta-usd="{{ form_data.get('precio_venta_usd_manual[]')[i] }}">
                         </div>
                     {% endfor %}
+
                 {% endif %}
             </div>
-            
+
+            <!-- BOTÓN PARA AÑADIR ITEMS (Mantenido exactamente igual) -->
             <div class="dropdown mt-2">
                 <button class="btn btn-info btn-sm dropdown-toggle" type="button" id="addItemDropdown" data-bs-toggle="dropdown">
                     <i class="bi bi-plus-circle me-1"></i> Añadir Ítem
@@ -213,7 +222,6 @@
                     <li><a class="dropdown-item" href="#" id="add-manual-item-btn">Manualmente</a></li>
                 </ul>
             </div>
-
             <!--<h4 class="mt-4 mb-3"><i class="bi bi-cash me-2"></i>Resumen de Costos y Precios</h4>
             <div class="row g-3 bg-light p-3 rounded border shadow-sm">
                 <!-- CAMBIO APLICADO: MANO DE OBRA BIMONETARIA 
