@@ -116,7 +116,10 @@
                             {# Acceso para todos, incluido el técnico #}
                             <li><a class="dropdown-item" href="{{ url_for('listar_personas') }}"><i class="bi bi-list-ul me-1"></i>Listar Personas</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('agregar_persona') }}"><i class="bi bi-person-plus me-1"></i>Agregar Persona</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('listar_clientes_cc') }}">Cta. Cte. Clientes (Cobrar)</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('pago_anticipado_cliente') }}"><i class="bi bi-cash-stack me-1"></i>Registrar Seña/Anticipo</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('listar_clientes_cc') }}"><i class="bi bi-cash-stack me-1"></i>Cta. Cte. Clientes (Cobrar)</a></li>
+                                                   
+        
                             <li><a class="dropdown-item" href="{{ url_for('listar_proveedores_cc') }}"><i class="bi bi-credit-card me-1"></i>Cta. Cte. Proveedores (Pagar)</a></li>
                             {# Ocultamos la parte financiera si el usuario es técnico #}
                             <!--{% if current_user.role != 'tecnico' %}
