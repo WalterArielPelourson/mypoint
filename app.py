@@ -1827,41 +1827,41 @@ def listar_compras():
 ## NUEVAS MODIFICACIONES (Punto 3 de Requerimientos) ##
 @app.route('/cuentas_corrientes/proveedores')
 @login_required
-#@admin_required
-@tecnico_required
+@tecnico_required # <-- El técnico ahora puede entrar
 def listar_proveedores_cc():
     proveedores = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_proveedor = 1 ORDER BY razon_social, apellido, nombre")
     estados_cuenta = []
     lista_equipos_tipos = "('CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO')"
 
     for prov in proveedores:
-        # --- SALDO USD (Equipos) ---
-        # Sumamos el costo total de las facturas en USD
+        # --- 1. SALDO USD (Equipos) ---
+        # Deuda total por facturas
         compra_usd = db_query(f"SELECT COALESCE(SUM(costo_total_usd), 0.0) FROM compras WHERE proveedor_id = ? AND tipo_item IN {lista_equipos_tipos}", (prov['id'],))[0][0]
         
-        # Sumamos los abonos realizados. Al ser "Strictly USD", solo miramos monto_usd 
-        # (El registro se encargará de convertir los pesos a esta columna)
+        # Pagos y Ajustes (QUITAMOS 'AND compra_id IS NOT NULL' para que coincida con el detalle)
         pago_usd = db_query("""
             SELECT COALESCE(SUM(monto_usd), 0.0) 
             FROM pagos_proveedores 
-            WHERE proveedor_id = ? AND imputacion = 'EQUIPOS' AND compra_id IS NOT NULL
+            WHERE proveedor_id = ? AND imputacion = 'EQUIPOS'
         """, (prov['id'],))[0][0]
         
         saldo_usd = compra_usd - pago_usd
 
-        # --- SALDO ARS (Repuestos) ---
+        # --- 2. SALDO ARS (Repuestos) ---
+        # Deuda total por facturas
         compra_ars = db_query(f"SELECT COALESCE(SUM(costo_total_ars), 0.0) FROM compras WHERE proveedor_id = ? AND tipo_item NOT IN {lista_equipos_tipos}", (prov['id'],))[0][0]
         
-        # Para repuestos, la moneda base es ARS
+        # Pagos y Ajustes (QUITAMOS 'AND compra_id IS NOT NULL')
         pago_ars = db_query("""
             SELECT COALESCE(SUM(monto_ars), 0.0) 
             FROM pagos_proveedores 
-            WHERE proveedor_id = ? AND imputacion = 'REPUESTOS' AND compra_id IS NOT NULL
+            WHERE proveedor_id = ? AND imputacion = 'REPUESTOS'
         """, (prov['id'],))[0][0]
         
         saldo_ars = compra_ars - pago_ars
 
-        if abs(saldo_usd) > 0.005 or abs(saldo_ars) > 0.05:
+        # Filtro de visibilidad: si debe más de 1 centavo en alguna moneda
+        if abs(saldo_usd) > 0.01 or abs(saldo_ars) > 0.1:
             estados_cuenta.append({
                 'id': prov['id'],
                 'nombre': prov['razon_social'] or f"{prov['nombre']} {prov['apellido']}",
