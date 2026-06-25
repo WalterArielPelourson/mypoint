@@ -1539,18 +1539,20 @@ def editar_repuesto(repuesto_id):
 # --- Nueva Ruta para Lista de Precios de Repuestos ---
 @app.route('/inventario/repuestos/lista_precios', methods=['GET', 'POST'])
 @login_required
-#@admin_required
 @tecnico_required
 def lista_precios_repuestos():
     dolar_info_from_context = inject_dolar_values()
     valor_dolar_compra_local = dolar_info_from_context['valor_dolar_compra'] or 1.0
     valor_dolar_venta_local = dolar_info_from_context['valor_dolar_venta'] or 1.0
 
-    # Captura de IDs seleccionados desde el filtro Select2
+    # 1. Captura de filtros: IDs de Select2 y Filtro de Nombre manual
     selected_repuestos_ids_str = request.args.get('repuesto_ids') or request.form.get('selected_repuesto_ids_hidden')
+    filtro_nombre = request.args.get('filtro_nombre', '').strip() # Captura el texto (ej: "funda")
+    
     selected_repuesto_ids = [int(x) for x in selected_repuestos_ids_str.split(',') if x.isdigit()] if selected_repuestos_ids_str else []
 
-    # --- CONSULTA MEJORADA: Obtenemos el repuesto y los datos de su ÚLTIMA COMPRA ---
+    # 2. CONSULTA BASE CON COSTO HISTÓRICO
+    # Agregamos WHERE 1=1 para poder concatenar filtros dinámicamente
     query_repuestos = """
         SELECT r.*, 
                c.valor_dolar_momento as dolar_compra_historico, 
@@ -1562,26 +1564,37 @@ def lista_precios_repuestos():
             FROM compras 
             WHERE id IN (SELECT MAX(id) FROM compras WHERE tipo_item IN ('REPUESTO', 'ACCESORIO', 'EQUIPO') GROUP BY item_id, tipo_item)
         ) c ON r.id = c.item_id AND r.categoria = c.tipo_item
+        WHERE 1=1
     """
     
     query_params = []
+
+    # --- LÓGICA DE FILTRADO COMBINADO ---
+    # Filtro A: Por IDs seleccionados en la lista Select2
     if selected_repuesto_ids:
         placeholders = ','.join('?' * len(selected_repuesto_ids))
-        query_repuestos += f" WHERE r.id IN ({placeholders})"
+        query_repuestos += f" AND r.id IN ({placeholders})"
         query_params.extend(selected_repuesto_ids)
+    
+    # Filtro B: Por nombre o modelo (Búsqueda por palabra clave como "funda")
+    if filtro_nombre:
+        query_repuestos += " AND (r.nombre_parte LIKE ? OR r.modelo_compatible LIKE ?)"
+        term = f"%{filtro_nombre}%"
+        query_params.extend([term, term])
     
     query_repuestos += " ORDER BY r.nombre_parte"
     repuestos_raw = db_query(query_repuestos, tuple(query_params))
 
     repuestos_con_precios = []
 
-    # Inicializar datos del formulario para la plantilla
+    # Inicializar datos del formulario para la plantilla (incluyendo el nuevo filtro_nombre)
     form_data_for_template = {
         'pricing_strategy': request.form.get('pricing_strategy', 'porcentaje'),
         'ganancia_pct': float(request.form.get('ganancia_pct', 30) or 30),
         'monto_fijo': float(request.form.get('monto_fijo', 0) or 0),
         'monto_fijo_moneda': request.form.get('monto_fijo_moneda', 'USD'),
-        'selected_repuesto_ids': selected_repuestos_ids_str or '' 
+        'selected_repuesto_ids': selected_repuestos_ids_str or '',
+        'filtro_nombre': filtro_nombre # Se envía de vuelta al HTML para que el input no se vacíe
     }
 
     if request.method == 'POST':
@@ -1594,18 +1607,16 @@ def lista_precios_repuestos():
                 updated_count = 0
                 for rep in repuestos_raw: 
                     rep_id = rep['id']
-                    # MODIFICACIÓN: Capturamos AMBOS valores del formulario. 
-                    # El usuario ahora puede editar cualquiera de los dos en el HTML.
                     p_ars = float(request.form.get(f'precio_venta_ars_{rep_id}') or 0)
                     p_usd = float(request.form.get(f'precio_venta_usd_{rep_id}') or 0)
                     
                     if p_ars >= 0 or p_usd >= 0:
-                        # Guardamos ambos valores tal cual vienen para dar flexibilidad total
                         db_execute_func(db_conn, "UPDATE repuestos SET precio_venta_ars = ?, precio_venta_usd = ? WHERE id = ?", (p_ars, p_usd, rep_id))
                         updated_count += 1
                 db_conn.commit()
                 flash(f"{updated_count} precios actualizados correctamente.", "success")
-                return redirect(url_for('imprimir_precios_repuestos', repuesto_ids=selected_repuestos_ids_str))
+                # Redirigir manteniendo los filtros para la vista de impresión
+                return redirect(url_for('imprimir_precios_repuestos', repuesto_ids=selected_repuestos_ids_str, filtro_nombre=filtro_nombre))
             except Exception as e:
                 db_conn.rollback()
                 flash(f"Error al guardar: {e}", "danger")
@@ -1630,15 +1641,14 @@ def lista_precios_repuestos():
                 rep_dict['precio_venta_sugerido_ars'] = round(precio_sugerido_ars, 2)
                 rep_dict['precio_venta_sugerido_usd'] = round(precio_sugerido_usd, 2)
                 repuestos_con_precios.append(rep_dict)
-            flash("Sugerencias generadas según costos históricos.", "info")
+            flash(f"Sugerencias generadas para {len(repuestos_raw)} productos.", "info")
 
-    # Si no hay acción o es un GET inicial, poblamos con los datos actuales
+    # Si es GET inicial o no hubo acción de sugerencia, poblamos con los datos guardados en DB
     if not repuestos_con_precios: 
         for rep in repuestos_raw:
             rep_dict = dict(rep)
             costo_base_usd = rep['costo_usd_compra'] if rep['costo_usd_compra'] else rep['costo_usd']
             rep_dict['costo_ars'] = round(rep['costo_ars_real_unitario'] if rep['costo_ars_real_unitario'] else (costo_base_usd * valor_dolar_compra_local), 2)
-            # Prioriza el precio ya guardado en la base de datos
             rep_dict['precio_venta_sugerido_ars'] = round(rep['precio_venta_ars'], 2)
             rep_dict['precio_venta_sugerido_usd'] = round(rep['precio_venta_usd'], 2)
             repuestos_con_precios.append(rep_dict)
@@ -1652,7 +1662,7 @@ def lista_precios_repuestos():
                            form_data=form_data_for_template,
                            all_repuestos_for_select2=all_repuestos_for_select2)
     
-    
+       
     
 @app.route('/inventario/repuestos/imprimir_precios')
 @login_required
@@ -3333,6 +3343,8 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 'tecnico_nombre': servicio['tecnico_nombre'] or '',
                 'tipo_servicio': servicio['tipo_servicio'],
                 'imei_equipo': servicio['imei_equipo'] or '', 
+                'modelo_equipo': servicio['modelo_equipo'] or '', # Nuevo
+                'pin_code': servicio['pin_code'] or '',           # Nuevo
                 'falla_reportada': servicio['falla_reportada'] or '',
                 'observaciones': servicio['observaciones'] or '',
                 'solucion_aplicada': servicio['solucion_aplicada'] or '',
@@ -3411,6 +3423,12 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             tecnico_nombre = form_data_raw.get('tecnico_nombre', [''])[0].strip()
             tipo_servicio = form_data_raw.get('tipo_servicio', [''])[0].strip()
             imei_equipo = form_data_raw.get('imei_equipo', [''])[0].strip() if form_data_raw.get('imei_equipo') else ''
+            
+            # --- NUEVOS CAMPOS: Pin y Modelo ---
+            pin_code = form_data_raw.get('pin_code', [''])[0].strip() if form_data_raw.get('pin_code') else ''
+            modelo_equipo = form_data_raw.get('modelo_equipo', [''])[0].strip() if form_data_raw.get('modelo_equipo') else ''
+            
+            
             falla_reportada = form_data_raw.get('falla_reportada', [''])[0].strip() if form_data_raw.get('falla_reportada') else ''
             observaciones = form_data_raw.get('observaciones', [''])[0].strip() if form_data_raw.get('observaciones') else ''
             solucion_aplicada = form_data_raw.get('solucion_aplicada', [''])[0].strip() if form_data_raw.get('solucion_aplicada') else ''
@@ -3499,11 +3517,11 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             if is_edit:
                 db_execute_func(db_conn,
                     """UPDATE servicios_reparacion SET 
-                        cliente_id = ?, tecnico_nombre = ?, imei_equipo = ?, falla_reportada = ?, solucion_aplicada = ?, 
+                        cliente_id = ?, tecnico_nombre = ?, imei_equipo = ?, modelo_equipo = ?, pin_code = ?, falla_reportada = ?, solucion_aplicada = ?, 
                         costo_total_repuestos_usd = ?, precio_mano_obra_ars = ?, precio_final_ars = ?, 
                         fecha_servicio = ?,  tipo_servicio = ?, observaciones = ?, moneda_presupuesto = ?, moneda_mano_obra = ?, m_o_valor_original = ?
                        WHERE id = ?""",
-                    (cliente_id, tecnico_nombre, imei_equipo, falla_reportada, solucion_aplicada, 
+                    (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
                      total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, 
                      fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input, servicio_id)
                 )
@@ -3511,10 +3529,10 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             else:
                 servicio_id = db_execute_func(db_conn,
                     """INSERT INTO servicios_reparacion 
-                       (cliente_id, tecnico_nombre, imei_equipo, falla_reportada, solucion_aplicada, 
+                       (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
                         costo_total_repuestos_usd, precio_mano_obra_ars, precio_final_ars, fecha_servicio, status, tipo_servicio, observaciones, moneda_presupuesto, moneda_mano_obra, m_o_valor_original) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PRESUPUESTO', ?, ?, ?, ?, ? )""",
-                    (cliente_id, tecnico_nombre, imei_equipo, falla_reportada, solucion_aplicada, 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PRESUPUESTO', ?, ?, ?, ?, ? )""",
+                    (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
                      total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input),
                 return_id=True
                 )
@@ -3597,20 +3615,25 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
 @login_required
 @tecnico_required
 def listar_presupuestos_reparacion():
-    # Ahora 'filtro_cliente' será un ID (ej: "5")
+    # 1. Capturamos los filtros de la URL
     filtro_cliente = request.args.get('cliente', '').strip()
     filtro_imei = request.args.get('imei', '').strip()
+    filtro_tecnico = request.args.get('tecnico', '').strip() # NUEVO
     filtro_tipo_servicio = request.args.get('tipo_servicio', '')
 
+    # 2. Obtenemos la lista de técnicos para el desplegable
+    tecnicos_db = db_query("SELECT DISTINCT tecnico_nombre FROM servicios_reparacion WHERE tecnico_nombre IS NOT NULL ORDER BY tecnico_nombre ASC")
+
+    # 3. Base de la consulta
     query = """
-        SELECT s.*, p.nombre, p.apellido, p.razon_social 
+        SELECT s.*, p.nombre, p.apellido, p.razon_social, p.cuit_cuil 
         FROM servicios_reparacion s 
         JOIN personas p ON s.cliente_id = p.id 
         WHERE s.status = 'PRESUPUESTO'
     """
     params = []
 
-    # Si hay un ID seleccionado, filtramos por ese ID exacto
+    # 4. Aplicar Filtros
     if filtro_cliente and filtro_cliente.isdigit():
         query += " AND p.id = ?"
         params.append(int(filtro_cliente))
@@ -3618,6 +3641,10 @@ def listar_presupuestos_reparacion():
     if filtro_imei:
         query += " AND s.imei_equipo LIKE ?"
         params.append(f"%{filtro_imei}%")
+
+    if filtro_tecnico: # FILTRO DE TÉCNICO
+        query += " AND s.tecnico_nombre = ?"
+        params.append(filtro_tecnico)
 
     if filtro_tipo_servicio:
         query += " AND s.tipo_servicio = ?"
@@ -3626,23 +3653,30 @@ def listar_presupuestos_reparacion():
     query += " ORDER BY s.fecha_servicio DESC"
     
     presupuestos = db_query(query, tuple(params))
-
+    
+    # 5. Enviamos todo al HTML
     return render_template('presupuestos/listar_reparaciones.html', 
                            presupuestos=presupuestos,
-                           filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tipo_servicio': filtro_tipo_servicio})
-    
-    
+                           tecnicos=tecnicos_db, # Enviamos la lista para el select
+                           filtros_activos={
+                               'cliente': filtro_cliente, 
+                               'imei': filtro_imei, 
+                               'tecnico': filtro_tecnico, 
+                               'tipo_servicio': filtro_tipo_servicio
+                           })
 @app.route('/servicio_tecnico/reparaciones/historial')
 @login_required
 @tecnico_required
 def listar_reparaciones_completadas():
     start_date, end_date_display, end_date_query = get_date_filters()
     
-    # Capturamos el ID del cliente desde Select2
+    # Capturamos los filtros desde la URL
     filtro_cliente = request.args.get('cliente', '').strip()
     filtro_imei = request.args.get('imei', '').strip()
+    filtro_tecnico = request.args.get('tecnico', '').strip()
     filtro_tipo_servicio = request.args.get('tipo_servicio', '')
 
+    # Base de la consulta
     query = """
         SELECT s.*, p.nombre, p.apellido, p.razon_social 
         FROM servicios_reparacion s 
@@ -3651,15 +3685,25 @@ def listar_reparaciones_completadas():
     """
     params = [start_date, end_date_query]
 
-    # CAMBIO AQUÍ: Filtrar por ID exacto
+    # Obtenemos la lista de técnicos únicos que ya tienen trabajos registrados
+    tecnicos_db = db_query("SELECT DISTINCT tecnico_nombre FROM servicios_reparacion WHERE tecnico_nombre IS NOT NULL ORDER BY tecnico_nombre ASC")
+    
+    # Filtro por ID de Cliente (Select2)
     if filtro_cliente and filtro_cliente.isdigit():
         query += " AND p.id = ?"
         params.append(int(filtro_cliente))
         
+    # Filtro por IMEI
     if filtro_imei:
         query += " AND s.imei_equipo LIKE ?"
         params.append(f"%{filtro_imei}%")
         
+    # Filtro por Técnico (Exacto para el desplegable)
+    if filtro_tecnico:
+        query += " AND s.tecnico_nombre = ?"
+        params.append(filtro_tecnico)
+            
+    # Filtro por Tipo de Servicio
     if filtro_tipo_servicio:
         query += " AND s.tipo_servicio = ?"
         params.append(filtro_tipo_servicio)
@@ -3667,13 +3711,19 @@ def listar_reparaciones_completadas():
     query += " ORDER BY s.fecha_servicio DESC"
     reparaciones = db_query(query, tuple(params))
     
+    # Enviamos 'tecnicos=tecnicos_db' para llenar el <select> en el HTML
     return render_template('servicio_tecnico/reparaciones.html', 
                            reparaciones=reparaciones, 
+                           tecnicos=tecnicos_db, # <--- Agregado para el punto 1
                            titulo="Historial de Servicios Completados", 
                            start_date=start_date, 
                            end_date=end_date_display,
-                           filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tipo_servicio': filtro_tipo_servicio})
-    
+                           filtros_activos={
+                               'cliente': filtro_cliente, 
+                               'imei': filtro_imei, 
+                               'tecnico': filtro_tecnico, 
+                               'tipo_servicio': filtro_tipo_servicio
+                           })    
     
     
 @app.route('/servicio_tecnico/reparacion/<int:servicio_id>')
@@ -7562,6 +7612,12 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("servicios_reparacion", "moneda_presupuesto", "TEXT DEFAULT 'ARS'")
         # Dentro de ejecutar_migraciones_y_configuracion():
         agregar_columna("servicios_reparacion", "observaciones", "TEXT")
+        
+        # Dentro de ejecutar_migraciones_y_configuracion():
+        agregar_columna("servicios_reparacion", "pin_code", "TEXT")
+        agregar_columna("servicios_reparacion", "modelo_equipo", "TEXT")
+                
+                
         # Dentro de ejecutar_migraciones_y_configuracion():
         agregar_columna("repuestos_usados", "moneda_item", "TEXT DEFAULT 'USD'")
         agregar_columna("repuestos_usados", "valor_original_item", "REAL DEFAULT 0.0")

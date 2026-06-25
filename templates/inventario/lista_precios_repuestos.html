@@ -88,11 +88,12 @@
 
         {# Formulario de Filtro #}
         <form method="GET" action="{{ url_for('lista_precios_repuestos') }}" class="mb-4 p-3 bg-light border rounded shadow-sm">
-            <h5 class="mb-3">Filtrar por Producto / Accesorio</h5>
-            <div class="row">
-                <div class="col-md-8">
+            <h5 class="mb-3"><i class="bi bi-search me-2"></i>Filtrar Productos y Accesorios</h5>
+            <div class="row g-3">
+                {# 1. Selector Específico (Select2) #}
+                <div class="col-md-5">
                     <div class="form-group">
-                        <label for="select_repuestos" class="form-label fw-bold">Seleccionar Ítems (Vacío para listar todos con stock)</label>
+                        <label for="select_repuestos" class="form-label fw-bold small">Seleccionar Ítems específicos:</label>
                         <select class="form-control select2-multiple" id="select_repuestos" multiple="multiple">
                             {% if form_data.selected_repuesto_ids %}
                                 {% for rep_id_str in form_data.selected_repuesto_ids.split(',') %}
@@ -111,11 +112,26 @@
                         <input type="hidden" id="selected_repuesto_ids_hidden_filter" name="repuesto_ids" value="{{ form_data.selected_repuesto_ids }}">
                     </div>
                 </div>
-                <div class="col-md-4 d-flex align-items-end gap-2">
-                    <button type="submit" class="btn btn-info w-100 text-white fw-bold"><i class="bi bi-funnel me-2"></i>Aplicar Filtro</button>
-                    {% if form_data.selected_repuesto_ids %}
-                        <a href="{{ url_for('lista_precios_repuestos') }}" class="btn btn-outline-secondary w-100">
-                            <i class="bi bi-arrow-clockwise me-2"></i>Limpiar
+
+                {# 2. NUEVO: Buscador por Palabra Clave (Punto 1 aplicado) #}
+                <div class="col-md-4">
+                    <div class="form-group">
+                        <label for="filtro_nombre" class="form-label fw-bold small">Buscar por Palabra (Ej: FUNDA):</label>
+                        <input type="text" name="filtro_nombre" id="filtro_nombre" class="form-control" 
+                            placeholder="Escribe 'funda', 'vidrio', etc..." 
+                            value="{{ form_data.filtro_nombre }}">
+                        <div class="form-text" style="font-size: 0.75rem;">Muestra todos los productos que contengan este nombre.</div>
+                    </div>
+                </div>
+
+                {# 3. Botones de Acción #}
+                <div class="col-md-3 d-flex align-items-start gap-2 pt-4">
+                    <button type="submit" class="btn btn-info w-100 text-white fw-bold shadow-sm">
+                        <i class="bi bi-funnel me-1"></i> Aplicar Filtro
+                    </button>
+                    {% if form_data.selected_repuesto_ids or form_data.filtro_nombre %}
+                        <a href="{{ url_for('lista_precios_repuestos') }}" class="btn btn-outline-secondary w-100 shadow-sm">
+                            <i class="bi bi-arrow-clockwise me-1"></i> Limpiar
                         </a>
                     {% endif %}
                 </div>

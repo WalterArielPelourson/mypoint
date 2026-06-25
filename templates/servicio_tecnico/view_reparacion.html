@@ -40,8 +40,14 @@
             </div>
             <div class="col-md-6">
                 <p><strong>CUIT/CUIL Cliente:</strong> {{ reparacion.cuit_cuil or 'N/A' }}</p>
-                {% if reparacion.tipo_servicio == 'REPARACION' %} {# Mostrar IMEI solo si es Reparación #}
+                {% if reparacion.tipo_servicio == 'REPARACION' %} {# Mostrar detalles técnicos solo si es Reparación #}
+                    <p><strong>Modelo del Equipo:</strong> {{ reparacion.modelo_equipo or 'No especificado' }}</p>
                     <p><strong>IMEI del Equipo:</strong> {{ reparacion.imei_equipo or 'N/A' }}</p>
+                    
+                    {# Resaltamos el Pin en rojo para que el técnico lo vea rápido #}
+                    <p><strong>Pin / Patrón de Desbloqueo:</strong> 
+                        <span class="text-danger fw-bold">{{ reparacion.pin_code or 'Sin clave' }}</span>
+                    </p>
                 {% endif %}
             </div>
         </div>

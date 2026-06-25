@@ -128,11 +128,30 @@
                     <div class="invalid-feedback">Por favor, seleccione el tipo de servicio.</div>
                 </div>
 
+                <!-- Modelo del Equipo -->
+                <div class="col-md-4">
+                    <label for="modelo_equipo" class="form-label fw-bold">Modelo del Equipo:</label>
+                    <input type="text" class="form-control border-primary" id="modelo_equipo" name="modelo_equipo" 
+                        value="{{ form_data.modelo_equipo }}" placeholder="Ej: Samsung A32, iPhone 11...">
+                </div>
+
+
                 <div class="col-md-6">
                     <label for="imei_equipo" class="form-label">IMEI del Equipo (Solo para Reparación):</label>
                     <input type="text" class="form-control" id="imei_equipo" name="imei_equipo" value="{{ form_data.get('imei_equipo', '') }}" placeholder="Opcional, si aplica" pattern="\d{15}" title="El IMEI debe contener 15 dígitos numéricos." maxlength="15">
                     <div class="invalid-feedback">El IMEI debe contener 15 dígitos numéricos.</div>
                 </div>
+
+
+                <!-- Pin / Patrón -->
+                <div class="col-md-4">
+                    <label for="pin_code" class="form-label fw-bold">Pin / Patrón de desbloqueo:</label>
+                    <input type="text" class="form-control border-danger" id="pin_code" name="pin_code" 
+                        value="{{ form_data.pin_code }}" placeholder="Ej: 1234 o L de arriba a abajo">
+                </div>
+
+
+
                 <div class="col-12">
                     <label for="falla_reportada" class="form-label">Falla Reportada/Descripción del Producto <span class="text-danger">*</span>:</label>
                     <textarea class="form-control" id="falla_reportada" name="falla_reportada" rows="2" required>{{ form_data.get('falla_reportada', '') }}</textarea>

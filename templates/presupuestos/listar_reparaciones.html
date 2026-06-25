@@ -57,6 +57,28 @@
                         class="form-control" placeholder="IMEI...">
                 </div>
 
+                <!-- NUEVO FILTRO DE TÉCNICO 
+                <div class="col-md-3">
+                    <label for="tecnico" class="form-label fw-bold">Técnico:</label>
+                    <input type="text" class="form-control" id="tecnico" name="tecnico" 
+                        value="{{ filtros_activos.tecnico }}" placeholder="Nombre del técnico...">
+                </div> -->
+                <!-- NUEVO: FILTRO TÉCNICO DESPLEGABLE -->
+                <div class="col-md-3">
+                    <label for="tecnico" class="form-label fw-bold">Técnico Responsable:</label>
+                    <select class="form-select border-primary" id="tecnico" name="tecnico">
+                        <option value="">-- Ver todos --</option>
+                        {% for t in tecnicos %}
+                            {% if t.tecnico_nombre %}
+                                <option value="{{ t.tecnico_nombre }}" {% if filtros_activos.tecnico == t.tecnico_nombre %}selected{% endif %}>
+                                    {{ t.tecnico_nombre }}
+                                </option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+
+
                 <div class="col-md-3">
                     <label for="tipo_servicio" class="form-label fw-bold">Tipo de Servicio:</label>
                     <select class="form-select" id="tipo_servicio" name="tipo_servicio">
@@ -86,9 +108,12 @@
                 <th scope="col">#ID Presupuesto</th>
                 <th scope="col">Fecha</th>
                 <th scope="col">Cliente</th>
+                <th scope="col">Equipo (Modelo/IMEI/PIN)</th> <!-- Agrupamos para ahorrar espacio -->
                 <th scope="col">Tipo Servicio</th> {# Nueva columna para mostrar el tipo de servicio #}
-                <th scope="col">IMEI Equipo</th>
-                <th scope="col">Falla Reportada</th>
+                <!--<th scope="col">IMEI Equipo</th>
+                <th scope="col">Falla Reportada</th>-->
+                <th scope="col">Falla / Solución</th>
+                <th scope="col">Notas Internas</th>
                 <th scope="col">Mano de Obra (ARS)</th>
                 <th scope="col">Costo Repuestos (USD)</th>
                 <th scope="col">Precio Final (ARS)</th>
@@ -100,15 +125,53 @@
             {% if presupuestos %}
                 {% for pres in presupuestos %}
                 <tr>
-                    <td>{{ pres.id }}</td>
-                    <td>{{ pres.fecha_servicio.split(' ')[0] }}<br><small class="text-muted">{{ pres.fecha_servicio.split(' ')[1] }}</small></td>
+                    <!-- 1. ID -->
+                    <td><span class="fw-bold">#{{ pres.id }}</span></td>
+                    
+                    <!-- 2. FECHA -->
+                    <td class="small">
+                        {{ pres.fecha_servicio.split(' ')[0] }}<br>
+                        <small class="text-muted">{{ pres.fecha_servicio.split(' ')[1] }}</small>
+                    </td>
+                    
+                    <!-- 3. CLIENTE -->
                     <td>{{ pres.razon_social or (pres.nombre + ' ' + pres.apellido) }}</td>
-                    <td>{{ pres.tipo_servicio }}</td> {# Mostrar el tipo de servicio #}
-                    <td>{{ pres.imei_equipo or 'N/A' }}</td>
-                    <td>{{ pres.falla_reportada|truncate(50) }}</td>
-                    <td>ARS {{ pres.precio_mano_obra_ars|round(2) }}</td>
-                    <td>USD {{ pres.costo_total_repuestos_usd|round(2) }}</td>
-                    <td>ARS {{ pres.precio_final_ars|round(2) }}</td>
+                    
+                    <!-- 4. TIPO -->
+                    <td class="small">{{ pres.tipo_servicio }}</td>
+                    
+                    <!-- 5. EQUIPO (Agrupamos Modelo, IMEI y PIN) -->
+                    <td>
+                        <div class="fw-bold text-primary">{{ pres.modelo_equipo or 'Sin Modelo' }}</div>
+                        <div class="small text-muted">IMEI: {{ pres.imei_equipo or 'N/A' }}</div>
+                        <div class="small text-danger fw-bold">PIN: {{ pres.pin_code or 'N/A' }}</div>
+                    </td>
+                    
+                    <!-- 6. FALLA Y SOLUCIÓN -->
+                    <td class="small">
+                        <div title="{{ pres.falla_reportada }}"><strong>F:</strong> {{ pres.falla_reportada|truncate(30) }}</div>
+                        {% if pres.solucion_aplicada %}
+                            <div class="text-success" title="{{ pres.solucion_aplicada }}"><strong>S:</strong> {{ pres.solucion_aplicada|truncate(30) }}</div>
+                        {% endif %}
+                    </td>
+
+                    <!-- 7. NOTAS INTERNAS (NUEVO) -->
+                    <td class="small">
+                        <p class="text-muted font-italic mb-0" style="font-size: 0.8rem;">
+                            {{ (pres.observaciones or '')|truncate(40) or '-' }}
+                        </p>
+                    </td>
+
+                    <!-- 8. MANO DE OBRA -->
+                    <td class="small text-nowrap">ARS {{ pres.precio_mano_obra_ars|round(2) }}</td>
+                    
+                    <!-- 9. COSTO REPUESTOS -->
+                    <td class="small text-nowrap">USD {{ pres.costo_total_repuestos_usd|round(2) }}</td>
+                    
+                    <!-- 10. PRECIO FINAL -->
+                    <td class="fw-bold text-nowrap text-end">ARS {{ pres.precio_final_ars|round(2) }}</td>
+                    
+                    <!-- 11. ESTADO -->
                     <td>
                         {% if pres.status == 'PRESUPUESTO' %}
                             <span class="badge bg-info text-dark">{{ pres.status }}</span>
@@ -118,28 +181,44 @@
                             <span class="badge bg-danger">{{ pres.status }}</span>
                         {% endif %}
                     </td>
-                    <td>
-                        <div class="d-flex">
-                            <a href="{{ url_for('view_reparacion', servicio_id=pres.id) }}" class="btn btn-sm btn-info me-1" title="Ver Detalles"><i class="bi bi-eye"></i></a>
-                            {% if pres.status == 'PRESUPUESTO' %}
-                            {# BOTÓN DE EDICIÓN: Agregado/Corregido aquí #}
-                            <a href="{{ url_for('editar_presupuesto_reparacion', servicio_id=pres.id) }}" class="btn btn-sm btn-warning me-1" title="Editar Presupuesto">
-                                <i class="bi bi-pencil"></i>
+
+                    <!-- 12. ACCIONES -->
+                    <td style="width: 100px;"> <!-- Ajustamos el ancho de la celda para el 2x2 -->
+                        <div class="d-flex flex-wrap justify-content-center gap-1" style="width: 75px; margin: 0 auto;">
+                            
+                            <!-- FILA 1: Ver y Editar -->
+                            <a href="{{ url_for('view_reparacion', servicio_id=pres.id) }}" 
+                            class="btn btn-sm btn-info text-white" style="width: 32px;" title="Ver Detalles">
+                            <i class="bi bi-eye"></i>
                             </a>
-                            <form action="{{ url_for('confirmar_reparacion', servicio_id=pres.id) }}" method="POST" class="d-inline me-1" onsubmit="return confirm('¿Está seguro de que desea confirmar este servicio y descontar los repuestos del inventario?');">
-                                <button type="submit" class="btn btn-sm btn-success" title="Confirmar Servicio"><i class="bi bi-check-circle"></i></button>
+                            
+                            {% if pres.status == 'PRESUPUESTO' %}
+                            <a href="{{ url_for('editar_presupuesto_reparacion', servicio_id=pres.id) }}" 
+                            class="btn btn-sm btn-warning" style="width: 32px;" title="Editar Presupuesto">
+                            <i class="bi bi-pencil"></i>
+                            </a>
+                            
+                            <!-- FILA 2: Confirmar y Cancelar -->
+                            <form action="{{ url_for('confirmar_reparacion', servicio_id=pres.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Confirmar servicio?');">
+                                <button type="submit" class="btn btn-sm btn-success" style="width: 32px;" title="Confirmar">
+                                    <i class="bi bi-check-circle"></i>
+                                </button>
                             </form>
-                            <form action="{{ url_for('cancelar_presupuesto_reparacion', servicio_id=pres.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea cancelar este presupuesto?');">
-                                <button type="submit" class="btn btn-sm btn-danger" title="Cancelar Presupuesto"><i class="bi bi-x-circle"></i></button>
+                            
+                            <form action="{{ url_for('cancelar_presupuesto_reparacion', servicio_id=pres.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Cancelar presupuesto?');">
+                                <button type="submit" class="btn btn-sm btn-danger" style="width: 32px;" title="Cancelar">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
                             </form>
                             {% endif %}
+
                         </div>
                     </td>
                 </tr>
                 {% endfor %}
             {% else %}
                 <tr>
-                    <td colspan="11" class="text-center text-muted">No se encontraron presupuestos de reparación pendientes con los filtros aplicados.</td> {# colspan ajustado #}
+                    <td colspan="12" class="text-center text-muted py-4">No se encontraron presupuestos de reparación pendientes con los filtros aplicados.</td>
                 </tr>
             {% endif %}
         </tbody>
