@@ -1837,36 +1837,41 @@ def listar_compras():
 ## NUEVAS MODIFICACIONES (Punto 3 de Requerimientos) ##
 @app.route('/cuentas_corrientes/proveedores')
 @login_required
-@tecnico_required # <-- El técnico ahora puede entrar
+@tecnico_required
 def listar_proveedores_cc():
     proveedores = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_proveedor = 1 ORDER BY razon_social, apellido, nombre")
     estados_cuenta = []
-    lista_equipos_tipos = "('CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO')"
+    # Incluimos plurales por seguridad
+    lista_equipos_tipos = "('CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO', 'CELULARES', 'TABLETS')"
 
     for prov in proveedores:
         # --- 1. SALDO USD (Equipos) ---
-        # Deuda total por facturas
-        compra_usd = db_query(f"SELECT COALESCE(SUM(costo_total_usd), 0.0) FROM compras WHERE proveedor_id = ? AND tipo_item IN {lista_equipos_tipos}", (prov['id'],))[0][0]
+        # Obtenemos la suma de facturas en USD
+        res_compra_usd = db_query(f"SELECT COALESCE(SUM(costo_total_usd), 0.0) FROM compras WHERE proveedor_id = ? AND tipo_item IN {lista_equipos_tipos}", (prov['id'],))
+        compra_usd = res_compra_usd[0][0] if res_compra_usd else 0.0
         
-        # Pagos y Ajustes (QUITAMOS 'AND compra_id IS NOT NULL' para que coincida con el detalle)
-        pago_usd = db_query("""
+        # Obtenemos la suma de pagos/ajustes en USD
+        res_pago_usd = db_query("""
             SELECT COALESCE(SUM(monto_usd), 0.0) 
             FROM pagos_proveedores 
             WHERE proveedor_id = ? AND imputacion = 'EQUIPOS'
-        """, (prov['id'],))[0][0]
+        """, (prov['id'],))
+        pago_usd = res_pago_usd[0][0] if res_pago_usd else 0.0
         
         saldo_usd = compra_usd - pago_usd
 
-        # --- 2. SALDO ARS (Repuestos) ---
-        # Deuda total por facturas
-        compra_ars = db_query(f"SELECT COALESCE(SUM(costo_total_ars), 0.0) FROM compras WHERE proveedor_id = ? AND tipo_item NOT IN {lista_equipos_tipos}", (prov['id'],))[0][0]
+        # --- 2. SALDO ARS (Repuestos y Servicios Externos) ---
+        # Obtenemos la suma de facturas en ARS (aquí entran los SERVICIO_EXTERNO)
+        res_compra_ars = db_query(f"SELECT COALESCE(SUM(costo_total_ars), 0.0) FROM compras WHERE proveedor_id = ? AND tipo_item NOT IN {lista_equipos_tipos}", (prov['id'],))
+        compra_ars = res_compra_ars[0][0] if res_compra_ars else 0.0
         
-        # Pagos y Ajustes (QUITAMOS 'AND compra_id IS NOT NULL')
-        pago_ars = db_query("""
+        # Obtenemos la suma de pagos/ajustes en ARS
+        res_pago_ars = db_query("""
             SELECT COALESCE(SUM(monto_ars), 0.0) 
             FROM pagos_proveedores 
             WHERE proveedor_id = ? AND imputacion = 'REPUESTOS'
-        """, (prov['id'],))[0][0]
+        """, (prov['id'],))
+        pago_ars = res_pago_ars[0][0] if res_pago_ars else 0.0
         
         saldo_ars = compra_ars - pago_ars
 
@@ -1880,7 +1885,6 @@ def listar_proveedores_cc():
             })
 
     return render_template('cuentas_corrientes/listar_proveedores_cc.html', estados_cuenta=estados_cuenta)
-
 
 # --- NUEVA RUTA: Detalle de Movimientos Cta. Cte. Proveedor ---
 
@@ -2510,18 +2514,25 @@ def registrar_pago_proveedor(proveedor_id):
     else:
         filtro_tipo = f"AND c.tipo_item NOT IN {lista_equipos_tipos}"
 
-    # 1. Obtener Deuda Detallada (CORREGIDO: Subconsultas filtradas por imputación para evitar duplicados)
+    # 1. Obtener Deuda Detallada (Incluyendo SERVICIOS EXTERNOS para que aparezcan al querer pagar)
     compras_raw = db_query(f"""
         SELECT c.id, c.fecha_compra, c.costo_total_ars, c.costo_total_usd, c.tipo_item, c.estado_pago,
                CASE
-                   WHEN c.tipo_item IN {lista_equipos_tipos} THEN COALESCE(cel.marca, 'Equipo') || ' ' || COALESCE(cel.modelo, '') || ' (SN: ' || COALESCE(cel.imei, 'N/A') || ')'
-                   ELSE rep.nombre_parte || ' (' || COALESCE(rep.modelo_compatible, 'Genérico') || ')'
+                   -- Nueva lógica para describir el trabajo técnico externo
+                   WHEN c.tipo_item = 'SERVICIO_EXTERNO' THEN '🛠️ TRABAJO EXTERNO (Orden #' || c.item_id || ')'
+                   
+                   WHEN c.tipo_item IN {lista_equipos_tipos} THEN 
+                        COALESCE(cel.marca, 'Equipo') || ' ' || COALESCE(cel.modelo, '') || ' (SN: ' || COALESCE(cel.imei, 'N/A') || ')'
+                   
+                   ELSE 
+                        COALESCE(rep.nombre_parte, 'Insumo') || ' (' || COALESCE(rep.modelo_compatible, 'Genérico') || ')'
                END AS item_descripcion,
                (SELECT COALESCE(SUM(p.monto_ars), 0) FROM pagos_proveedores p WHERE p.compra_id = c.id AND p.imputacion = 'REPUESTOS') as pagado_ars_total_acumulado,
                (SELECT COALESCE(SUM(p.monto_usd), 0) FROM pagos_proveedores p WHERE p.compra_id = c.id AND p.imputacion = 'EQUIPOS') as pagado_usd_impacto_acumulado
         FROM compras c
         LEFT JOIN celulares cel ON c.item_id = cel.id AND c.tipo_item IN {lista_equipos_tipos}
-        LEFT JOIN repuestos rep ON c.item_id = rep.id AND c.tipo_item NOT IN {lista_equipos_tipos}
+        -- Excluimos SERVICIO_EXTERNO del JOIN de repuestos para evitar resultados nulos innecesarios
+        LEFT JOIN repuestos rep ON c.item_id = rep.id AND c.tipo_item NOT IN {lista_equipos_tipos} AND c.tipo_item != 'SERVICIO_EXTERNO'
         WHERE c.proveedor_id = ? AND c.estado_pago != 'PAGADO_TOTAL' {filtro_tipo}
         ORDER BY c.fecha_compra ASC
     """, (proveedor_id,))
@@ -2958,18 +2969,30 @@ def ver_detalle_cc_proveedor(proveedor_id):
         # CONVERSIÓN A DICT para evitar AttributeError: 'sqlite3.Row' object has no attribute 'get'
         c = dict(row)
         
-        # --- NUEVA LÓGICA DE CONCEPTO DETALLADO ---
-        if view == 'EQUIPOS' and c.get('marca'):
+        # --- NUEVA LÓGICA DE CONCEPTO DETALLADO (INCLUYE SERVICIO EXTERNO) ---
+        if c['tipo_item'] == 'SERVICIO_EXTERNO':
+            # Buscamos los datos de la reparación original para mostrar qué equipo era en la descripción
+            reparacion_info = db_query("SELECT modelo_equipo, imei_equipo FROM servicios_reparacion WHERE id = ?", (c['item_id'],))
+            desc_equipo = ""
+            if reparacion_info:
+                r_data = reparacion_info[0]
+                desc_equipo = f" - {r_data['modelo_equipo'] or 'Equipo'} (IMEI: {r_data['imei_equipo'] or 'N/A'})"
+            
+            concepto = f"🛠️ TRABAJO TÉCNICO EXTERNO (Orden #{c['item_id']}){desc_equipo}"
+
+        elif view == 'EQUIPOS' and c.get('marca'):
             concepto = f"Compra {c['tipo_item'].title()} #{c['id']} - {c['marca']} {c['modelo']} (IMEI: {c['imei'] or 'N/A'})"
+        
         elif view != 'EQUIPOS' and c.get('nombre_parte'):
             concepto = f"Compra {c['tipo_item'].title()} #{c['id']} - {c['nombre_parte']} ({c['modelo_compatible'] or 'Genérico'})"
+        
         else:
             concepto = f"Compra {c['tipo_item'].title()} #{c['id']}"
 
         movimientos.append({
             'fecha': c['fecha_compra'], 
             'tipo': 'DEBE', 
-            'monto_usd': c['costo_total_usd'],      # Deuda real en USD
+            'monto_usd': c['costo_total_usd'],      # Deuda real en USD (será 0 si es ARS)
             'monto_ars': c['costo_total_ars'],      # Valor en Pesos
             'monto_ars_info': c['costo_total_ars'],  # Referencia informativa
             'cotizacion': c['valor_dolar_momento'],
@@ -3232,10 +3255,17 @@ def cotizar_venta(celular_id):
 def inventario_repuestos():
     filtro_nombre = request.args.get('nombre', '').strip()
     filtro_modelo = request.args.get('modelo', '').strip()
-    filtro_stock = request.args.get('stock', '').strip()
+    #filtro_stock = request.args.get('stock', '').strip()
     # --- NUEVO FILTRO: Categoría ---
     filtro_categoria = request.args.get('categoria', '').strip()
-
+    
+    # --- LÓGICA DE FILTRO POR DEFECTO ---
+    # Si la palabra 'stock' no está en la URL (primera vez que entra), ponemos 'con'
+    if 'stock' not in request.args:
+        filtro_stock = 'con'
+    else:
+        filtro_stock = request.args.get('stock', '').strip()
+        
     query = "SELECT * FROM repuestos WHERE 1=1"
     params = []
 
@@ -3255,6 +3285,8 @@ def inventario_repuestos():
         query += " AND stock <= 5 AND stock > 0" # Límite de stock bajo
     elif filtro_stock == 'sin':
         query += " AND stock = 0"
+    elif filtro_stock == 'con': # NUEVA OPCIÓN
+        query += " AND stock > 0"
 
     query += " ORDER BY nombre_parte"
     
@@ -3328,6 +3360,18 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             
             servicio = servicio_data[0]
             
+            # --- NUEVA LÓGICA PARA TRAER EL NOMBRE DEL REPARADOR EXTERNO ---
+            externo_nombre = ""
+            if servicio['externo_proveedor_id']:
+                res_p = db_query("SELECT nombre, apellido, razon_social FROM personas WHERE id = ?", (servicio['externo_proveedor_id'],))
+                if res_p:
+                    p = res_p[0]
+                    # Priorizamos Razón Social, si no, Nombre y Apellido
+                    externo_nombre = p['razon_social'] or f"{p['nombre']} {p['apellido']}"
+            
+                
+            
+            
             items_usados = db_query("""
                 SELECT ru.repuesto_id, ru.manual_item_nombre, ru.cantidad, ru.costo_usd_momento,
                        ru.moneda_item, ru.valor_original_item,
@@ -3337,28 +3381,33 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 WHERE ru.servicio_id = ?
             """, (servicio_id,))
             
+             # --- DICCIONARIO FORM_DATA COMPLETO SIN OMISIONES ---
             form_data = {
                 'servicio_id': servicio['id'], 
                 'cliente_id': servicio['cliente_id'],
                 'tecnico_nombre': servicio['tecnico_nombre'] or '',
                 'tipo_servicio': servicio['tipo_servicio'],
                 'imei_equipo': servicio['imei_equipo'] or '', 
-                'modelo_equipo': servicio['modelo_equipo'] or '', # Nuevo
-                'pin_code': servicio['pin_code'] or '',           # Nuevo
+                'modelo_equipo': servicio['modelo_equipo'] or '',
+                'pin_code': servicio['pin_code'] or '',
                 'falla_reportada': servicio['falla_reportada'] or '',
                 'observaciones': servicio['observaciones'] or '',
                 'solucion_aplicada': servicio['solucion_aplicada'] or '',
                 'precio_mano_obra_ars': f"{servicio['precio_mano_obra_ars']:.2f}",
+                'moneda_presupuesto': servicio['moneda_presupuesto'] or 'ARS',
+                'precio_mano_obra_original': f"{servicio['m_o_valor_original']:.2f}" if servicio['m_o_valor_original'] is not None else "0.00",
+                'moneda_mano_obra': servicio['moneda_mano_obra'] or 'ARS',
+                'es_terciarizada': servicio['es_terciarizada'],
+                'externo_proveedor_id': servicio['externo_proveedor_id'],
+                'externo_proveedor_nombre': externo_nombre, # <--- ENVIAMOS EL NOMBRE PARA EL SELECT2
+                'externo_costo_ars': f"{servicio['externo_costo_ars']:.2f}" if servicio['externo_costo_ars'] else "0.00",
                 'repuesto_stock_id[]': [],
                 'repuesto_nombre_display[]': [],
                 'cantidad_stock[]': [],
                 'precio_venta_usd_stock[]': [], 
                 'manual_item_nombre[]': [],
                 'cantidad_manual[]': [],
-                'precio_venta_usd_manual[]': [],
-                'moneda_presupuesto': servicio['moneda_presupuesto'] or 'ARS', # <-- Agrega esta línea
-                'precio_mano_obra_original': f"{servicio['m_o_valor_original']:.2f}" if servicio['m_o_valor_original'] else "0.00", 
-                'moneda_mano_obra': servicio['moneda_mano_obra'] or 'ARS', # <--- AGREGA ESTA LÍNEA
+                'precio_venta_usd_manual[]': []
             }
             
             for item in items_usados:
@@ -3431,6 +3480,14 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             
             falla_reportada = form_data_raw.get('falla_reportada', [''])[0].strip() if form_data_raw.get('falla_reportada') else ''
             observaciones = form_data_raw.get('observaciones', [''])[0].strip() if form_data_raw.get('observaciones') else ''
+            
+            # --- Dentro del bloque if request.method == 'POST': ---
+            es_terciarizada = 1 if form_data_raw.get('es_terciarizada') else 0
+            externo_proveedor_id = form_data_raw.get('externo_proveedor_id', [''])[0]
+            externo_proveedor_id = int(externo_proveedor_id) if externo_proveedor_id else None
+            externo_costo_ars = float(form_data_raw.get('externo_costo_ars', ['0'])[0] or 0)
+                        
+            
             solucion_aplicada = form_data_raw.get('solucion_aplicada', [''])[0].strip() if form_data_raw.get('solucion_aplicada') else ''
             # --- Busca este bloque en el POST ---
             moneda_m_o = form_data_raw.get('moneda_mano_obra', ['ARS'])[0] # <--- Capturar
@@ -3519,22 +3576,24 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                     """UPDATE servicios_reparacion SET 
                         cliente_id = ?, tecnico_nombre = ?, imei_equipo = ?, modelo_equipo = ?, pin_code = ?, falla_reportada = ?, solucion_aplicada = ?, 
                         costo_total_repuestos_usd = ?, precio_mano_obra_ars = ?, precio_final_ars = ?, 
-                        fecha_servicio = ?,  tipo_servicio = ?, observaciones = ?, moneda_presupuesto = ?, moneda_mano_obra = ?, m_o_valor_original = ?
+                        fecha_servicio = ?,  tipo_servicio = ?, observaciones = ?, moneda_presupuesto = ?, moneda_mano_obra = ?, m_o_valor_original = ?, es_terciarizada = ?, externo_proveedor_id = ?, externo_costo_ars = ?
                        WHERE id = ?""",
                     (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
                      total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, 
-                     fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input, servicio_id)
+                     fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input, 
+                     es_terciarizada, externo_proveedor_id, externo_costo_ars, servicio_id)
                 )
                 db_execute_func(db_conn, "DELETE FROM repuestos_usados WHERE servicio_id = ?", (servicio_id,))
             else:
                 servicio_id = db_execute_func(db_conn,
                     """INSERT INTO servicios_reparacion 
                        (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
-                        costo_total_repuestos_usd, precio_mano_obra_ars, precio_final_ars, fecha_servicio, status, tipo_servicio, observaciones, moneda_presupuesto, moneda_mano_obra, m_o_valor_original) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PRESUPUESTO', ?, ?, ?, ?, ? )""",
+                        costo_total_repuestos_usd, precio_mano_obra_ars, precio_final_ars, fecha_servicio, status, tipo_servicio, observaciones, moneda_presupuesto, moneda_mano_obra, m_o_valor_original,
+            es_terciarizada, externo_proveedor_id, externo_costo_ars) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PRESUPUESTO', ?, ?, ?, ?, ?, ?, ?, ? )""",
                     (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
-                     total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input),
-                return_id=True
+                     total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input, es_terciarizada, externo_proveedor_id, externo_costo_ars),
+                     return_id=True
                 )
                 
             # --- INSERTAR REPUESTOS USADOS --
@@ -3557,6 +3616,8 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
     # Se debe ejecutar si no se entró al bloque POST o si el bloque POST falló antes de retornar.
     clientes = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY apellido, nombre, razon_social")
     title = "Editar Presupuesto de Servicio" if is_edit else "Nuevo Presupuesto de Servicio"
+    proveedores = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_proveedor = 1 ORDER BY razon_social ASC")
+    
     
     return render_template('servicio_tecnico/form_reparacion.html', 
                            clientes=clientes, 
@@ -3565,7 +3626,8 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                            form_data=form_data, 
                            is_edit=is_edit,
                            servicio_id=servicio_id,
-                           title=title)    
+                           title=title,
+                           proveedores=proveedores )# <--- IMPORTANTE)    
         
         
     # ... (el resto de tu archivo app.py continúa aquí) ...
@@ -4190,14 +4252,14 @@ def procesar_pago(venta_id):
             SET status = 'COMPLETADA', monto_cobrado_ars = ?, monto_cobrado_usd = ?,
                 monto_virtual_usd = ?, precio_final_ars = ?, precio_final_usd = ?,
                 celular_parte_pago_id = ?, celular_parte_pago_2_id = ?, celular_parte_pago_3_id = ?, celular_parte_pago_4_id = ?,
-                valor_celular_parte_pago = ?, saldo_pendiente = ?, valor_dolar_momento = ?, cantidad_cuotas = ?
+                valor_celular_parte_pago = ?, saldo_pendiente = ?, valor_dolar_momento = ?, cantidad_cuotas = ?, user_id = ?
             WHERE id = ?
         """, (
             monto_efectivo_ars, monto_efectivo_usd, 
             total_ingresado_virtual_usd, # Guardamos el total virtual como referencia
             nuevo_precio_final_ars, nuevo_precio_final_usd,
             pp_inputs[0]['id'], pp_inputs[1]['id'], pp_inputs[2]['id'], pp_inputs[3]['id'],
-            valor_pp_ars_historico, saldo_pendiente_ars, valor_dolar_pago, cantidad_cuotas, venta_id
+            valor_pp_ars_historico, saldo_pendiente_ars, valor_dolar_pago, cantidad_cuotas, current_user.id, venta_id
         ))
 
         db_execute_func(db_conn, "UPDATE celulares SET stock = 0 WHERE id = ?", (venta['celular_id'],))
@@ -4242,24 +4304,25 @@ def procesar_pago(venta_id):
             
 @app.route('/presupuestos/reparaciones/confirmar/<int:servicio_id>', methods=['POST'])
 @login_required
-#@admin_required
 @tecnico_required
 def confirmar_reparacion(servicio_id):
     db = get_db()
     try:
         db.execute("BEGIN TRANSACTION")
+        
+        # 1. Obtener datos del servicio (incluyendo los nuevos campos de terciarización)
         servicio = db_query_func(db, "SELECT * FROM servicios_reparacion WHERE id = ? AND status = 'PRESUPUESTO'", (servicio_id,))
         if not servicio:
             flash("El presupuesto no existe o ya fue procesado.", "danger")
             return redirect(url_for('listar_presupuestos_reparacion'))
+        
         servicio = servicio[0]
 
-        # Obtener los ítems asociados al servicio (tanto de stock como manuales)
+        # 2. Gestión de Stock: Obtener e procesar ítems asociados
         items_asociados = db_query_func(db, "SELECT ru.cantidad, ru.repuesto_id, ru.manual_item_nombre FROM repuestos_usados ru WHERE ru.servicio_id = ?", (servicio_id,))
         
-        # Descontar stock para ítems que provienen del inventario (repuestos_id no NULL)
         for item in items_asociados:
-            if item['repuesto_id']: # Es un ítem de stock
+            if item['repuesto_id']: # Si es un ítem de stock, descontamos
                 repuesto_info = db_query_func(db, "SELECT stock, nombre_parte FROM repuestos WHERE id = ?", (item['repuesto_id'],))[0]
                 if repuesto_info['stock'] < item['cantidad']:
                     flash(f"Stock insuficiente para '{repuesto_info['nombre_parte']}'. Necesita {item['cantidad']}, disponible {repuesto_info['stock']}.", "danger")
@@ -4267,29 +4330,65 @@ def confirmar_reparacion(servicio_id):
                     return redirect(url_for('listar_presupuestos_reparacion'))
                 db_execute_func(db, "UPDATE repuestos SET stock = stock - ? WHERE id = ?", (item['cantidad'], item['repuesto_id']))
         
-        # --- MODIFICACIÓN CLAVE: Generar Deuda en Cuenta Corriente ---
-        # Se cambia el status a COMPLETADO y se asigna el precio total al saldo_pendiente
+        # --- 3. GENERAR DEUDA EN CUENTA CORRIENTE DEL CLIENTE ---
+        # Se cambia el status a COMPLETADO y se asigna el precio total al saldo_pendiente del cliente
         db_execute_func(db, "UPDATE servicios_reparacion SET status = 'COMPLETADO', saldo_pendiente = precio_final_ars WHERE id = ?", (servicio_id,))
         
-        # Registrar movimiento de auditoría indicando que se generó una deuda
+        # --- 4. GENERAR DEUDA EN CUENTA CORRIENTE DEL PROVEEDOR (Si es Terciarizada) ---
+        info_extra = "Servicio terminado. Deuda cargada a Cuenta Corriente del cliente."
+        
+        # Usamos int() para asegurar que detecte el 1 aunque SQLite lo devuelva como texto o número
+        if int(servicio['es_terciarizada'] or 0) == 1 and servicio['externo_proveedor_id']:
+            # Registramos una entrada en la tabla de compras para que figure en la CC del Proveedor
+            # IMPORTANTE: El número de columnas debe coincidir exactamente con los signos '?' y las variables
+            db_execute_func(db, """
+                INSERT INTO compras (
+                    proveedor_id, 
+                    user_id, 
+                    fecha_compra, 
+                    tipo_item, 
+                    item_id, 
+                    cantidad, 
+                    costo_unitario_usd, 
+                    costo_total_ars, 
+                    costo_total_usd, 
+                    valor_dolar_momento, 
+                    estado_pago,
+                    imei_celular
+                ) VALUES (?, ?, ?, 'SERVICIO_EXTERNO', ?, 1, 0.0, ?, 0.0, 1.0, 'PENDIENTE', ?)
+            """, (
+                servicio['externo_proveedor_id'], 
+                current_user.id, 
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                servicio_id, 
+                servicio['externo_costo_ars'],
+                f"Reparación #{servicio_id}" # Esto llena la columna imei_celular para que no sea NULL
+            ))
+            info_extra += f" Se generó deuda con proveedor externo por ${servicio['externo_costo_ars']}."
+            
+            
+        # 5. Registrar movimiento de auditoría
         registrar_movimiento(current_user.id, 'SERVICIO_CONFIRMADO_DEUDA', 'SERVICIO', servicio_id, {
-            'precio_ars': servicio['precio_final_ars'], 
+            'precio_ars_cliente': servicio['precio_final_ars'], 
             'imei_equipo': servicio['imei_equipo'],
             'tipo_servicio': servicio['tipo_servicio'],
-            'info': "Servicio terminado. Deuda cargada a Cuenta Corriente del cliente."
+            'es_terciarizada': bool(servicio['es_terciarizada']),
+            'info': info_extra
         })
         
-        # --- NOTA: Se eliminan los llamados a registrar_movimiento_caja ---
-        # El dinero no ingresa a caja todavía. Ingresará cuando el usuario use el módulo
-        # de Cuenta Corriente para "Cobrar Cliente", permitiendo elegir el método de pago.
-        
         db.commit()
-        flash("Servicio confirmado. El monto se ha cargado a la cuenta corriente del cliente correctamente.", "success")
+        flash("Servicio confirmado exitosamente. Las cuentas corrientes han sido actualizadas.", "success")
+        
     except Exception as e:
         db.rollback()
         flash(f"Error al confirmar el servicio: {e}", "danger")
         app.logger.error(f"Error al confirmar servicio {servicio_id}: {e}", exc_info=True)
+        
     return redirect(url_for('listar_presupuestos_reparacion'))
+
+
+
+
 
 @app.route('/presupuestos/ventas/editar/<int:venta_id>', methods=['GET', 'POST'])
 @login_required
@@ -4505,11 +4604,12 @@ def view_venta(venta_id):
         SELECT 
             v.*, 
             c.marca, c.modelo, c.imei, c.condicion, 
-            p.nombre, p.apellido, p.razon_social, p.cuit_cuil,
+            p.nombre, p.apellido, p.razon_social, p.cuit_cuil, u.username as vendedor_real,
             cpp.marca AS pp_marca, cpp.modelo AS pp_modelo, cpp.imei AS pp_imei, cpp.condicion AS pp_condicion
         FROM ventas v
         JOIN celulares c ON v.celular_id = c.id
         JOIN personas p ON v.cliente_id = p.id
+        LEFT JOIN users u ON v.user_id = u.id
         LEFT JOIN celulares cpp ON v.celular_parte_pago_id = cpp.id
         WHERE v.id = ?
     """, (venta_id,))
@@ -7046,10 +7146,12 @@ def historial_ventas():
     filtro_producto = request.args.get('producto', '').strip()
 
     query = """
-        SELECT v.*, c.marca, c.modelo, c.imei, p.nombre, p.apellido, p.razon_social 
+        SELECT v.*, c.marca, c.modelo, c.imei, p.nombre, p.apellido, p.razon_social,
+               u.username as vendedor_real 
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id 
         JOIN personas p ON v.cliente_id = p.id 
+        LEFT JOIN users u ON v.user_id = u.id
         WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
     """
     params = [start_date, end_date_query]
@@ -7599,6 +7701,8 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("ventas", "valor_celular_parte_pago_3_usd", "REAL") # Toma celulares
         agregar_columna("ventas", "celular_parte_pago_4_id", "INTEGER") # Toma celulares
         agregar_columna("ventas", "valor_celular_parte_pago_4_usd", "REAL") # Toma celulares   
+        # Dentro de ejecutar_migraciones_y_configuracion()
+        agregar_columna("ventas", "user_id", "INTEGER")
         agregar_columna("servicios_reparacion", "tipo_servicio", "TEXT DEFAULT 'REPARACION'")
         
         agregar_columna("servicios_reparacion", "saldo_pendiente", "REAL DEFAULT 0.0")
@@ -7616,7 +7720,10 @@ def ejecutar_migraciones_y_configuracion():
         # Dentro de ejecutar_migraciones_y_configuracion():
         agregar_columna("servicios_reparacion", "pin_code", "TEXT")
         agregar_columna("servicios_reparacion", "modelo_equipo", "TEXT")
-                
+        #Servicio terciarizado
+        agregar_columna("servicios_reparacion", "es_terciarizada", "INTEGER DEFAULT 0")
+        agregar_columna("servicios_reparacion", "externo_proveedor_id", "INTEGER")
+        agregar_columna("servicios_reparacion", "externo_costo_ars", "REAL DEFAULT 0.0")        
                 
         # Dentro de ejecutar_migraciones_y_configuracion():
         agregar_columna("repuestos_usados", "moneda_item", "TEXT DEFAULT 'USD'")

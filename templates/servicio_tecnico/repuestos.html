@@ -40,8 +40,12 @@
                     <label for="stock" class="form-label small fw-bold">Nivel de Stock:</label>
                     <select class="form-select form-select-sm" id="stock" name="stock">
                         <option value="">Todos</option>
-                        <option value="bajo" {% if filtros_activos.stock == 'bajo' %}selected{% endif %}>Stock Bajo (≤ 5)</option>
-                        <option value="sin" {% if filtros_activos.stock == 'sin' %}selected{% endif %}>Sin Stock (0)</option>
+                        <option value="con" {% if filtros_activos.stock == 'con' %}selected{% endif %}>✅ Con Stock (Mayor a 0)</option>
+                            
+                        <option value="bajo" {% if filtros_activos.stock == 'bajo' %}selected{% endif %}>⚠️ Stock Bajo (5 o menos)</option>
+                            
+                        <option value="sin" {% if filtros_activos.stock == 'sin' %}selected{% endif %}>❌ Sin Stock (Agotado)</option>
+                            
                     </select>
                 </div>
 

@@ -61,6 +61,7 @@
             <tr>
                 <th>Venta #</th>
                 <th>Fecha</th>
+                <th>Vendedor</th>
                 <th>Cliente</th>
                 <th>Equipo</th>
                 <th>Total ARS</th>
@@ -72,6 +73,9 @@
             <tr>
                 <td><strong>#{{ venta.id }}</strong></td>
                 <td>{{ venta.fecha_venta|datetimeformat }}</td>
+                <td class="small fw-bold text-secondary">
+                    <i class="bi bi-person-badge me-1"></i>{{ venta.vendedor_real or 'Sistema' }}
+                </td>
                 <td>{{ venta.razon_social or (venta.nombre + ' ' + venta.apellido) }}</td>
                 <td>{{ venta.marca }} {{ venta.modelo }}</td>
                 <td>${{ "{:,.2f}".format(venta.precio_final_ars) }}</td>

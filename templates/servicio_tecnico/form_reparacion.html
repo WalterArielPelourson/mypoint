@@ -117,6 +117,58 @@
                     <div class="invalid-feedback">Por favor, ingrese el nombre del técnico.</div>
                 </div>
                 
+
+                <!-- Técnico terciarizado -->
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <div class="form-check form-switch mt-4">
+                            <input class="form-check-input" type="checkbox" id="es_terciarizada" name="es_terciarizada" value="1" 
+                                {% if form_data.es_terciarizada == 1 %}checked{% endif %} onchange="toggleTerciarizada()">
+                            <label class="form-check-label fw-bold" for="es_terciarizada">¿Reparación Terciarizada (Externa)?</label>
+                        </div>
+                    </div>
+
+                    <!-- Campos que se muestran solo si es Terciarizada 
+                    <div class="col-md-4 section-externo" style="display: none;">
+                        <label class="form-label fw-bold">Reparador Externo (Proveedor):</label>
+                        <select class="form-select border-danger" name="externo_proveedor_id">
+                            <option value="">Seleccione Reparador...</option>
+                            {% for prov in proveedores %}
+                                <option value="{{ prov.id }}" {% if form_data.externo_proveedor_id == prov.id %}selected{% endif %}>
+                                    {{ prov.razon_social or (prov.nombre + ' ' + prov.apellido) }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="col-md-4 section-externo" style="display: none;">
+                        <label class="form-label fw-bold">Costo del Reparador (ARS):</label>
+                        <input type="number" step="0.01" class="form-control border-danger" name="externo_costo_ars" 
+                            value="{{ form_data.externo_costo_ars or '0.00' }}">
+                    </div>
+                </div>-->
+
+                <!-- Campos que se muestran solo si es Terciarizada -->
+                <div class="col-md-4 section-externo" style="display: none;">
+                    <label for="externo_proveedor_id" class="form-label fw-bold">Reparador Externo (Proveedor):</label>
+                    <select class="form-select border-danger" id="externo_proveedor_id" name="externo_proveedor_id">
+                        {% if is_edit and form_data.externo_proveedor_id %}
+                            <option value="{{ form_data.externo_proveedor_id }}" selected>
+                                {{ form_data.externo_proveedor_nombre }}
+                            </option>
+                        {% else %}
+                            <option value="">Escriba nombre para buscar...</option>
+                        {% endif %}
+                    </select>
+                </div>
+
+                <div class="col-md-4 section-externo" style="display: none;">
+                    <label class="form-label fw-bold">Costo del Reparador (ARS):</label>
+                    <input type="number" step="0.01" class="form-control border-danger" name="externo_costo_ars" 
+                        value="{{ form_data.externo_costo_ars or '0.00' }}">
+                </div>
+
+
                 <!-- Tipo Servicio -->
                 <div class="col-md-6">
                     <label for="tipo_servicio" class="form-label">Tipo de Servicio <span class="text-danger">*</span>:</label>
@@ -612,5 +664,57 @@
         actualizarEtiquetasMoneda();
         calcularTotalesServicio();
     });
+
+
+    
+    // 1. Función para mostrar/ocultar los campos de terciarización
+    function toggleTerciarizada() {
+        const checkbox = document.getElementById('es_terciarizada');
+        if (!checkbox) return; // Seguridad por si el elemento no existe
+        
+        const isChecked = checkbox.checked;
+        document.querySelectorAll('.section-externo').forEach(el => {
+            el.style.display = isChecked ? 'block' : 'none';
+        });
+    }
+
+    $(document).ready(function() {
+        // Ejecutar la visibilidad inicial al cargar la página
+        toggleTerciarizada();
+
+        // 2. Inicializar el buscador inteligente del Reparador Externo (Select2)
+        $('#externo_proveedor_id').select2({
+            theme: 'bootstrap-5',
+            placeholder: 'Escribe nombre del laboratorio o técnico...',
+            allowClear: true,
+            width: '100%',
+            ajax: {
+                url: "{{ url_for('api_buscar_personas') }}",
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return {
+                        q: params.term, // Lo que el usuario escribe
+                        rol: 'proveedor' // Filtramos solo por proveedores
+                    };
+                },
+                processResults: function (data) {
+                    return { results: data.results };
+                },
+                cache: true
+            },
+            minimumInputLength: 2
+        });
+
+        /* 
+           NOTA: Se eliminó la lógica de Pre-cargado mediante AJAX (Punto 3).
+           Ahora Select2 detecta automáticamente la <option> seleccionada que
+           inyectamos desde el servidor en el HTML, evitando que el campo se blanquee.
+        */
+
+        // 3. Escuchar el cambio del switch para activar la visibilidad dinámicamente
+        $('#es_terciarizada').on('change', toggleTerciarizada);
+    });
+
 </script>
 {% endblock %}
