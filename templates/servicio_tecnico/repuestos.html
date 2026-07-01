@@ -35,6 +35,15 @@
                     <label for="modelo" class="form-label small fw-bold">Modelo Compatible:</label>
                     <input type="text" class="form-control form-control-sm" id="modelo" name="modelo" placeholder="Ej: iPhone 11, G54..." value="{{ filtros_activos.modelo }}">
                 </div>
+
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">Ver:</label>
+                    <select name="estado" class="form-select form-select-sm">
+                        <option value="1" {% if filtros_activos.estado == '1' %}selected{% endif %}>Solo Activos</option>
+                        <option value="0" {% if filtros_activos.estado == '0' %}selected{% endif %}>Solo Inactivos (Archivados)</option>
+                        <option value="todos" {% if filtros_activos.estado == 'todos' %}selected{% endif %}>Ver Todos</option>
+                    </select>
+                </div>
                 
                 <div class="col-md-3">
                     <label for="stock" class="form-label small fw-bold">Nivel de Stock:</label>
@@ -118,12 +127,31 @@
                             <span class="badge bg-success rounded-pill px-3">{{ repuesto.stock }}</span>
                         {% endif %}
                     </td>
+
+                    <!-- Columna de Estado -->
+                    <td>
+                        {% if repuesto.activo == 1 %}
+                            <span class="badge bg-success">Activo</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Inactivo</span>
+                        {% endif %}
+                    </td>
+
                     <td class="text-center">
                         <div class="btn-group" role="group">
                             {% if current_user.role in ['admin', 'superadmin'] %}
                             <a href="{{ url_for('editar_repuesto', repuesto_id=repuesto.id) }}" class="btn btn-sm btn-outline-warning" title="Editar Producto">
                                 <i class="bi bi-pencil-square"></i>
                             </a>
+
+                            <!-- Botón Inactivar / Reactivar -->
+                            <form action="{{ url_for('toggle_repuesto_status', repuesto_id=repuesto.id) }}" method="POST" style="display:inline;">
+                                <button type="submit" class="btn btn-sm {{ 'btn-outline-warning' if repuesto.activo == 1 else 'btn-outline-success' }}" 
+                                        title="{{ 'Inactivar' if repuesto.activo == 1 else 'Reactivar' }}">
+                                    <i class="bi {{ 'bi-eye-slash' if repuesto.activo == 1 else 'bi-eye' }}"></i>
+                                </button>
+                            </form>
+
                             <form action="{{ url_for('eliminar_repuesto', repuesto_id=repuesto.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea eliminar este producto permanentemente?');">
                                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar">
                                     <i class="bi bi-trash"></i>

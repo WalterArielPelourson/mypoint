@@ -1734,6 +1734,26 @@ def eliminar_celular(celular_id):
         flash("Celular no encontrado.", "danger")
     return redirect(url_for('inventario_celulares'))
 
+
+
+@app.route('/inventario/repuestos/toggle/<int:repuesto_id>', methods=['POST'])
+@login_required
+@admin_required
+def toggle_repuesto_status(repuesto_id):
+    rep = db_query("SELECT activo, nombre_parte FROM repuestos WHERE id = ?", (repuesto_id,))
+    if not rep:
+        flash("Producto no encontrado", "danger")
+        return redirect(url_for('inventario_repuestos'))
+    
+    nuevo_estado = 0 if rep[0]['activo'] == 1 else 1
+    db_execute("UPDATE repuestos SET activo = ? WHERE id = ?", (nuevo_estado, repuesto_id))
+    
+    msg = "inactivado" if nuevo_estado == 0 else "reactivado"
+    flash(f"Producto '{rep[0]['nombre_parte']}' {msg} correctamente.", "success")
+    return redirect(url_for('inventario_repuestos'))
+
+
+
 @app.route('/inventario/repuestos/eliminar/<int:repuesto_id>', methods=['POST'])
 @login_required
 @admin_required
@@ -3255,19 +3275,25 @@ def cotizar_venta(celular_id):
 def inventario_repuestos():
     filtro_nombre = request.args.get('nombre', '').strip()
     filtro_modelo = request.args.get('modelo', '').strip()
-    #filtro_stock = request.args.get('stock', '').strip()
+    filtro_stock = request.args.get('stock', '').strip()
     # --- NUEVO FILTRO: Categoría ---
     filtro_categoria = request.args.get('categoria', '').strip()
+    filtro_estado = request.args.get('estado', '1') # Por defecto: 1 (Activos)
     
     # --- LÓGICA DE FILTRO POR DEFECTO ---
     # Si la palabra 'stock' no está en la URL (primera vez que entra), ponemos 'con'
-    if 'stock' not in request.args:
-        filtro_stock = 'con'
-    else:
-        filtro_stock = request.args.get('stock', '').strip()
+    #if 'stock' not in request.args:
+    #    filtro_stock = 'con'
+    #else:
+    #    filtro_stock = request.args.get('stock', '').strip()
         
     query = "SELECT * FROM repuestos WHERE 1=1"
     params = []
+    
+    # Filtro de estado (1=Activo, 0=Inactivo, 'todos'=Ambos)
+    if filtro_estado != 'todos':
+        query += " AND activo = ?"
+        params.append(int(filtro_estado))
 
     if filtro_nombre:
         query += " AND nombre_parte LIKE ?"
@@ -3297,7 +3323,8 @@ def inventario_repuestos():
                                'nombre': filtro_nombre, 
                                'modelo': filtro_modelo, 
                                'stock': filtro_stock,
-                               'categoria': filtro_categoria # Pasamos el filtro nuevo al template
+                               'categoria': filtro_categoria, # Pasamos el filtro nuevo al template
+                               'estado': filtro_estado
                            })
     
     
@@ -6498,14 +6525,24 @@ def api_buscar_repuestos():
     rep_id = request.args.get('id', type=int)
 
     query_params = []
-    # MODIFICACIÓN CLAVE: Seleccionar precio_venta_ars y precio_venta_usd
-    sql_query = "SELECT id, nombre_parte, modelo_compatible, stock, costo_usd, precio_venta_ars, precio_venta_usd FROM repuestos"
+    
+    # 1. Base de la consulta: Filtramos por activo = 1 desde el inicio
+    sql_query = """
+        SELECT id, nombre_parte, modelo_compatible, stock, costo_usd, precio_venta_ars, precio_venta_usd 
+        FROM repuestos 
+        WHERE activo = 1
+    """
 
+    # 2. Si buscamos por ID específico (para pre-cargar datos)
     if rep_id:
-        sql_query += " WHERE id = ?"
+        # IMPORTANTE: Usamos AND porque ya existe un WHERE arriba
+        sql_query += " AND id = ?"
         query_params.append(rep_id)
+    
+    # 3. Si buscamos por texto (búsqueda normal en el select2)
     elif q: 
-        sql_query += " WHERE (LOWER(nombre_parte) LIKE ? OR LOWER(modelo_compatible) LIKE ?)"
+        # IMPORTANTE: Usamos AND porque ya existe un WHERE arriba
+        sql_query += " AND (LOWER(nombre_parte) LIKE ? OR LOWER(modelo_compatible) LIKE ?)"
         query_params.extend([f"%{q}%", f"%{q}%"])
 
     sql_query += " ORDER BY nombre_parte LIMIT 50" 
@@ -6516,15 +6553,16 @@ def api_buscar_repuestos():
     for rep in repuestos:
         formatted_results.append({
             'id': rep['id'],
-            # MODIFICACIÓN: Mostrar el precio de venta en USD en el texto del select2
+            # Muestra el precio de venta en USD en el texto del select2
             'text': f"{rep['nombre_parte']} ({rep['modelo_compatible'] or 'Genérico'}) - Stock: {rep['stock']}, PV: USD {rep['precio_venta_usd']:.2f}",
-            'costo_usd': rep['costo_usd'], # Se mantiene por si es necesario para otros reportes/log
+            'costo_usd': rep['costo_usd'],
             'stock': rep['stock'],
             'precio_venta_ars': rep['precio_venta_ars'],
-            'precio_venta_usd': rep['precio_venta_usd'] # <-- MODIFICACIÓN CLAVE: Asegurar que se envíe este valor
+            'precio_venta_usd': rep['precio_venta_usd']
         })
     
     return jsonify(results=formatted_results)
+
 
 
 @app.route('/api/buscar_nombres_repuestos_limpios')
@@ -6535,8 +6573,15 @@ def api_buscar_nombres_repuestos_limpios():
         return jsonify(results=[])
 
     # SQL que busca la cadena en cualquier parte y devuelve nombres únicos
-    # El UPPER garantiza que 'glas' traiga 'GLASS'
-    sql = "SELECT DISTINCT nombre_parte FROM repuestos WHERE LOWER(nombre_parte) LIKE ? ORDER BY nombre_parte ASC LIMIT 50"
+    # Agregamos 'activo = 1' para que no sugiera nombres de repuestos archivados
+    # El LOWER/LIKE garantiza que 'glas' traiga 'GLASS' (insensible a mayúsculas)
+    sql = """
+        SELECT DISTINCT nombre_parte 
+        FROM repuestos 
+        WHERE activo = 1 AND LOWER(nombre_parte) LIKE ? 
+        ORDER BY nombre_parte ASC 
+        LIMIT 50
+    """
     params = (f"%{q}%",)
     
     resultados = db_query(sql, params)
@@ -6577,14 +6622,22 @@ def api_buscar_modelos_por_nombre():
     q = request.args.get('q', '').strip().lower()
     if not nombre:
         return jsonify(results=[])
-    # Traemos los modelos únicos asociados a ese nombre específico
-    sql = "SELECT DISTINCT modelo_compatible FROM repuestos WHERE nombre_parte = ?"
+    
+    # --- CAMBIO APLICADO: Filtramos por activo = 1 ---
+    # Traemos los modelos únicos asociados a ese nombre específico que estén activos
+    sql = "SELECT DISTINCT modelo_compatible FROM repuestos WHERE activo = 1 AND LOWER(nombre_parte) = ?"
     params = [nombre]
+    
     if q:
+        # Buscamos coincidencias mientras el usuario escribe en el segundo buscador
         sql += " AND LOWER(modelo_compatible) LIKE ?"
         params.append(f"%{q}%")
+    
     sql += " ORDER BY modelo_compatible LIMIT 20"
+    
     resultados = db_query(sql, tuple(params))
+    
+    # Retornamos los resultados formateados para Select2
     return jsonify(results=[{'id': r['modelo_compatible'], 'text': r['modelo_compatible']} for r in resultados])
 
 
@@ -7735,6 +7788,7 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("repuestos", "precio_venta_ars", "REAL DEFAULT 0.0")
         agregar_columna("repuestos", "precio_venta_usd", "REAL DEFAULT 0.0")
         agregar_columna("repuestos", "categoria", "TEXT DEFAULT 'REPUESTO'")
+        agregar_columna("repuestos", "activo", "INTEGER DEFAULT 1")
         agregar_columna("caja_movimientos", "sub_categoria", "TEXT")
         agregar_columna("caja_movimientos", "metodo_pago", "TEXT DEFAULT 'EFECTIVO'")
         agregar_columna("pagos_proveedores", "valor_dolar_momento", "REAL DEFAULT 1.0")
