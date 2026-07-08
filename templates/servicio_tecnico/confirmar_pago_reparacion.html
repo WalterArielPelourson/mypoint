@@ -1,0 +1,198 @@
+{% extends 'layout.html' %}
+
+{% block title %}Confirmar Pago Reparación - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-9">
+            <div class="card shadow-lg border-0">
+                <div class="card-header bg-success text-white py-3">
+                    <h4 class="mb-0"><i class="bi bi-check2-all me-2"></i>Finalizar y Entregar Reparación #{{ servicio.id }}</h4>
+                </div>
+                <div class="card-body p-4">
+                    <!-- Resumen del Servicio -->
+                    <div class="row mb-4">
+                        <div class="col-sm-6">
+                            <p class="text-muted mb-1">Cliente</p>
+                            <h5 class="fw-bold">{{ servicio.razon_social or (servicio.nombre + ' ' + servicio.apellido) }}</h5>
+                        </div>
+                        <div class="col-sm-6 text-sm-end">
+                            <p class="text-muted mb-1">Equipo / Modelo</p>
+                            <h5 class="fw-bold">{{ servicio.modelo_equipo or 'No especificado' }}</h5>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-secondary d-flex justify-content-between align-items-center">
+                        <span class="fs-5">Total de la Reparación:</span>
+                        <span class="fs-4 fw-bold" id="total_reparacion" data-valor="{{ servicio.precio_final_ars }}">
+                            $ {{ "{:,.2f}".format(servicio.precio_final_ars) }}
+                        </span>
+                    </div>
+
+                    <!-- Sección de Señas -->
+                    <form action="{{ url_for('confirmar_reparacion', servicio_id=servicio.id) }}" method="POST" id="form-confirmar">
+                        <div class="mb-4">
+                            <label class="form-label fw-bold text-primary mb-3">
+                                <i class="bi bi-piggy-bank me-1"></i> Señas / Anticipos disponibles:
+                            </label>
+                            <div id="contenedor-anticipos">
+                                <div class="text-center py-3" id="loading-anticipos">
+                                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                                    <span class="ms-2">Buscando señas del cliente...</span>
+                                </div>
+                                <!-- Los anticipos se cargarán aquí con JS -->
+                            </div>
+                        </div>
+
+                        <hr>
+
+                        <!-- Cálculo de Saldo Final -->
+                        <div class="bg-light p-3 rounded border mb-4 shadow-sm">
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Monto total en Señas a aplicar:</span>
+                                <span class="text-success fw-bold fs-5" id="monto_señas_aplicado">$ 0.00</span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center border-top pt-2">
+                                <span class="fs-5 fw-bold">Saldo Pendiente Final (Deuda):</span>
+                                <span class="fs-4 fw-bold text-danger" id="saldo_final_display">
+                                    $ {{ "{:,.2f}".format(servicio.precio_final_ars) }}
+                                </span>
+                            </div>
+                            <small class="text-muted mt-2 d-block text-center italic">
+                                * El cliente quedará debiendo este monto en su Cuenta Corriente.
+                            </small>
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-success btn-lg shadow py-3" id="btn-finalizar">
+                                <i class="bi bi-box-arrow-right me-2"></i>CONFIRMAR ENTREGA Y GENERAR DEUDA
+                            </button>
+                            <a href="{{ url_for('listar_presupuestos_reparacion') }}" class="btn btn-outline-secondary">
+                                Cancelar y volver
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const clienteId = "{{ servicio.cliente_id }}";
+        const totalReparacion = parseFloat(document.getElementById('total_reparacion').dataset.valor);
+        const contenedor = document.getElementById('contenedor-anticipos');
+        const loading = document.getElementById('loading-anticipos');
+
+        // 1. Cargar Anticipos vía API
+        fetch(`/api/anticipos_disponibles/${clienteId}?imputacion=REPARACIONES`)
+            .then(response => response.json())
+            .then(data => {
+                loading.style.display = 'none';
+                
+                if (data.length === 0) {
+                    contenedor.innerHTML = `<div class="alert alert-light border text-center text-muted">El cliente no tiene anticipos disponibles.</div>`;
+                    return;
+                }
+
+                data.forEach(ant => {
+                    const item = document.createElement('div');
+                    item.className = 'card mb-2 border-start border-4 border-success shadow-sm';
+                    item.innerHTML = `
+                        <div class="card-body py-2">
+                            <div class="row align-items-center">
+                                <div class="col-md-7">
+                                    <div class="form-check">
+                                        <input class="form-check-input seña-checkbox" type="checkbox" 
+                                               name="anticipos_ids[]" value="${ant.id}" id="chk_${ant.id}" data-id="${ant.id}">
+                                        <label class="form-check-label fw-bold" for="chk_${ant.id}">
+                                            ${ant.referencia || 'Anticipo'}
+                                        </label>
+                                    </div>
+                                    <small class="text-muted d-block ps-4">
+                                        Fecha: ${ant.fecha_cobro} | <strong>Disponible: $${ant.monto_ars.toLocaleString('es-AR')}</strong>
+                                    </small>
+                                </div>
+                                <div class="col-md-5">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text bg-success text-white">Usar: $</span>
+                                        <input type="number" step="0.01" name="montos_aplicados[]" 
+                                               class="form-control monto-aplicar-input fw-bold" 
+                                               id="input_${ant.id}" 
+                                               value="0" 
+                                               min="0"
+                                               max="${ant.monto_ars}" 
+                                               data-total="${ant.monto_ars}"
+                                               disabled>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    contenedor.appendChild(item);
+                });
+            })
+            .catch(error => {
+                loading.innerHTML = '<span class="text-danger">Error al conectar con la base de datos.</span>';
+                console.error('Error:', error);
+            });
+
+        // 2. Lógica para habilitar/deshabilitar y recalcular
+        document.addEventListener('change', function(e) {
+            if (e.target.classList.contains('seña-checkbox')) {
+                const id = e.target.dataset.id;
+                const input = document.getElementById('input_' + id);
+                
+                if (e.target.checked) {
+                    input.disabled = false;
+                    // Sugerimos usar el total disponible (o lo que falte para cubrir la reparación)
+                    input.value = input.dataset.total;
+                } else {
+                    input.disabled = true;
+                    input.value = 0;
+                }
+                recalcularSaldo();
+            }
+        });
+
+        // 3. Recalcular cuando se cambia el monto manualmente
+        document.addEventListener('input', function(e) {
+            if (e.target.classList.contains('monto-aplicar-input')) {
+                const max = parseFloat(e.target.dataset.total);
+                if (parseFloat(e.target.value) > max) {
+                    e.target.value = max; // No dejar que use más de lo que tiene
+                }
+                recalcularSaldo();
+            }
+        });
+
+        function recalcularSaldo() {
+            let totalSeñasUsadas = 0;
+            
+            // Sumamos solo los inputs de los checkboxes marcados
+            document.querySelectorAll('.monto-aplicar-input:not(:disabled)').forEach(input => {
+                totalSeñasUsadas += parseFloat(input.value || 0);
+            });
+
+            const saldoFinal = Math.max(0, totalReparacion - totalSeñasUsadas);
+
+            // Actualizar textos en pantalla
+            document.getElementById('monto_señas_aplicado').innerText = 
+                `$ ${totalSeñasUsadas.toLocaleString('es-AR', {minimumFractionDigits: 2})}`;
+            
+            document.getElementById('saldo_final_display').innerText = 
+                `$ ${saldoFinal.toLocaleString('es-AR', {minimumFractionDigits: 2})}`;
+        }
+    });
+</script>
+
+<style>
+    .cursor-pointer { cursor: pointer; }
+    .item-row:hover { background-color: #f8f9fa; }
+    .form-check-input { cursor: pointer; width: 1.5em; height: 1.5em; }
+</style>
+{% endblock %}

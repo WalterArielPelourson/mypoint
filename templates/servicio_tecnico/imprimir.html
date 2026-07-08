@@ -136,52 +136,70 @@
             </div>
 
             <div class="section-title">Componentes y Servicios</div>
-            <table class="table-custom">
-                <thead>
-                    <tr>
-                        <th>Descripción</th>
-                        <th class="text-center">Cant.</th>
-                        <th class="text-end">Unit. (USD)</th>
-                        <th class="text-end">Total (USD)</th>
-                        <th class="text-end">Total (ARS)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% set total_repuestos_usd = 0 %}
-                    {% if items %}
-                        {% for rep in items %}
+                <table class="table-custom">
+                    <thead>
                         <tr>
-                            <td>{{ rep.nombre_parte or rep.manual_item_nombre }}</td>
-                            <td class="text-center">{{ rep.cantidad }}</td>
-                            <!-- <td class="text-end">{{ rep.precio_venta_usd_momento|default(0)|round(2) }}</td>
-                            <td class="text-end">{{ (rep.cantidad * rep.precio_venta_usd_momento)|default(0)|round(2) }}</td>
-                            <td class="text-end">{{ (rep.cantidad * rep.precio_venta_usd_momento * valor_dolar_venta|default(0))|default(0)|round(2) }}</td> -->
-
-                            {% set total_repuestos_usd = total_repuestos_usd + (rep.cantidad * rep.precio_venta_usd_momento) %}
+                            <th>Descripción</th>
+                            <th class="text-center">Cant.</th>
+                            <th class="text-end">Unit. (USD)</th>
+                            <th class="text-end">Total (USD)</th>
+                            <th class="text-end">Total (ARS)</th>
                         </tr>
-                        {% endfor %}
-                    {% else %}
-                        <tr><td colspan="5" class="text-center">No se utilizaron repuestos</td></tr>
-                    {% endif %}
-                    <tr style="background-color: #fcfcfc;">
-                        <td>Mano de Obra Especializada</td>
-                        <td class="text-center">1</td>
-                        <!--<td class="text-end">-</td>
-                        <td class="text-end">-</td>
-                        <!--<td class="text-end">{{ reparacion.precio_mano_obra_ars|default(0)|round(2) }}</td>-->
-                    </tr>
-                </tbody>
-                <tfoot>
-                    <tr>
-                         <!--<td colspan="4" class="text-end"><strong>SUBTOTAL</strong></td>
-                        <td class="text-end">{{ ((total_repuestos_usd * valor_dolar_venta|default(0)) + reparacion.precio_mano_obra_ars)|default(0)|round(2) }}</td>-->
-                    </tr>
-                    <tr class="total-box">
-                        <td colspan="4" class="text-end" style="background: #e9f5ff;">TOTAL A PAGAR (ARS)</td>
-                        <td class="text-end" style="background: #e9f5ff; border-left: 2px solid #007bff;">${{ "{:,.2f}".format(reparacion.precio_final_ars|default(0)) }}</td>
-                    </tr>
-                </tfoot>
-            </table>
+                    </thead>
+                    <tbody>
+                        {% set total_repuestos_usd = 0 %}
+                        {% if items %}
+                            {% for rep in items %}
+                            <tr>
+                                <td>{{ rep.nombre_parte or rep.manual_item_nombre }}</td>
+                                <td class="text-center">{{ rep.cantidad }}</td>
+                                <td class="text-end">{{ "{:,.2f}".format(rep.precio_venta_usd_momento|default(0)) }}</td>
+                                <td class="text-end">{{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento|default(0)) }}</td>
+                                <td class="text-end">
+                                    {# Calculamos el ARS aproximado para cada fila basado en el total de la reparación si es necesario #}
+                                    $ {{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento * (reparacion.precio_final_ars / (reparacion.costo_total_repuestos_usd if reparacion.costo_total_repuestos_usd > 0 else 1))) if reparacion.costo_total_repuestos_usd > 0 else '-' }}
+                                </td>
+                                {% set total_repuestos_usd = total_repuestos_usd + (rep.cantidad * rep.precio_venta_usd_momento) %}
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr><td colspan="5" class="text-center">No se utilizaron repuestos</td></tr>
+                        {% endif %}
+                        
+                        <tr style="background-color: #fcfcfc;">
+                            <td>Mano de Obra Especializada</td>
+                            <td class="text-center">1</td>
+                            <td class="text-end">-</td>
+                            <td class="text-end">-</td>
+                            <td class="text-end">$ {{ "{:,.2f}".format(reparacion.precio_mano_obra_ars|default(0)) }}</td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        {% if reparacion.seña_aplicada and reparacion.seña_aplicada > 0 %}
+                            <!-- DESGLOSE DE SEÑA (Solo si existe) -->
+                            <tr>
+                                <td colspan="4" class="text-end" style="border-top: 1px solid #dee2e6; padding-top: 10px;">Subtotal Trabajo:</td>
+                                <td class="text-end" style="border-top: 1px solid #dee2e6; padding-top: 10px;">
+                                    $ {{ "{:,.2f}".format(reparacion.precio_final_ars + reparacion.seña_aplicada) }}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td colspan="4" class="text-end" style="border: none; color: #d9534f; font-style: italic;">Seña / Anticipo aplicado:</td>
+                                <td class="text-end" style="border: none; color: #d9534f; font-style: italic;">
+                                    - $ {{ "{:,.2f}".format(reparacion.seña_aplicada) }}
+                                </td>
+                            </tr>
+                        {% endif %}
+
+                        <!-- CUADRO DE TOTAL FINAL -->
+                        <tr class="total-box">
+                            <td colspan="4" class="text-end" style="background: #e9f5ff; font-weight: bold;">TOTAL A PAGAR (ARS)</td>
+                            <td class="text-end" style="background: #e9f5ff; border-left: 2px solid #007bff; font-weight: bold; font-size: 1.1em;">
+                                $ {{ "{:,.2f}".format(reparacion.precio_final_ars|default(0)) }}
+                            </td>
+                        </tr>
+                    </tfoot>
+                </table>
 
             <div style="font-size: 0.65rem; color: #666; margin-top: 10px; font-style: italic;">
                 * Presupuesto válido por 7 días. Garantía de 30 días sobre la reparación efectuada.

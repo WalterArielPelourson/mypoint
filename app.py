@@ -4337,74 +4337,94 @@ def confirmar_reparacion(servicio_id):
     try:
         db.execute("BEGIN TRANSACTION")
         
-        # 1. Obtener datos del servicio (incluyendo los nuevos campos de terciarización)
+        # 1. Obtener datos del servicio
         servicio = db_query_func(db, "SELECT * FROM servicios_reparacion WHERE id = ? AND status = 'PRESUPUESTO'", (servicio_id,))
         if not servicio:
             flash("El presupuesto no existe o ya fue procesado.", "danger")
             return redirect(url_for('listar_presupuestos_reparacion'))
         
         servicio = servicio[0]
+        precio_original_total = servicio['precio_final_ars']
 
-        # 2. Gestión de Stock: Obtener e procesar ítems asociados
+        # 2. Gestión de Stock
         items_asociados = db_query_func(db, "SELECT ru.cantidad, ru.repuesto_id, ru.manual_item_nombre FROM repuestos_usados ru WHERE ru.servicio_id = ?", (servicio_id,))
         
         for item in items_asociados:
-            if item['repuesto_id']: # Si es un ítem de stock, descontamos
+            if item['repuesto_id']: 
                 repuesto_info = db_query_func(db, "SELECT stock, nombre_parte FROM repuestos WHERE id = ?", (item['repuesto_id'],))[0]
                 if repuesto_info['stock'] < item['cantidad']:
-                    flash(f"Stock insuficiente para '{repuesto_info['nombre_parte']}'. Necesita {item['cantidad']}, disponible {repuesto_info['stock']}.", "danger")
+                    flash(f"Stock insuficiente para '{repuesto_info['nombre_parte']}'.", "danger")
                     db.rollback()
                     return redirect(url_for('listar_presupuestos_reparacion'))
                 db_execute_func(db, "UPDATE repuestos SET stock = stock - ? WHERE id = ?", (item['cantidad'], item['repuesto_id']))
+
+        # --- 3. PROCESAR SEÑAS / ANTICIPOS ---
+        anticipos_ids = request.form.getlist('anticipos_ids[]')
+        montos_aplicados = request.form.getlist('montos_aplicados[]')
         
-        # --- 3. GENERAR DEUDA EN CUENTA CORRIENTE DEL CLIENTE ---
-        # Se cambia el status a COMPLETADO y se asigna el precio total al saldo_pendiente del cliente
-        db_execute_func(db, "UPDATE servicios_reparacion SET status = 'COMPLETADO', saldo_pendiente = precio_final_ars WHERE id = ?", (servicio_id,))
+        total_señas_usado_ars = 0.0
         
-        # --- 4. GENERAR DEUDA EN CUENTA CORRIENTE DEL PROVEEDOR (Si es Terciarizada) ---
-        info_extra = "Servicio terminado. Deuda cargada a Cuenta Corriente del cliente."
+        for i, a_id in enumerate(anticipos_ids):
+            monto_a_usar = float(montos_aplicados[i] or 0)
+            
+            if monto_a_usar > 0:
+                res_ant = db_query_func(db, "SELECT monto_ars, referencia FROM cobros_clientes WHERE id = ?", (a_id,))
+                if res_ant:
+                    monto_total_disponible = res_ant[0]['monto_ars']
+                    referencia_original = res_ant[0]['referencia'] or "Anticipo"
+                    
+                    nuevo_monto_restante = max(0, monto_total_disponible - monto_a_usar)
+                    nuevo_estado = 'APLICADO' if nuevo_monto_restante < 0.5 else 'DISPONIBLE'
+                    
+                    db_execute_func(db, """
+                        UPDATE cobros_clientes 
+                        SET monto_ars = ?, 
+                            estado_anticipo = ?,
+                            referencia = ? || ' (Descontado de Rep. #' || ? || ')'
+                        WHERE id = ?
+                    """, (nuevo_monto_restante, nuevo_estado, referencia_original, servicio_id, a_id))
+                    
+                    total_señas_usado_ars += monto_a_usar
+
+        # --- CORRECCIÓN AQUÍ: Agregado 'db' como primer argumento ---
+        saldo_final_deuda = max(0, precio_original_total - total_señas_usado_ars)
+
+        db_execute_func(db, """
+            UPDATE servicios_reparacion 
+            SET status = 'COMPLETADO', 
+                precio_final_ars = ?, 
+                saldo_pendiente = ?,
+                seña_aplicada = ?  -- <--- GUARDAMOS LA SEÑA AQUÍ 
+            WHERE id = ?
+        """, (saldo_final_deuda, saldo_final_deuda, total_señas_usado_ars, servicio_id))
         
-        # Usamos int() para asegurar que detecte el 1 aunque SQLite lo devuelva como texto o número
+        # --- 4. GENERAR DEUDA EN Cta Cte PROVEEDOR ---
+        info_extra = f"Presupuesto: ${precio_original_total}. Se descontó seña por ${total_señas_usado_ars}. Deuda neta: ${saldo_final_deuda}."
+        
         if int(servicio['es_terciarizada'] or 0) == 1 and servicio['externo_proveedor_id']:
-            # Registramos una entrada en la tabla de compras para que figure en la CC del Proveedor
-            # IMPORTANTE: El número de columnas debe coincidir exactamente con los signos '?' y las variables
             db_execute_func(db, """
                 INSERT INTO compras (
-                    proveedor_id, 
-                    user_id, 
-                    fecha_compra, 
-                    tipo_item, 
-                    item_id, 
-                    cantidad, 
-                    costo_unitario_usd, 
-                    costo_total_ars, 
-                    costo_total_usd, 
-                    valor_dolar_momento, 
-                    estado_pago,
-                    imei_celular
+                    proveedor_id, user_id, fecha_compra, tipo_item, item_id, 
+                    cantidad, costo_unitario_usd, costo_total_ars, costo_total_usd, 
+                    valor_dolar_momento, estado_pago, imei_celular
                 ) VALUES (?, ?, ?, 'SERVICIO_EXTERNO', ?, 1, 0.0, ?, 0.0, 1.0, 'PENDIENTE', ?)
             """, (
-                servicio['externo_proveedor_id'], 
-                current_user.id, 
+                servicio['externo_proveedor_id'], current_user.id, 
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                servicio_id, 
-                servicio['externo_costo_ars'],
-                f"Reparación #{servicio_id}" # Esto llena la columna imei_celular para que no sea NULL
+                servicio_id, servicio['externo_costo_ars'],
+                f"Reparación #{servicio_id}"
             ))
-            info_extra += f" Se generó deuda con proveedor externo por ${servicio['externo_costo_ars']}."
+            info_extra += f" Se generó deuda externa por ${servicio['externo_costo_ars']}."
             
-            
-        # 5. Registrar movimiento de auditoría
-        registrar_movimiento(current_user.id, 'SERVICIO_CONFIRMADO_DEUDA', 'SERVICIO', servicio_id, {
-            'precio_ars_cliente': servicio['precio_final_ars'], 
-            'imei_equipo': servicio['imei_equipo'],
-            'tipo_servicio': servicio['tipo_servicio'],
-            'es_terciarizada': bool(servicio['es_terciarizada']),
-            'info': info_extra
+        # 5. Auditoría
+        registrar_movimiento(current_user.id, 'SERVICIO_CONFIRMADO_CON_DESCUENTO', 'SERVICIO', servicio_id, {
+            'precio_original': precio_original_total,
+            'señas_descontadas': total_señas_usado_ars,
+            'deuda_neta': saldo_final_deuda
         })
         
         db.commit()
-        flash("Servicio confirmado exitosamente. Las cuentas corrientes han sido actualizadas.", "success")
+        flash(f"Confirmado. Presupuesto original: ${precio_original_total:,.2f}. Seña aplicada: ${total_señas_usado_ars:,.2f}. Saldo deudor: ${saldo_final_deuda:,.2f}", "success")
         
     except Exception as e:
         db.rollback()
@@ -4415,6 +4435,23 @@ def confirmar_reparacion(servicio_id):
 
 
 
+
+#Confirma pago anticipo
+@app.route('/presupuestos/reparaciones/confirmar_pago/<int:servicio_id>')
+@login_required
+def confirmar_reparacion_pago(servicio_id):
+    servicio = db_query("""
+        SELECT s.*, p.nombre, p.apellido, p.razon_social, p.id as cliente_id 
+        FROM servicios_reparacion s 
+        JOIN personas p ON s.cliente_id = p.id 
+        WHERE s.id = ? AND s.status = 'PRESUPUESTO'
+    """, (servicio_id,))
+    
+    if not servicio:
+        flash("Servicio no encontrado o ya procesado.", "danger")
+        return redirect(url_for('listar_presupuestos_reparacion'))
+    
+    return render_template('servicio_tecnico/confirmar_pago_reparacion.html', servicio=servicio[0])
 
 
 @app.route('/presupuestos/ventas/editar/<int:venta_id>', methods=['GET', 'POST'])
@@ -6401,30 +6438,44 @@ def api_buscar_personas():
     if not query_str:
         return jsonify(results=[])
 
-    sql_query = "SELECT id, nombre, apellido, razon_social, cuit_cuil FROM personas WHERE (nombre LIKE ? OR apellido LIKE ? OR razon_social LIKE ? OR cuit_cuil LIKE ?)"
-    params = [f"%{query_str}%", f"%{query_str}%", f"%{query_str}%", f"%{query_str}%"]
+    # --- CAMBIO CLAVE AQUÍ ---
+    # Usamos COALESCE para manejar valores NULL y || para concatenar nombre y apellido
+    # Esto permite buscar por "Nombre Apellido" todo junto.
+    sql_query = """
+        SELECT id, nombre, apellido, razon_social, cuit_cuil 
+        FROM personas 
+        WHERE (
+            (COALESCE(nombre, '') || ' ' || COALESCE(apellido, '')) LIKE ? OR 
+            razon_social LIKE ? OR 
+            cuit_cuil LIKE ?
+        )
+    """
+    # Definimos el término de búsqueda con los comodines %
+    search_val = f"%{query_str}%"
+    params = [search_val, search_val, search_val]
 
     if rol == 'cliente':
         sql_query += " AND es_cliente = 1"
     elif rol == 'proveedor':
         sql_query += " AND es_proveedor = 1"
     
-    sql_query += " LIMIT 15" # Aumentamos ligeramente el límite para dar más opciones
+    sql_query += " LIMIT 20" # Aumentamos un poco el límite para dar más opciones
 
     resultados = db_query(sql_query, tuple(params))
     
     # Formatear resultados para el autocompletado
     formatted_results = []
     for r in resultados:
-        display_name = r['razon_social'] or f"{r['nombre']} {r['apellido']}"
+        # Lógica de visualización: Prioriza Razón Social, si no Nombre + Apellido
+        display_name = r['razon_social'] if r['razon_social'] else f"{r['nombre']} {r['apellido']}"
         formatted_results.append({
             'id': r['id'],
             'text': f"{display_name} (CUIT/CUIL: {r['cuit_cuil']})"
         })
     
-    # CAMBIO INTEGRADO: Select2 requiere que la respuesta sea un objeto JSON 
-    # que contenga una lista en la propiedad "results".
+    # La respuesta es un objeto JSON que contiene la lista en la propiedad "results"
     return jsonify(results=formatted_results)
+
 
 
 @app.route('/api/buscar_celulares_disponibles')
@@ -6554,7 +6605,7 @@ def api_buscar_repuestos():
         formatted_results.append({
             'id': rep['id'],
             # Muestra el precio de venta en USD en el texto del select2
-            'text': f"{rep['nombre_parte']} ({rep['modelo_compatible'] or 'Genérico'}) - Stock: {rep['stock']}, PV: USD {rep['precio_venta_usd']:.2f}",
+            'text': f"{rep['nombre_parte']} ({rep['modelo_compatible'] or 'Genérico'}) - Stock: {rep['stock']} - PC: USD {rep['costo_usd']:.2f} - PV: USD {rep['precio_venta_usd']:.2f}",
             'costo_usd': rep['costo_usd'],
             'stock': rep['stock'],
             'precio_venta_ars': rep['precio_venta_ars'],
@@ -7781,6 +7832,8 @@ def ejecutar_migraciones_y_configuracion():
         # Dentro de ejecutar_migraciones_y_configuracion():
         agregar_columna("repuestos_usados", "moneda_item", "TEXT DEFAULT 'USD'")
         agregar_columna("repuestos_usados", "valor_original_item", "REAL DEFAULT 0.0")
+        
+        agregar_columna("servicios_reparacion", "seña_aplicada", "REAL DEFAULT 0.0")
         
         # Dentro de la sección de migraciones de columnas:
         agregar_columna("servicios_reparacion", "moneda_mano_obra", "TEXT DEFAULT 'ARS'")

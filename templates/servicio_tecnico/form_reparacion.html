@@ -265,6 +265,7 @@
                             data-repuesto-id="{{ form_data.get('repuesto_stock_id[]')[i] }}"
                             data-repuesto-nombre="{{ form_data.get('repuesto_nombre_display[]')[i] }}"
                             data-cantidad="{{ form_data.get('cantidad_stock[]')[i] }}"
+                            
                             {# IMPORTANTE: Usa el valor original (Punto 3 y B) enviado desde Python #}
                             data-precio-venta-usd="{{ form_data.get('precio_venta_usd_stock[]')[i] }}">
                         </div>
@@ -275,6 +276,7 @@
                         <div class="item-row-initial" data-item-type="manual"
                             data-manual-nombre="{{ form_data.get('manual_item_nombre[]')[i] }}"
                             data-cantidad="{{ form_data.get('cantidad_manual[]')[i] }}"
+                            
                             {# IMPORTANTE: Usa el valor original (Punto 3 y B) enviado desde Python #}
                             data-precio-venta-usd="{{ form_data.get('precio_venta_usd_manual[]')[i] }}">
                         </div>

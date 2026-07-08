@@ -125,30 +125,58 @@
     </div>
 </div>
 
-<div class="card mb-4 shadow-sm">
-    <div class="card-header">
-        <h5 class="mb-0">Resumen Financiero</h5>
+<div class="card mb-4 shadow-sm border-primary">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-cash-coin me-2"></i>Resumen Financiero</h5>
     </div>
     <div class="card-body">
         <div class="row">
             <div class="col-md-6">
-                {# Muestra el precio total de venta de repuestos desde la tabla `servicios_reparacion` #}
-                <p class="fs-4"><strong>Precio Venta Total Ítems (USD):</strong> <span class="text-danger">USD {{ reparacion.costo_total_repuestos_usd|default(0)|round(2) }}</span></p> {# ## MODIFICACIÓN ## #}
+                {# Muestra el precio total de venta de repuestos #}
+                <p class="fs-5"><strong>Venta Total Ítems (USD):</strong> <span class="text-danger">USD {{ "{:,.2f}".format(reparacion.costo_total_repuestos_usd|default(0)) }}</span></p>
             </div>
             <div class="col-md-6">
                 {# Muestra la mano de obra solo si es Reparación #}
                 {% if reparacion.tipo_servicio == 'REPARACION' %}
-                    <p class="fs-4"><strong>Precio Mano de Obra (ARS):</strong> <span class="text-primary">ARS {{ reparacion.precio_mano_obra_ars|default(0)|round(2) }}</span></p>
+                    <p class="fs-5"><strong>Mano de Obra (ARS):</strong> <span class="text-primary">ARS {{ "{:,.2f}".format(reparacion.precio_mano_obra_ars|default(0)) }}</span></p>
                 {% else %}
-                    <p class="fs-4"><strong>Precio Venta Accesorio (ARS):</strong> <span class="text-primary">ARS {{ reparacion.precio_mano_obra_ars|default(0)|round(2) }}</span></p> {# Para venta accesorio, mano_obra_ars es el precio base #}
+                    <p class="fs-5"><strong>Precio Base Accesorio (ARS):</strong> <span class="text-primary">ARS {{ "{:,.2f}".format(reparacion.precio_mano_obra_ars|default(0)) }}</span></p>
                 {% endif %}
             </div>
-            <div class="col-12">
-                <p class="fs-3 text-end"><strong>TOTAL FINAL (ARS):</strong> <span class="text-success">ARS {{ reparacion.precio_final_ars|default(0)|round(2) }}</span></p>
+
+            <div class="col-12 border-top pt-3 mt-3">
+                {% if reparacion.seña_aplicada and reparacion.seña_aplicada > 0 %}
+                    <!-- DESGLOSE POR SEÑA APLICADA -->
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="fs-5 text-muted">Subtotal Presupuestado:</span>
+                        <span class="fs-5 text-muted">$ {{ "{:,.2f}".format(reparacion.precio_final_ars + reparacion.seña_aplicada) }}</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="fs-5 text-danger font-italic">(-) Seña / Anticipo aplicado:</span>
+                        <span class="fs-5 text-danger fw-bold">- $ {{ "{:,.2f}".format(reparacion.seña_aplicada) }}</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center border-top border-primary border-2 pt-2">
+                        <span class="fs-3 fw-bold">TOTAL FINAL A COBRAR (ARS):</span>
+                        <span class="fs-2 text-success fw-bold">ARS {{ "{:,.2f}".format(reparacion.precio_final_ars) }}</span>
+                    </div>
+                {% else %}
+                    <!-- TOTAL NORMAL SIN SEÑA -->
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="fs-3 fw-bold">TOTAL FINAL (ARS):</span>
+                        <span class="fs-2 text-success fw-bold">ARS {{ "{:,.2f}".format(reparacion.precio_final_ars|default(0)) }}</span>
+                    </div>
+                {% endif %}
             </div>
         </div>
     </div>
+    {% if reparacion.seña_aplicada > 0 %}
+    <div class="card-footer bg-light">
+        <small class="text-muted"><i class="bi bi-info-circle me-1"></i> El total final ya descuenta la seña entregada previamente por el cliente.</small>
+    </div>
+    {% endif %}
 </div>
+
+
 
 <div class="d-flex justify-content-between mt-4">
     {% if reparacion.status == 'PRESUPUESTO' %}
