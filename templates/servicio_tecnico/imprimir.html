@@ -156,8 +156,8 @@
                                 <td class="text-end">{{ "{:,.2f}".format(rep.precio_venta_usd_momento|default(0)) }}</td>
                                 <td class="text-end">{{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento|default(0)) }}</td>
                                 <td class="text-end">
-                                    {# Calculamos el ARS aproximado para cada fila basado en el total de la reparación si es necesario #}
-                                    $ {{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento * (reparacion.precio_final_ars / (reparacion.costo_total_repuestos_usd if reparacion.costo_total_repuestos_usd > 0 else 1))) if reparacion.costo_total_repuestos_usd > 0 else '-' }}
+                                    {# CORRECCIÓN: Usamos la cotización directa para no mezclar mano de obra ni señas #}
+                                    $ {{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento * valor_dolar_venta|default(1000)) }}
                                 </td>
                                 {% set total_repuestos_usd = total_repuestos_usd + (rep.cantidad * rep.precio_venta_usd_momento) %}
                             </tr>
