@@ -141,9 +141,9 @@
                         <tr>
                             <th>Descripción</th>
                             <th class="text-center">Cant.</th>
-                            <th class="text-end">Unit. (USD)</th>
+                            {# <th class="text-end">Unit. (USD)</th>
                             <th class="text-end">Total (USD)</th>
-                            <th class="text-end">Total (ARS)</th>
+                            <th class="text-end">Total (ARS)</th> #}
                         </tr>
                     </thead>
                     <tbody>
@@ -153,14 +153,14 @@
                             <tr>
                                 <td>{{ rep.nombre_parte or rep.manual_item_nombre }}</td>
                                 <td class="text-center">{{ rep.cantidad }}</td>
-                                <td class="text-end">{{ "{:,.2f}".format(rep.precio_venta_usd_momento|default(0)) }}</td>
-                                <td class="text-end">{{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento|default(0)) }}</td>
-                                <td class="text-end">
-                                    {# CORRECCIÓN: Usamos la cotización directa para no mezclar mano de obra ni señas #}
-                                    $ {{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento * valor_dolar_venta|default(1000)) }}
-                                </td>
-                                {% set total_repuestos_usd = total_repuestos_usd + (rep.cantidad * rep.precio_venta_usd_momento) %}
-                            </tr>
+                                {# <td class="text-end">{{ "{:,.2f}".format(rep.precio_venta_usd_momento|default(0)) }}</td> #}
+                                {# <td class="text-end">{{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento|default(0)) }}</td> #}
+                                {# <td class="text-end">
+                                     CORRECCIÓN: Usamos la cotización directa para no mezclar mano de obra ni señas 
+                                      $ {{ "{:,.2f}".format(rep.cantidad * rep.precio_venta_usd_momento * valor_dolar_venta|default(1000)) }}
+                                </td> #}
+                                {# {% set total_repuestos_usd = total_repuestos_usd + (rep.cantidad * rep.precio_venta_usd_momento) %} #}
+                            </tr> 
                             {% endfor %}
                         {% else %}
                             <tr><td colspan="5" class="text-center">No se utilizaron repuestos</td></tr>
@@ -169,9 +169,9 @@
                         <tr style="background-color: #fcfcfc;">
                             <td>Mano de Obra Especializada</td>
                             <td class="text-center">1</td>
+                            {# <td class="text-end">-</td>
                             <td class="text-end">-</td>
-                            <td class="text-end">-</td>
-                            <td class="text-end">$ {{ "{:,.2f}".format(reparacion.precio_mano_obra_ars|default(0)) }}</td>
+                            <td class="text-end">$ {{ "{:,.2f}".format(reparacion.precio_mano_obra_ars|default(0)) }}</td> #}
                         </tr>
                     </tbody>
                     <tfoot>
