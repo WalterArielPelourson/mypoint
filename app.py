@@ -686,20 +686,31 @@ def index():
 @login_required
 @tecnico_required
 def listar_personas():
-    filtro_nombre = request.args.get('nombre', '').strip()
-    filtro_cuit = request.args.get('cuit_cuil', '').strip()
+    # Capturamos el término de búsqueda universal (puede venir como 'q' o 'nombre')
+    q = request.args.get('q', '').strip()
+    if not q:
+        q = request.args.get('nombre', '').strip()
+        
     filtro_es_cliente = request.args.get('es_cliente') == '1'
     filtro_es_proveedor = request.args.get('es_proveedor') == '1'
 
+    # Base de la consulta
     query = "SELECT * FROM personas WHERE 1=1"
     params = []
 
-    if filtro_nombre:
-        query += " AND (nombre LIKE ? OR apellido LIKE ? OR razon_social LIKE ?)"
-        params.extend([f"%{filtro_nombre}%", f"%{filtro_nombre}%", f"%{filtro_nombre}%"])
-    if filtro_cuit:
-        query += " AND cuit_cuil LIKE ?"
-        params.append(f"%{filtro_cuit}%")
+    # --- LÓGICA DE BÚSQUEDA UNIVERSAL ---
+    if q:
+        # Unimos Nombre y Apellido, y buscamos también en Razón Social y CUIT
+        query += """ AND (
+            (COALESCE(nombre, '') || ' ' || COALESCE(apellido, '')) LIKE ? OR 
+            razon_social LIKE ? OR 
+            cuit_cuil LIKE ?
+        )"""
+        search_val = f"%{q}%"
+        # Pasamos el mismo valor para los 3 campos (?)
+        params.extend([search_val, search_val, search_val])
+
+    # Filtros por rol (estos se mantienen independientes de la búsqueda de texto)
     if filtro_es_cliente:
         query += " AND es_cliente = 1"
     if filtro_es_proveedor:
@@ -707,9 +718,19 @@ def listar_personas():
     
     query += " ORDER BY razon_social, apellido, nombre"
     personas = db_query(query, tuple(params))
+    
+    # Devolvemos filtros_activos con 'q' para el nuevo buscador 
+    # y mantenemos los otros para compatibilidad
     return render_template('personas/listar.html', personas=personas, 
-                           filtros_activos={'nombre': filtro_nombre, 'cuit_cuil': filtro_cuit, 'es_cliente': filtro_es_cliente, 'es_proveedor': filtro_es_proveedor})
-
+                           filtros_activos={
+                               'q': q,
+                               'nombre': q, 
+                               'es_cliente': filtro_es_cliente, 
+                               'es_proveedor': filtro_es_proveedor
+                           })
+    
+    
+    
 @app.route('/personas/nueva', methods=['GET', 'POST'])
 @login_required
 #@admin_required
@@ -4255,7 +4276,7 @@ def procesar_pago(venta_id):
         diferencia_usd = total_pagado_usd_para_financiar - nuevo_precio_final_usd
         saldo_pendiente_usd = abs(diferencia_usd) if diferencia_usd < -0.01 else 0.0
 
-        if diferencia_usd > 0.05:
+        if diferencia_usd > 1.00:
             db_conn.rollback()
             flash(f"Error: El monto total excede el nuevo precio con recargos (u$d {nuevo_precio_final_usd:.2f}).", "danger")
             return redirect(url_for('mostrar_formulario_pago', venta_id=venta_id))
@@ -5304,24 +5325,24 @@ def reporte_rentabilidad():
     dolar_info = inject_dolar_values()
     dolar_c = dolar_info['valor_dolar_compra'] or 1.0
 
-    # --- 1. RESUMEN EQUIPOS POR TIPO ---
-    #resumen_equipos = db_query("""
-    #    SELECT 
-    #        COALESCE(comp.tipo_item, 'CELULAR') as clase,
-    #        COALESCE(SUM(v.precio_final_ars), 0) as total_venta, 
-    #        COALESCE(SUM(c.costo_usd * v.valor_dolar_momento), 0) as total_costo
-    #    FROM ventas v 
-    #    JOIN celulares c ON v.celular_id = c.id
-    #    LEFT JOIN compras comp ON c.id = comp.item_id AND comp.tipo_item IN ('CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO')
-    #    WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
-    #    GROUP BY 1
-    #""", (start_date, end_date_query))
-
+    # --- 1. RESUMEN EQUIPOS (RECONSTRUCCIÓN DEL INGRESO NETO REAL) ---
+    # Ignoramos el precio_final_ars sucio y reconstruimos: Costo + Ganancia Original + Accesorios
     resumen_equipos = db_query("""
         SELECT 
             COALESCE(comp.tipo_item, 'CELULAR') as clase,
-            -- Aplicamos la fórmula: Total / (1 + (Impuestos / 100)) para obtener el valor neto
-            COALESCE(SUM(v.precio_final_ars / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))), 0) as total_venta, 
+            -- RECONSTRUCCIÓN: (Costo en ARS) + (Margen original ARS o USD) + (Accesorios adicionales)
+            COALESCE(SUM(
+                (c.costo_usd * v.valor_dolar_momento) + 
+                CASE 
+                    WHEN v.ganancia_pct > 0 THEN (c.costo_usd * v.valor_dolar_momento * v.ganancia_pct / 100.0)
+                    WHEN v.monto_agregado_ars > 0 THEN v.monto_agregado_ars
+                    WHEN v.monto_agregado_usd > 0 THEN (v.monto_agregado_usd * v.valor_dolar_momento)
+                    ELSE 0
+                END +
+                COALESCE((SELECT SUM(cantidad * precio_vendido_usd * v.valor_dolar_momento) 
+                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
+            ), 0) as total_venta, 
+            -- COSTO REAL
             COALESCE(SUM(c.costo_usd * v.valor_dolar_momento), 0) as total_costo
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id
@@ -5331,26 +5352,11 @@ def reporte_rentabilidad():
     """, (start_date, end_date_query))
     
     
-    # --- 2. RESUMEN INSUMOS ---
-    #resumen_insumos = db_query("""
-    #    SELECT COALESCE(r.categoria, 'MANUAL') as clase,
-    #           COALESCE(SUM(ru.cantidad * ru.costo_usd_momento * ?), 0) as total_venta,
-    #           COALESCE(SUM(ru.cantidad * r.costo_usd * ?), 0) as total_costo
-    #    FROM repuestos_usados ru
-    #    JOIN servicios_reparacion sr ON ru.servicio_id = sr.id
-    #    LEFT JOIN repuestos r ON ru.repuesto_id = r.id
-    #    WHERE sr.status = 'COMPLETADO' AND sr.fecha_servicio BETWEEN ? AND ?
-    #    GROUP BY 1
-    #""", (dolar_c, dolar_c, start_date, end_date_query))
-
-    # --- 2. RESUMEN INSUMOS (Repuestos, Accesorios, etc.) ---
+    # --- 2. RESUMEN INSUMOS (Técnica y Accesorios sueltos) ---
     resumen_insumos = db_query("""
         SELECT 
-            -- Normalizamos a Mayúsculas para que 'funda' y 'FUNDA' se sumen juntas
             UPPER(COALESCE(r.categoria, 'MANUAL/OTROS')) as clase,
-            -- Suma de ventas (lo que se le cobró al cliente)
             COALESCE(SUM(ru.cantidad * ru.costo_usd_momento * ?), 0) as total_venta,
-            -- Suma de costos (usamos COALESCE por si el costo_usd es NULL)
             COALESCE(SUM(ru.cantidad * COALESCE(r.costo_usd, 0) * ?), 0) as total_costo
         FROM repuestos_usados ru
         JOIN servicios_reparacion sr ON ru.servicio_id = sr.id
@@ -5375,7 +5381,7 @@ def reporte_rentabilidad():
         'neto': res_mo['total_bruto'] - res_mo['total_comisiones']
     }
 
-    # --- 4. GASTOS OPERATIVOS CAJA (MODIFICADO: EXCLUYE SOCIOS Y SOLO EFECTIVO) ---
+    # --- 4. GASTOS OPERATIVOS CAJA (EFECTIVO) ---
     resumen_gastos = db_query("""
         SELECT COALESCE(sub_categoria, 'OTROS') as clase,
                COALESCE(SUM(monto_ars + (monto_usd * ?)), 0) as total
@@ -5387,7 +5393,7 @@ def reporte_rentabilidad():
         GROUP BY sub_categoria
     """, (dolar_c, start_date, end_date_query))
 
-    # --- 4b. EGRESOS VIRTUALES MANUALES (NUEVO: SOLO EGRESO_MANUAL_VIRTUAL) ---
+    # --- 4b. EGRESOS VIRTUALES ---
     egr_virtuales_man = db_query("""
         SELECT metodo_pago as cuenta,
                COALESCE(SUM(monto_ars + (monto_usd * ?)), 0) as total
@@ -5420,27 +5426,26 @@ def reporte_rentabilidad():
             'ing_usd': res['ing_usd'], 'egr_usd': res['egr_usd']
         })
 
-    # Detalle de Ventas
+    # --- 6. DETALLE DE VENTAS (RECONSTRUIDO FILA POR FILA) ---
     ventas_detalle = db_query("""
-        SELECT v.fecha_venta, c.marca, c.modelo, c.imei, v.precio_final_ars, 
+        SELECT v.fecha_venta, c.marca, c.modelo, c.imei, 
+               -- Reconstruimos el precio neto para que el margen sea el real negociado
+               ((c.costo_usd * v.valor_dolar_momento) + 
+                CASE 
+                    WHEN v.ganancia_pct > 0 THEN (c.costo_usd * v.valor_dolar_momento * v.ganancia_pct / 100.0)
+                    WHEN v.monto_agregado_ars > 0 THEN v.monto_agregado_ars
+                    WHEN v.monto_agregado_usd > 0 THEN (v.monto_agregado_usd * v.valor_dolar_momento)
+                    ELSE 0
+                END +
+                COALESCE((SELECT SUM(cantidad * precio_vendido_usd * v.valor_dolar_momento) 
+                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
+               ) as precio_final_ars, 
                COALESCE(c.costo_usd * v.valor_dolar_momento, 0) as costo_ars
         FROM ventas v JOIN celulares c ON v.celular_id = c.id 
         WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
     """, (start_date, end_date_query))
 
-    # Detalle de Insumos
-    #insumos_detalle = db_query("""
-    #    SELECT sr.fecha_servicio, COALESCE(r.nombre_parte, ru.manual_item_nombre) as nombre_parte, 
-    #           COALESCE(r.categoria, 'MANUAL') as categoria, ru.cantidad,
-    #           COALESCE(ru.costo_usd_momento * ?, 0) as precio_venta_ars,
-    #           COALESCE(r.costo_usd * ?, 0) as costo_compra_ars
-    #    FROM repuestos_usados ru
-    #    JOIN servicios_reparacion sr ON ru.servicio_id = sr.id
-    #    LEFT JOIN repuestos r ON ru.repuesto_id = r.id
-    #    WHERE sr.status = 'COMPLETADO' AND sr.fecha_servicio BETWEEN ? AND ?
-    #""", (dolar_c, dolar_c, start_date, end_date_query))
-
-    # --- DETALLE DE INSUMOS ---
+    # --- 7. DETALLE DE INSUMOS ---
     insumos_detalle = db_query("""
         SELECT 
             sr.fecha_servicio, 
@@ -5466,8 +5471,8 @@ def reporte_rentabilidad():
                            ventas_detalle=ventas_detalle,
                            insumos_detalle=insumos_detalle,
                            start_date=start_date, end_date=end_date_display)
-    
 
+    
 #@app.route('/reportes/detalle_ventas_rentabilidad')
 #@login_required
 #@admin_required
@@ -5496,29 +5501,48 @@ def reporte_rentabilidad():
 def detalle_ventas_rentabilidad():
     start_date, end_date_display, end_date_query = get_date_filters()
     
-    # Consulta detallada en DÓLARES (Deduciendo Impuestos/Comisiones del precio y del margen)
-    ventas = db_query("""
-        SELECT 
-            v.id, 
-            v.fecha_venta, 
-            c.marca, 
-            c.modelo, 
-            c.imei, 
-            -- 1. Calculamos el precio de venta NETO (sin impuestos)
-            (v.precio_final_usd / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) as precio_final_usd, 
-            COALESCE(c.costo_usd, 0) as costo_usd,
-            -- 2. Calculamos el margen real: (Precio Neto - Costo)
-            ((v.precio_final_usd / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) - COALESCE(c.costo_usd, 0)) as margen_usd
+    # RECONSTRUCCIÓN COMPLETA EN DÓLARES (USD)
+    # Reconstruimos el precio neto sumando las partes originales del presupuesto
+    query = """
+        SELECT v.id, v.fecha_venta, c.marca, c.modelo, c.imei, 
+               -- 1. RECONSTRUCCIÓN PRECIO DE VENTA NETO (USD)
+               (COALESCE(c.costo_usd, 0) + 
+                CASE 
+                    WHEN v.ganancia_pct > 0 THEN (COALESCE(c.costo_usd, 0) * v.ganancia_pct / 100.0)
+                    WHEN v.monto_agregado_ars > 0 THEN (v.monto_agregado_ars / v.valor_dolar_momento)
+                    WHEN v.monto_agregado_usd > 0 THEN v.monto_agregado_usd
+                    ELSE 0
+                END +
+                COALESCE((SELECT SUM(cantidad * precio_vendido_usd) 
+                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
+               ) as precio_final_usd, 
+               
+               COALESCE(c.costo_usd, 0) as costo_usd,
+               
+               -- 2. MARGEN REAL (Precio Neto Reconstruido - Costo)
+               ((COALESCE(c.costo_usd, 0) + 
+                CASE 
+                    WHEN v.ganancia_pct > 0 THEN (COALESCE(c.costo_usd, 0) * v.ganancia_pct / 100.0)
+                    WHEN v.monto_agregado_ars > 0 THEN (v.monto_agregado_ars / v.valor_dolar_momento)
+                    WHEN v.monto_agregado_usd > 0 THEN v.monto_agregado_usd
+                    ELSE 0
+                END +
+                COALESCE((SELECT SUM(cantidad * precio_vendido_usd) 
+                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
+               ) - COALESCE(c.costo_usd, 0)) as margen_usd
+
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id 
         WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
         ORDER BY v.fecha_venta DESC
-    """, (start_date, end_date_query))
+    """
+
+    ventas = db_query(query, (start_date, end_date_query))
 
     return render_template('reportes/detalle_ventas.html', 
                            ventas=ventas, start_date=start_date, end_date=end_date_display)
-
-
+    
+    
 
 @app.route('/exportar/detalle_ventas_usd')
 @login_required
@@ -5526,33 +5550,54 @@ def detalle_ventas_rentabilidad():
 def exportar_detalle_ventas_usd():
     start_date, _, end_date_query = get_date_filters()
     
-    ventas = db_query("""
-        SELECT v.fecha_venta, v.id, c.marca, c.modelo, c.imei, 
-               v.precio_final_usd, c.costo_usd,
-               (v.precio_final_usd - c.costo_usd) as margen_usd
+    # Usamos EXACTAMENTE la misma query de reconstrucción para que el Excel coincida con la pantalla
+    query = """
+        SELECT v.id, v.fecha_venta, c.marca, c.modelo, c.imei, 
+               (COALESCE(c.costo_usd, 0) + 
+                CASE 
+                    WHEN v.ganancia_pct > 0 THEN (COALESCE(c.costo_usd, 0) * v.ganancia_pct / 100.0)
+                    WHEN v.monto_agregado_ars > 0 THEN (v.monto_agregado_ars / v.valor_dolar_momento)
+                    WHEN v.monto_agregado_usd > 0 THEN v.monto_agregado_usd
+                    ELSE 0
+                END +
+                COALESCE((SELECT SUM(cantidad * precio_vendido_usd) 
+                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
+               ) as precio_final_usd, 
+               COALESCE(c.costo_usd, 0) as costo_usd
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id 
         WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
         ORDER BY v.fecha_venta DESC
-    """, (start_date, end_date_query))
+    """
+    
+    ventas = db_query(query, (start_date, end_date_query))
 
     output = io.StringIO()
     output.write('\ufeff') # BOM para Excel
     writer = csv.writer(output, delimiter=';')
     
-    writer.writerow(['Fecha', 'ID Venta', 'Marca', 'Modelo', 'IMEI', 'Costo (USD)', 'Venta (USD)', 'Margen (USD)'])
+    writer.writerow(['Fecha', 'ID Venta', 'Marca', 'Modelo', 'IMEI', 'Costo (USD)', 'Venta Neta (USD)', 'Margen Real (USD)'])
     
     for v in ventas:
+        # Calculamos el margen antes de escribir la fila
+        margen = v['precio_final_usd'] - v['costo_usd']
+        
         writer.writerow([
-            v['fecha_venta'], v['id'], v['marca'], v['modelo'], v['imei'],
+            v['fecha_venta'], 
+            v['id'], 
+            v['marca'], 
+            v['modelo'], 
+            v['imei'],
             f"{v['costo_usd']:.2f}".replace('.', ','),
             f"{v['precio_final_usd']:.2f}".replace('.', ','),
-            f"{v['margen_usd']:.2f}".replace('.', ',')
+            f"{margen:.2f}".replace('.', ',')
         ])
     
     output.seek(0)
-    filename = f"Detalle_Ventas_USD_{start_date}.csv"
+    filename = f"Detalle_Ventas_Netas_USD_{start_date}.csv"
     return Response(output, mimetype="text/csv", headers={"Content-Disposition": f"attachment;filename={filename}"})
+
+
 
 
 @app.route('/exportar/detalle_servicios_ars')

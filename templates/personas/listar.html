@@ -16,26 +16,31 @@
     <div class="collapse show" id="collapseFilters">
         <div class="card-body">
             <form method="GET" class="row g-3">
-                <div class="col-md-4">
-                    <label for="nombre" class="form-label">Nombre/Razón Social:</label>
-                    <input type="text" class="form-control" id="nombre" name="nombre" value="{{ filtros_activos.nombre }}">
+                <!-- BUSCADOR UNIVERSAL (Punto 1 Aplicado) -->
+                <div class="col-md-7">
+                    <label for="nombre" class="form-label fw-bold">Búsqueda Rápida:</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control border-primary" id="nombre" name="nombre" 
+                               value="{{ filtros_activos.nombre }}" 
+                               placeholder="Escriba Nombre, Apellido, Razón Social o CUIT...">
+                    </div>
+                    <div class="form-text">Con solo 3 letras o números el sistema encontrará las coincidencias.</div>
                 </div>
-                <div class="col-md-3">
-                    <label for="cuit_cuil" class="form-label">CUIT/CUIL:</label>
-                    <input type="text" class="form-control" id="cuit_cuil" name="cuit_cuil" value="{{ filtros_activos.cuit_cuil }}">
-                </div>
-                <div class="col-md-2 d-flex align-items-end">
+
+                <div class="col-md-2 d-flex align-items-center">
                     <div class="form-check form-switch mb-0">
                         <input class="form-check-input" type="checkbox" id="es_cliente" name="es_cliente" value="1" {% if filtros_activos.es_cliente %}checked{% endif %}>
-                        <label class="form-check-label" for="es_cliente">Es Cliente</label>
+                        <label class="form-check-label fw-bold" for="es_cliente">Clientes</label>
                     </div>
                 </div>
-                <div class="col-md-2 d-flex align-items-end">
+                <div class="col-md-2 d-flex align-items-center">
                     <div class="form-check form-switch mb-0">
                         <input class="form-check-input" type="checkbox" id="es_proveedor" name="es_proveedor" value="1" {% if filtros_activos.es_proveedor %}checked{% endif %}>
-                        <label class="form-check-label" for="es_proveedor">Es Proveedor</label>
+                        <label class="form-check-label fw-bold" for="es_proveedor">Proveedores</label>
                     </div>
                 </div>
+                
                 <div class="col-md-12 d-flex justify-content-start align-items-end mt-3">
                     <button type="submit" class="btn btn-primary me-2"><i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros</button>
                     {% if request.args %}
@@ -63,7 +68,7 @@
                 <th scope="col">CUIT/CUIL</th>
                 <th scope="col">Teléfono</th>
                 <th scope="col">Email</th>
-                <th scope="col">Fecha Nac.</th> {# NUEVA COLUMNA #}
+                <th scope="col">Fecha Nac.</th>
                 <th scope="col">Roles</th>
                 <th scope="col">Acciones</th>
             </tr>
@@ -72,31 +77,45 @@
             {% if personas %}
                 {% for persona in personas %}
                 <tr>
-                    <td>{{ persona.id }}</td>
-                    <td>
-                        {% if persona.razon_social %}{{ persona.razon_social }}{% else %}{{ persona.nombre }} {{ persona.apellido }}{% endif %}
+                    <td><small class="text-muted">{{ persona.id }}</small></td>
+                    <td class="fw-bold">
+                        {% if persona.razon_social %}
+                            {{ persona.razon_social }}
+                        {% else %}
+                            {{ persona.nombre }} {{ persona.apellido }}
+                        {% endif %}
                     </td>
                     <td>{{ persona.cuit_cuil }}</td>
                     <td>{{ persona.telefono or 'N/A' }}</td>
                     <td>{{ persona.email or 'N/A' }}</td>
-                    <td>{{ persona.fecha_nacimiento or 'N/A' }}</td> {# NUEVA CELDA #}
+                    <td>{{ persona.fecha_nacimiento or 'N/A' }}</td>
                     <td>
                         {% if persona.es_cliente %}<span class="badge bg-primary me-1">Cliente</span>{% endif %}
                         {% if persona.es_proveedor %}<span class="badge bg-info text-dark">Proveedor</span>{% endif %}
                     </td>
                     <td>
-                        <a href="{{ url_for('editar_persona', persona_id=persona.id) }}" class="btn btn-sm btn-outline-warning me-1" title="Editar"><i class="bi bi-pencil"></i></a>
-                        {% if current_user.role == 'admin' %}
-                            <form action="{{ url_for('eliminar_persona', persona_id=persona.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea eliminar a esta persona? Esto no se puede deshacer si no tiene registros asociados.');">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar"><i class="bi bi-trash"></i></button>
-                            </form>
-                        {% endif %}
+                        <div class="btn-group">
+                            <a href="{{ url_for('editar_persona', persona_id=persona.id) }}" class="btn btn-sm btn-outline-warning" title="Editar"><i class="bi bi-pencil"></i></a>
+                            
+                            {# Botón Ver Cta Cte (Aseguramos que el técnico lo vea) #}
+                            {% if current_user.role in ['admin', 'superadmin', 'usuario', 'tecnico'] %}
+                                <a href="{{ url_for('ver_detalle_cc_cliente', cliente_id=persona.id) }}" class="btn btn-sm btn-outline-info" title="Ver Cuenta Corriente">
+                                    <i class="bi bi-card-list"></i>
+                                </a>
+                            {% endif %}
+
+                            {% if current_user.role in ['admin', 'superadmin'] %}
+                                <form action="{{ url_for('eliminar_persona', persona_id=persona.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea eliminar a esta persona? Esto no se puede deshacer si no tiene registros asociados.');">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar"><i class="bi bi-trash"></i></button>
+                                </form>
+                            {% endif %}
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
             {% else %}
                 <tr>
-                    <td colspan="8" class="text-center text-muted">No se encontraron personas con los filtros aplicados.</td> {# COLSPAN ACTUALIZADO A 8 #}
+                    <td colspan="8" class="text-center text-muted py-4">No se encontraron personas con los filtros aplicados.</td>
                 </tr>
             {% endif %}
         </tbody>
