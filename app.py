@@ -682,35 +682,77 @@ def index():
 # =================================================================
 # === MÓDULO DE GESTIÓN DE PERSONAS (CLIENTES/PROVEEDORES) ========
 # =================================================================
+#@app.route('/personas')
+#@login_required
+#@tecnico_required
+#def listar_personas():
+#    # Capturamos el término de búsqueda universal (puede venir como 'q' o 'nombre')
+#    q = request.args.get('q', '').strip()
+#    if not q:
+#        q = request.args.get('nombre', '').strip()
+#        
+#    filtro_es_cliente = request.args.get('es_cliente') == '1'
+#    filtro_es_proveedor = request.args.get('es_proveedor') == '1'#
+#
+#    # Base de la consulta
+#    query = "SELECT * FROM personas WHERE 1=1"
+#    params = []
+#
+#    # --- LÓGICA DE BÚSQUEDA UNIVERSAL ---
+#    if q:
+#        # Unimos Nombre y Apellido, y buscamos también en Razón Social y CUIT
+#        query += """ AND (
+#            (COALESCE(nombre, '') || ' ' || COALESCE(apellido, '')) LIKE ? OR 
+#            razon_social LIKE ? OR 
+#            cuit_cuil LIKE ?
+#        )"""
+#        search_val = f"%{q}%"
+#        # Pasamos el mismo valor para los 3 campos (?)
+#        params.extend([search_val, search_val, search_val])
+#
+#    # Filtros por rol (estos se mantienen independientes de la búsqueda de texto)
+#    if filtro_es_cliente:
+#        query += " AND es_cliente = 1"
+#    if filtro_es_proveedor:
+#        query += " AND es_proveedor = 1"
+#    
+#    query += " ORDER BY razon_social, apellido, nombre"
+#    personas = db_query(query, tuple(params))
+#    
+    # Devolvemos filtros_activos con 'q' para el nuevo buscador 
+    # y mantenemos los otros para compatibilidad
+#    return render_template('personas/listar.html', personas=personas, 
+#                           filtros_activos={
+#                               'q': q,
+#                               'nombre': q, 
+#                               'es_cliente': filtro_es_cliente, 
+#                               'es_proveedor': filtro_es_proveedor
+#                           })
+    
+ 
 @app.route('/personas')
 @login_required
 @tecnico_required
 def listar_personas():
-    # Capturamos el término de búsqueda universal (puede venir como 'q' o 'nombre')
-    q = request.args.get('q', '').strip()
+    q = request.args.get('nombre', '').strip()
     if not q:
-        q = request.args.get('nombre', '').strip()
+        q = request.args.get('q', '').strip()
         
     filtro_es_cliente = request.args.get('es_cliente') == '1'
     filtro_es_proveedor = request.args.get('es_proveedor') == '1'
 
-    # Base de la consulta
     query = "SELECT * FROM personas WHERE 1=1"
     params = []
 
-    # --- LÓGICA DE BÚSQUEDA UNIVERSAL ---
     if q:
-        # Unimos Nombre y Apellido, y buscamos también en Razón Social y CUIT
         query += """ AND (
             (COALESCE(nombre, '') || ' ' || COALESCE(apellido, '')) LIKE ? OR 
             razon_social LIKE ? OR 
             cuit_cuil LIKE ?
         )"""
         search_val = f"%{q}%"
-        # Pasamos el mismo valor para los 3 campos (?)
         params.extend([search_val, search_val, search_val])
 
-    # Filtros por rol (estos se mantienen independientes de la búsqueda de texto)
     if filtro_es_cliente:
         query += " AND es_cliente = 1"
     if filtro_es_proveedor:
@@ -718,17 +760,30 @@ def listar_personas():
     
     query += " ORDER BY razon_social, apellido, nombre"
     personas = db_query(query, tuple(params))
-    
-    # Devolvemos filtros_activos con 'q' para el nuevo buscador 
-    # y mantenemos los otros para compatibilidad
+
+    # --- LÓGICA AJAX ---
+    # Si la petición pide JSON (desde el script), enviamos solo los datos
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        output = []
+        for p in personas:
+            output.append({
+                'id': p['id'],
+                'nombre': p['nombre'],
+                'apellido': p['apellido'],
+                'razon_social': p['razon_social'],
+                'cuit_cuil': p['cuit_cuil'],
+                'telefono': p['telefono'],
+                'email': p['email'],
+                'fecha_nacimiento': p['fecha_nacimiento'],
+                'es_cliente': bool(p['es_cliente']),
+                'es_proveedor': bool(p['es_proveedor'])
+            })
+        return jsonify(personas=output)
+
+    # Si es una carga normal de página, enviamos el HTML
     return render_template('personas/listar.html', personas=personas, 
-                           filtros_activos={
-                               'q': q,
-                               'nombre': q, 
-                               'es_cliente': filtro_es_cliente, 
-                               'es_proveedor': filtro_es_proveedor
-                           })
-    
+                           filtros_activos={'nombre': q, 'q': q, 'es_cliente': filtro_es_cliente, 'es_proveedor': filtro_es_proveedor}) 
+ 
     
     
 @app.route('/personas/nueva', methods=['GET', 'POST'])

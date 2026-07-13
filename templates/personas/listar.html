@@ -5,50 +5,50 @@
 {% block content %}
 <h1 class="mb-4"><i class="bi bi-people-fill me-2"></i>Gestionar Personas (Clientes y Proveedores)</h1>
 
+<!-- Variable oculta para pasar el rol del usuario actual al JavaScript -->
+<input type="hidden" id="current_user_role" value="{{ current_user.role }}">
+
 <div class="card mb-3">
     <div class="card-header d-flex justify-content-between align-items-center">
         Filtros de Búsqueda
-        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFilters" aria-expanded="false" aria-controls="collapseFilters">
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFilters">
             <i class="bi bi-filter-square me-1"></i>
             <span class="d-none d-md-inline">Expandir/Contraer</span>
         </button>
     </div>
     <div class="collapse show" id="collapseFilters">
         <div class="card-body">
-            <form method="GET" class="row g-3">
-                <!-- BUSCADOR UNIVERSAL (Punto 1 Aplicado) -->
+            <!-- Agregamos ID al formulario para capturar los cambios -->
+            <form method="GET" id="filter-form" class="row g-3">
                 <div class="col-md-7">
                     <label for="nombre" class="form-label fw-bold">Búsqueda Rápida:</label>
                     <div class="input-group">
                         <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                        <!-- El input ahora dispara la búsqueda -->
                         <input type="text" class="form-control border-primary" id="nombre" name="nombre" 
                                value="{{ filtros_activos.nombre }}" 
-                               placeholder="Escriba Nombre, Apellido, Razón Social o CUIT...">
+                               placeholder="Escriba Nombre, Apellido, Razón Social o CUIT..." autocomplete="off">
                     </div>
-                    <div class="form-text">Con solo 3 letras o números el sistema encontrará las coincidencias.</div>
                 </div>
 
-                <div class="col-md-2 d-flex align-items-center">
+                <div class="col-md-2 d-flex align-items-center pt-4">
                     <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="es_cliente" name="es_cliente" value="1" {% if filtros_activos.es_cliente %}checked{% endif %}>
+                        <input class="form-check-input filter-checkbox" type="checkbox" id="es_cliente" name="es_cliente" value="1" {% if filtros_activos.es_cliente %}checked{% endif %}>
                         <label class="form-check-label fw-bold" for="es_cliente">Clientes</label>
                     </div>
                 </div>
-                <div class="col-md-2 d-flex align-items-center">
+                <div class="col-md-2 d-flex align-items-center pt-4">
                     <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="es_proveedor" name="es_proveedor" value="1" {% if filtros_activos.es_proveedor %}checked{% endif %}>
+                        <input class="form-check-input filter-checkbox" type="checkbox" id="es_proveedor" name="es_proveedor" value="1" {% if filtros_activos.es_proveedor %}checked{% endif %}>
                         <label class="form-check-label fw-bold" for="es_proveedor">Proveedores</label>
                     </div>
                 </div>
                 
                 <div class="col-md-12 d-flex justify-content-start align-items-end mt-3">
                     <button type="submit" class="btn btn-primary me-2"><i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros</button>
-                    {% if request.args %}
-                        <a href="{{ url_for('listar_personas') }}" class="btn btn-outline-secondary me-2"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar Filtros</a>
-                    {% endif %}
+                    <a href="{{ url_for('listar_personas') }}" class="btn btn-outline-secondary me-2"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar Filtros</a>
                     
-                    <!-- Botón Exportar CSV: Ubicado a la derecha junto al de Agregar -->
-                    <a href="{{ url_for('exportar_personas', **request.args) }}" class="btn btn-info ms-auto me-2">
+                    <a href="{{ url_for('exportar_personas', **request.args) }}" class="btn btn-info ms-auto me-2" id="btn-exportar">
                         <i class="bi bi-file-earmark-spreadsheet me-1"></i>Exportar CSV
                     </a>
                     
@@ -73,17 +73,14 @@
                 <th scope="col">Acciones</th>
             </tr>
         </thead>
-        <tbody>
+        <!-- AGREGAMOS ID AL TBODY PARA EL AJAX -->
+        <tbody id="personas-table-body">
             {% if personas %}
                 {% for persona in personas %}
                 <tr>
                     <td><small class="text-muted">{{ persona.id }}</small></td>
                     <td class="fw-bold">
-                        {% if persona.razon_social %}
-                            {{ persona.razon_social }}
-                        {% else %}
-                            {{ persona.nombre }} {{ persona.apellido }}
-                        {% endif %}
+                        {% if persona.razon_social %}{{ persona.razon_social }}{% else %}{{ persona.nombre }} {{ persona.apellido }}{% endif %}
                     </td>
                     <td>{{ persona.cuit_cuil }}</td>
                     <td>{{ persona.telefono or 'N/A' }}</td>
@@ -97,7 +94,6 @@
                         <div class="btn-group">
                             <a href="{{ url_for('editar_persona', persona_id=persona.id) }}" class="btn btn-sm btn-outline-warning" title="Editar"><i class="bi bi-pencil"></i></a>
                             
-                            {# Botón Ver Cta Cte (Aseguramos que el técnico lo vea) #}
                             {% if current_user.role in ['admin', 'superadmin', 'usuario', 'tecnico'] %}
                                 <a href="{{ url_for('ver_detalle_cc_cliente', cliente_id=persona.id) }}" class="btn btn-sm btn-outline-info" title="Ver Cuenta Corriente">
                                     <i class="bi bi-card-list"></i>
@@ -105,8 +101,8 @@
                             {% endif %}
 
                             {% if current_user.role in ['admin', 'superadmin'] %}
-                                <form action="{{ url_for('eliminar_persona', persona_id=persona.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Está seguro de que desea eliminar a esta persona? Esto no se puede deshacer si no tiene registros asociados.');">
-                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar"><i class="bi bi-trash"></i></button>
+                                <form action="{{ url_for('eliminar_persona', persona_id=persona.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Eliminar?');">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                                 </form>
                             {% endif %}
                         </div>
@@ -114,11 +110,89 @@
                 </tr>
                 {% endfor %}
             {% else %}
-                <tr>
-                    <td colspan="8" class="text-center text-muted py-4">No se encontraron personas con los filtros aplicados.</td>
-                </tr>
+                <tr><td colspan="8" class="text-center text-muted py-4">No se encontraron personas.</td></tr>
             {% endif %}
         </tbody>
     </table>
 </div>
+
+{% block scripts_extra %}
+<script>
+$(document).ready(function() {
+    let timeout = null;
+    const role = $('#current_user_role').val();
+
+    function updateTable() {
+        const formData = $('#filter-form').serialize();
+        
+        // Actualizar link de exportación
+        const exportUrl = "{{ url_for('exportar_personas') }}?" + formData;
+        $('#btn-exportar').attr('href', exportUrl);
+
+        $.ajax({
+            url: "{{ url_for('listar_personas') }}",
+            data: formData,
+            type: 'GET',
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+            success: function(response) {
+                const tbody = $('#personas-table-body');
+                tbody.empty();
+
+                if (response.personas.length === 0) {
+                    tbody.append('<tr><td colspan="8" class="text-center text-muted py-4">No se encontraron coincidencias.</td></tr>');
+                    return;
+                }
+
+                response.personas.forEach(function(p) {
+                    const displayName = p.razon_social ? p.razon_social : (p.nombre + ' ' + p.apellido);
+                    
+                    let rolesBadges = '';
+                    if (p.es_cliente) rolesBadges += '<span class="badge bg-primary me-1">Cliente</span>';
+                    if (p.es_proveedor) rolesBadges += '<span class="badge bg-info text-dark">Proveedor</span>';
+
+                    let actions = `
+                        <div class="btn-group">
+                            <a href="/personas/editar/${p.id}" class="btn btn-sm btn-outline-warning"><i class="bi bi-pencil"></i></a>
+                            <a href="/cuentas_corrientes/cliente/detalle/${p.id}" class="btn btn-sm btn-outline-info"><i class="bi bi-card-list"></i></a>
+                    `;
+
+                    if (role === 'admin' || role === 'superadmin') {
+                        actions += `
+                            <form action="/personas/eliminar/${p.id}" method="POST" class="d-inline" onsubmit="return confirm('¿Eliminar?');">
+                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                            </form>
+                        `;
+                    }
+                    actions += '</div>';
+
+                    const row = `
+                        <tr>
+                            <td><small class="text-muted">${p.id}</small></td>
+                            <td class="fw-bold">${displayName}</td>
+                            <td>${p.cuit_cuil}</td>
+                            <td>${p.telefono ? p.telefono : 'N/A'}</td>
+                            <td>${p.email ? p.email : 'N/A'}</td>
+                            <td>${p.fecha_nacimiento ? p.fecha_nacimiento : 'N/A'}</td>
+                            <td>${rolesBadges}</td>
+                            <td>${actions}</td>
+                        </tr>
+                    `;
+                    tbody.append(row);
+                });
+            }
+        });
+    }
+
+    // Escuchar el teclado con un pequeño delay (debounce) para no saturar el servidor
+    $('#nombre').on('keyup', function() {
+        clearTimeout(timeout);
+        timeout = setTimeout(updateTable, 300);
+    });
+
+    // Escuchar cambios en los switches de Cliente/Proveedor
+    $('.filter-checkbox').on('change', updateTable);
+});
+</script>
+{% endblock %}
+
 {% endblock %}
