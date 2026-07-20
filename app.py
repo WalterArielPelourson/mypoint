@@ -5469,6 +5469,12 @@ def reporte_rentabilidad():
           AND LOWER(descripcion) NOT LIKE '%compras%dolar%'
           AND LOWER(descripcion) NOT LIKE '%compras%usd%'
           AND LOWER(descripcion) NOT LIKE '%cambio%usd%'
+          AND LOWER(descripcion) NOT LIKE '%cambio%'
+          AND LOWER(descripcion) NOT LIKE '%alej%'
+          AND LOWER(descripcion) NOT LIKE '%vic%'
+          AND LOWER(descripcion) NOT LIKE '%confun%'
+          AND LOWER(descripcion) NOT LIKE '%erro%'
+          
           -- 3. Excluir Venta de Dólares (varias formas)
           AND LOWER(descripcion) NOT LIKE '%venta%usd%'
           AND LOWER(descripcion) NOT LIKE '%venta%dolar%'
