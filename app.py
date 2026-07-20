@@ -4016,8 +4016,9 @@ def pago_anticipado_cliente():
 
             # 2. Registrar en cobros_clientes (Usando los valores calculados y redondeados)
             cobro_id = db_execute_func(db_conn, """
-                INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion, 
+        estado_anticipo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,'DISPONIBLE')
             """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                   monto_ars, monto_usd, cuenta_destino, f"PAGO ANTICIPADO / SEÑA ({imputacion})", observaciones, imputacion), return_id=True)
 
