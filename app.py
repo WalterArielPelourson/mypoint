@@ -5462,6 +5462,7 @@ def reporte_rentabilidad():
           -- Excluir Compra de Dólares (Cubre: compra usd, compra de usd, compra dolar, compra dolares)
           AND LOWER(descripcion) NOT LIKE '%compra%'
           AND LOWER(descripcion) NOT LIKE '%compr%'
+          AND LOWER(descripcion) NOT LIKE '%comp%'
           AND LOWER(descripcion) NOT LIKE '%copra%usd%'
           AND LOWER(descripcion) NOT LIKE '%conpra%usd%'
           AND LOWER(descripcion) NOT LIKE '%compra%usd%'
@@ -5474,7 +5475,9 @@ def reporte_rentabilidad():
           AND LOWER(descripcion) NOT LIKE '%vic%'
           AND LOWER(descripcion) NOT LIKE '%confun%'
           AND LOWER(descripcion) NOT LIKE '%erro%'
-          
+          -- 3. Excluir Pagos a Proveedores (Para no duplicar el costo de mercadería)
+          AND LOWER(descripcion) NOT LIKE '%prov%'
+          AND tipo NOT LIKE '%PROVEEDOR%'
           -- 3. Excluir Venta de Dólares (varias formas)
           AND LOWER(descripcion) NOT LIKE '%venta%usd%'
           AND LOWER(descripcion) NOT LIKE '%venta%dolar%'
