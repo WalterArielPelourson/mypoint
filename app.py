@@ -5449,16 +5449,46 @@ def reporte_rentabilidad():
         GROUP BY sub_categoria
     """, (dolar_c, start_date, end_date_query))
 
-    # --- 4b. EGRESOS VIRTUALES ---
+    # --- 4b. EGRESOS VIRTUALES (FILTRO DE AJUSTES Y COMPRA DE DÓLARES) ---
+    ### CAMBIO AQUÍ: Filtro expandido para excluir compra de divisas y ajustes ###
     egr_virtuales_man = db_query("""
         SELECT metodo_pago as cuenta,
                COALESCE(SUM(monto_ars + (monto_usd * ?)), 0) as total
         FROM caja_movimientos
-        WHERE tipo = 'EGRESO_VIRTUAL'
+        WHERE (tipo LIKE 'EGRESO_MANUAL%' OR tipo = 'EGRESO_VIRTUAL')
           AND metodo_pago != 'EFECTIVO'
+          -- Excluir Ajustes
+          AND LOWER(descripcion) NOT LIKE '%ajus%' 
+          -- Excluir Compra de Dólares (Cubre: compra usd, compra de usd, compra dolar, compra dolares)
+          AND LOWER(descripcion) NOT LIKE '%compra%'
+          AND LOWER(descripcion) NOT LIKE '%compr%'
+          AND LOWER(descripcion) NOT LIKE '%copra%usd%'
+          AND LOWER(descripcion) NOT LIKE '%conpra%usd%'
+          AND LOWER(descripcion) NOT LIKE '%compra%usd%'
+          AND LOWER(descripcion) NOT LIKE '%compra%dolar%'
+          AND LOWER(descripcion) NOT LIKE '%compras%dolar%'
+          AND LOWER(descripcion) NOT LIKE '%compras%usd%'
+          -- 3. Excluir Venta de Dólares (varias formas)
+          AND LOWER(descripcion) NOT LIKE '%venta%usd%'
+          AND LOWER(descripcion) NOT LIKE '%venta%dolar%'
+          -- 4. Excluir movimientos de socios si se hicieron por cuenta virtual
+          AND (sub_categoria IS NULL OR sub_categoria NOT IN ('Aportes Socios', 'Retiros Socios'))
+          
           AND fecha BETWEEN ? AND ?
         GROUP BY metodo_pago
     """, (dolar_c, start_date, end_date_query))
+    
+    
+    # --- 4b. EGRESOS VIRTUALES ---
+    #egr_virtuales_man = db_query("""
+    #    SELECT metodo_pago as cuenta,
+    #           COALESCE(SUM(monto_ars + (monto_usd * ?)), 0) as total
+    #    FROM caja_movimientos
+    #    WHERE tipo = 'EGRESO_VIRTUAL'
+    #      AND metodo_pago != 'EFECTIVO'
+    #      AND fecha BETWEEN ? AND ?
+    #    GROUP BY metodo_pago
+    #""", (dolar_c, start_date, end_date_query))
 
     # --- 5. FLUJO DE CUENTAS ---
     cuentas = db_query("SELECT nombre FROM cuentas_entidades WHERE activo = 1")
