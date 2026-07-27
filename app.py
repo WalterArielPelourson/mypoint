@@ -13,7 +13,7 @@ import json
 import os
 from database import inicializar_db, db_query as db_query_func, db_execute as db_execute_func
 from itertools import zip_longest 
-
+from werkzeug.utils import secure_filename
 #import pytz # Agrega esta importación
 #from datetime import datetime, timedelta
 
@@ -57,6 +57,8 @@ SUB_RUBROS_CAJA = [
     'Limpieza',
     'Muebles y Útiles',
     'Bienes de Uso',
+    'Comisionista/Flete',
+    'Cambio de Divisas',
     'Otros'
 ]
 
@@ -359,6 +361,24 @@ def editar_usuario(user_id):
     return render_template('admin/editar_usuario.html', usuario=usuario)
 
 
+
+
+
+
+# Configuración de carpetas
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'static/uploads/productos')
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+
+# Crear la carpeta si no existe
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+
 # --- FUNCIÓN AUXILIAR PARA REGISTRAR MOVIMIENTOS ---
 def registrar_movimiento(user_id, tipo_movimiento, tipo_item, item_id=None, detalles=None):
     fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -453,6 +473,45 @@ def logout():
     flash("Ha cerrado sesión exitosamente.", "success")
     return redirect(url_for('login'))
 
+
+#TIENDA VIRTUAL 
+@app.route('/tienda')
+def tienda_publica():
+    dolar = obtener_cotizacion_dolar()
+    valor_venta = float(dolar['venta_blue'] or 1000)
+
+    # 1. Obtener las MARCAS ÚNICAS que tienen stock y están publicadas
+    # Esto genera la lista para los botones dinámicos
+    marcas_db = db_query("""
+        SELECT DISTINCT marca 
+        FROM celulares 
+        WHERE stock = 1 AND mostrar_en_web = 1 
+        ORDER BY marca ASC
+    """)
+
+    # 2. Traer todos los equipos
+    equipos = db_query("""
+        SELECT id, marca, modelo, condicion, almacenamiento_gb, color, costo_usd, imagen_url 
+        FROM celulares 
+        WHERE stock = 1 AND mostrar_en_web = 1
+    """)
+
+    # 3. Traer repuestos/accesorios
+    productos = db_query("""
+        SELECT id, nombre_parte, modelo_compatible, 
+            precio_venta_ars, precio_venta_usd, -- <--- LOS PRECIOS DE LISTA
+            imagen_url, categoria
+        FROM repuestos 
+        WHERE stock > 0 AND mostrar_en_web = 1 AND activo = 1
+    """)
+
+    return render_template('tienda/index.html', 
+                           marcas=marcas_db, # <--- Enviamos las marcas
+                           equipos=equipos, 
+                           productos=productos, 
+                           valor_dolar=valor_venta)
+    
+    
 # --- CONFIGURACIÓN DE DÓLAR ACTUALIZADA (BCRA Y DOLAR HOY) ---
 # Estructura para almacenar ambas cotizaciones y el tiempo de la última actualización
 valor_dolar_cache = {
@@ -1481,6 +1540,12 @@ def editar_celular(celular_id):
             costo_usd = float(request.form.get('costo_usd') or 0)
             stock = int(request.form.get('stock', 1))
 
+            # NUEVOS CAMPOS PARA LA WEB
+            
+            imagen_url = request.form.get('imagen_url', '').strip()
+            mostrar_en_web = 1 if 'mostrar_en_web' in request.form else 0
+            
+            
             # 3. VALIDACIÓN DE CAMPOS OBLIGATORIOS
             # Excluimos 'ram_gb' de esta lista para que sea opcional.
             # Validamos bateria_salud por separado porque 0 es un valor válido pero "falso" en Python.
@@ -1511,9 +1576,9 @@ def editar_celular(celular_id):
             db_execute("""
                 UPDATE celulares 
                 SET marca=?, modelo=?, imei=?, condicion=?, almacenamiento_gb=?, 
-                    ram_gb=?, color=?, bateria_salud=?, observaciones=?, costo_usd=?, stock=? 
+                    ram_gb=?, color=?, bateria_salud=?, observaciones=?, costo_usd=?, stock=?, imagen_url=?, mostrar_en_web=? 
                 WHERE id=?
-            """, (marca, modelo, imei, condicion, almacenamiento_gb, ram_gb, color, bateria_salud, observaciones, costo_usd, stock, celular_id))
+            """, (marca, modelo, imei, condicion, almacenamiento_gb, ram_gb, color, bateria_salud, observaciones, costo_usd, stock, imagen_url, mostrar_en_web, celular_id))
             
             # Registro de auditoría
             detalles = {'id': celular_id, 'marca': marca, 'modelo': modelo, 'imei': imei, 'stock_nuevo': stock}
@@ -1556,6 +1621,9 @@ def editar_repuesto(repuesto_id):
             costo_usd = float(request.form['costo_usd'])
             stock = int(request.form['stock'])
             
+            imagen_url = request.form.get('imagen_url', '').strip()
+            mostrar_en_web = 1 if 'mostrar_en_web' in request.form else 0
+            
             # REMOVIDO: Ya no se toman 'precio_venta_ars' ni 'precio_venta_usd' del formulario POST aquí.
 
             if not all([nombre_parte, categoria]):
@@ -1579,8 +1647,8 @@ def editar_repuesto(repuesto_id):
                 return redirect(url_for('editar_repuesto', repuesto_id=repuesto_id))
 
             # MODIFICADO: Se incluye 'categoria' en el UPDATE
-            db_execute("UPDATE repuestos SET nombre_parte=?, modelo_compatible=?, categoria=?, costo_usd=?, stock=? WHERE id=?",
-                       (nombre_parte, modelo_compatible, categoria, costo_usd, stock, repuesto_id))
+            db_execute("UPDATE repuestos SET nombre_parte=?, modelo_compatible=?, categoria=?, costo_usd=?, stock=?, imagen_url=?, mostrar_en_web=?  WHERE id=?", 
+                       (nombre_parte, modelo_compatible, categoria, costo_usd, stock, imagen_url, mostrar_en_web, repuesto_id))
             
             # MODIFICADO: Detalles del log actualizados
             detalles = {
@@ -4759,6 +4827,17 @@ def view_venta(venta_id):
         flash("Presupuesto de venta no encontrado.", "danger")
         return redirect(url_for('listar_presupuestos_venta'))
 
+    
+    # 2. NUEVA CONSULTA: Detalle de cobros en cuentas virtuales
+    pagos_v = db_query("""
+        SELECT metodo_pago, monto_ars, monto_usd 
+        FROM caja_movimientos 
+        WHERE referencia_id = ? 
+        AND tipo LIKE 'INGRESO_VENTA_VIRTUAL%'
+        AND metodo_pago != 'EFECTIVO'
+    """, (venta_id,))
+    
+    
     # =================================================================
     # === NUEVO: CONSULTA DE ÍTEMS PROMOCIONALES / REGALOS (PUNTO 5) ===
     # =================================================================
@@ -4774,8 +4853,9 @@ def view_venta(venta_id):
     
     # IMPORTANTE: Agregamos 'regalos=regalos_entrega' al render_template
     return render_template('ventas/view_venta.html', 
-                           venta=venta_data[0], 
-                           regalos=regalos_entrega, 
+                           venta=venta_data[0],
+                           regalos=regalos_entrega,
+                           pagos_virtuales=pagos_v,  
                            return_url=return_url)
     
     
@@ -4799,6 +4879,17 @@ def imprimir_venta(venta_id):
     if not venta_data:
         flash("Presupuesto de venta no encontrado.", "danger")
         return redirect(url_for('listar_presupuestos_venta'))
+    
+    # 2. NUEVA CONSULTA: Buscar en qué cuentas virtuales se cobró
+    # Buscamos en caja_movimientos donde la referencia_id sea el ID de la venta
+    pagos_v = db_query("""
+        SELECT metodo_pago, monto_ars, monto_usd 
+        FROM caja_movimientos 
+        WHERE referencia_id = ? 
+        AND tipo LIKE 'INGRESO_VENTA_VIRTUAL%'
+        AND metodo_pago != 'EFECTIVO'
+    """, (venta_id,))
+    
 
     # 2. Consulta de Ítems Promocionales / Regalos (Se entregan sin cargo)
     regalos_entrega = db_query("""
@@ -4820,7 +4911,8 @@ def imprimir_venta(venta_id):
     return render_template('ventas/imprimir.html', 
                            venta=venta_data[0], 
                            regalos=regalos_entrega,
-                           adicionales=adicionales_venta)
+                           adicionales=adicionales_venta,
+                           pagos_virtuales=pagos_v)
     
     
     # =================================================================
@@ -7992,6 +8084,17 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("repuestos_usados", "manual_item_nombre", "TEXT")
         agregar_columna("cobros_clientes", "estado_anticipo", "TEXT DEFAULT 'DISPONIBLE'")
 
+        # Dentro de ejecutar_migraciones_y_configuracion() en app.py
+        # --- MIGRACIONES PARA LA TIENDA ONLINE ---
+        agregar_columna("celulares", "mostrar_en_web", "INTEGER DEFAULT 0")
+        agregar_columna("celulares", "imagen_url", "TEXT")
+        agregar_columna("repuestos", "mostrar_en_web", "INTEGER DEFAULT 0")
+        agregar_columna("repuestos", "imagen_url", "TEXT")
+                
+        
+        
+        
+        
         # ==========================================
         # 3. MIGRACIÓN DEFINITIVA: RECREAR REPUESTOS_USADOS
         # ==========================================

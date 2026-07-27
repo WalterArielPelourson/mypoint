@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>My Point | Premium Tech Store</title>
+    
+    <!-- Bootstrap 5.3 & Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <!-- Google Fonts: Montserrat para títulos impactantes -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-deep: #010409;      /* Fondo base ultra oscuro */
+            --card-surface: #0d1117; /* Superficie de tarjeta (Efecto Carbón) */
+            --accent-cyan: #00f2ff;
+            --accent-blue: #0062ff;
+            --text-main: #ffffff;
+            --text-dim: #b1b1b1;     /* Gris claro para que se lea bien */
+            --wa-green: #25d366;
+        }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: var(--bg-deep); 
+            color: var(--text-main); 
+            overflow-x: hidden;
+        }
+
+        /* --- MALLA DE FONDO ANIMADA --- */
+        .bg-mesh {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: 
+                radial-gradient(at 0% 0%, rgba(0, 98, 255, 0.2) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(0, 242, 255, 0.15) 0px, transparent 50%);
+            z-index: -1;
+        }
+
+        /* --- NAVBAR ESTILO CRISTAL --- */
+        .navbar {
+            background: rgba(1, 4, 9, 0.8) !important;
+            backdrop-filter: blur(15px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 15px 0;
+        }
+        .navbar-brand { 
+            font-family: 'Montserrat', sans-serif; 
+            font-weight: 900; color: white !important;
+        }
+
+        /* --- HERO SECTION --- */
+        .hero-premium {
+            padding: 100px 0 60px;
+            text-align: center;
+        }
+        .hero-title {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 900;
+            font-size: clamp(2.2rem, 7vw, 5rem);
+            line-height: 1;
+            text-transform: uppercase;
+            margin-bottom: 25px;
+            background: linear-gradient(to bottom, #fff 40%, var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .hero-subtitle { 
+            color: var(--text-dim); 
+            font-size: clamp(1rem, 2.5vw, 1.3rem); 
+            max-width: 750px; margin: 0 auto;
+            font-weight: 300;
+        }
+
+        /* --- CARDS DE PRODUCTO (VISIBILIDAD MEJORADA) --- */
+        .product-card {
+            background: var(--card-surface);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 28px;
+            transition: all 0.4s ease;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        .product-card:hover {
+            transform: translateY(-10px);
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 30px rgba(0, 242, 255, 0.15);
+        }
+        .img-wrapper {
+            height: 250px; padding: 25px; display: flex;
+            align-items: center; justify-content: center;
+            background: rgba(255,255,255,0.02);
+            border-radius: 28px 28px 0 0;
+        }
+        .img-wrapper img { max-width: 100%; max-height: 100%; object-fit: contain; filter: drop-shadow(0 5px 15px rgba(0,0,0,0.5)); }
+
+        /* --- TEXTOS DENTRO DE CARDS --- */
+        .card-brand { color: var(--accent-cyan); font-weight: 700; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; }
+        .card-title { font-weight: 800; font-size: 1.25rem; margin-top: 5px; color: #fff; }
+        .card-specs { color: var(--text-dim); font-size: 0.85rem; }
+        
+        /* --- PRECIOS (NEÓN) --- */
+        .price-tag { 
+            font-size: 1.7rem; font-weight: 900; 
+            color: #00ff95; /* Verde neón muy legible */
+            text-shadow: 0 0 15px rgba(0, 255, 149, 0.3);
+        }
+        .price-usd { color: var(--text-dim); font-size: 0.9rem; font-weight: 500; }
+
+        /* --- FILTROS (MOBILE FRIENDLY) --- */
+        .filter-scroll {
+            display: flex; gap: 10px; overflow-x: auto; padding: 20px 0;
+            scrollbar-width: none;
+        }
+        .filter-scroll::-webkit-scrollbar { display: none; }
+        .pill-filter {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #fff; padding: 10px 24px; border-radius: 100px;
+            font-weight: 600; white-space: nowrap; cursor: pointer; transition: 0.3s;
+        }
+        .pill-filter.active { background: #fff; color: #000; border-color: #fff; }
+
+        /* --- EL PLUS (SECCIÓN SERVICIOS) --- */
+        .plus-banner {
+            background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, transparent 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 40px; padding: 40px; margin-top: 50px;
+        }
+        .plus-item i { font-size: 2.5rem; color: var(--accent-cyan); text-shadow: 0 0 20px rgba(0, 242, 255, 0.5); }
+        .plus-item h5 { font-weight: 800; margin-top: 15px; color: #fff; }
+        .plus-item p { color: var(--text-dim); font-size: 0.9rem; }
+
+        /* Botón WhatsApp */
+        .btn-wa-premium {
+            background: var(--wa-green);
+            color: #000; border: none; border-radius: 15px;
+            padding: 12px; font-weight: 800; width: 100%;
+            transition: 0.3s; text-transform: uppercase;
+        }
+        .btn-wa-premium:hover { background: #fff; transform: scale(1.02); }
+
+        .wa-float {
+            position: fixed; bottom: 25px; right: 25px;
+            width: 60px; height: 60px; background: var(--wa-green);
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-size: 30px; color: #000; z-index: 1000;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.4);
+        }
+
+        @media (max-width: 768px) {
+            .hero-premium { padding: 60px 0 40px; }
+            .plus-banner { padding: 30px 15px; margin: 0 10px; }
+            .img-wrapper { height: 180px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="bg-mesh"></div>
+
+    <!-- WhatsApp Flotante -->
+    <a href="https://wa.me/54911XXXXXXXX" class="wa-float" target="_blank">
+        <i class="bi bi-whatsapp"></i>
+    </a>
+
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg sticky-top">
+        <div class="container px-4">
+            <a class="navbar-brand" href="#">MY POINT</a>
+            <a href="{{ url_for('login') }}" class="btn btn-sm btn-outline-light rounded-pill px-3 py-1 opacity-50">Staff</a>
+        </div>
+        
+            
+        <div class="small fw-bold px-3 py-1 rounded-pill" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+            Dólar: ${{ valor_dolar|round(2) }}
+        </div>
+        
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero-premium container">
+        <h1 class="hero-title">Tu próximo nivel<br>Tecnológico</h1>
+        <p class="hero-subtitle">Venta de equipos premium con service certificado y el respaldo de nuestro laboratorio especializado.</p>
+        <div class="mt-5">
+            <a href="#store" class="btn btn-light rounded-pill px-5 py-3 fw-bold shadow-lg">Ver Stock Disponible</a>
+        </div>
+    </section>
+
+    <!-- El Plus del Negocio -->
+    <div class="container mb-5">
+        <div class="plus-banner">
+            <div class="row g-4 text-center">
+                <div class="col-md-4 plus-item">
+                    <i class="bi bi-cpu"></i>
+                    <h5>Micro-Ingeniería</h5>
+                    <p>Reparaciones de alta complejidad en placas que otros dan por perdidas.</p>
+                </div>
+                <div class="col-md-4 plus-item">
+                    <i class="bi bi-shield-check"></i>
+                    <h5>Calidad Certificada</h5>
+                    <p>Cada equipo usado es sometido a un riguroso proceso de certificación técnica.</p>
+                </div>
+                <div class="col-md-4 plus-item">
+                    <i class="bi bi-arrow-repeat"></i>
+                    <h5>Plan Canje</h5>
+                    <p>Tomamos tu equipo actual como parte de pago al mejor valor del mercado.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Store Section -->
+    <main class="container py-5 px-4" id="store">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="fw-bold mb-0" style="letter-spacing: -1px;">STORE</h2>
+            <!--<div class="small fw-bold px-3 py-1 rounded-pill" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                Dólar: ${{ valor_dolar|round(2) }}
+            </div>-->
+        </div>
+
+        <!-- Filtros Dinámicos -->
+        <div class="filter-scroll mb-5">
+            <div class="pill-filter active" onclick="filtrar('all', this)">Todo el Stock</div>
+            {% for m in marcas %}
+                <div class="pill-filter" onclick="filtrar('{{ m.marca|lower }}', this)">{{ m.marca }}</div>
+            {% endfor %}
+            <div class="pill-filter" onclick="filtrar('repuesto', this)">Repuestos</div>
+            <div class="pill-filter" onclick="filtrar('accesorio', this)">Accesorios</div>
+        </div>
+
+        <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-4">
+            
+            {# BUCLE EQUIPOS #}
+            {% for e in equipos %}
+            <div class="col item-tienda" data-cat="{{ e.marca|lower }}">
+                <div class="card product-card">
+                    <div class="img-wrapper">
+                        <img src="{{ e.imagen_url or 'https://via.placeholder.com/500?text=MyPoint' }}" alt="{{ e.modelo }}">
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="card-brand">{{ e.marca }}</div>
+                        <h4 class="card-title">{{ e.modelo }}</h4>
+                        <div class="card-specs mt-2 mb-4">
+                            <i class="bi bi-memory me-1"></i> {{ e.almacenamiento_gb }}GB 
+                            <span class="mx-2">|</span>
+                            <i class="bi bi-palette me-1"></i> {{ e.color }}
+                            <span class="d-block mt-1" style="color: var(--accent-cyan)">Condición: {{ e.condicion }}</span>
+                        </div>
+                        
+                        <div class="mb-4">
+                            {% set p_usd = e.costo_usd * 1.20 %}
+                            <div class="price-tag">$ {{ "{:,.0f}".format(p_usd * valor_dolar) }}</div>
+                            <div class="price-usd">u$d {{ "{:,.2f}".format(p_usd) }}</div>
+                        </div>
+
+                        <a href="https://wa.me/54911XXXXXXXX?text=Hola! Me interesa el {{ e.marca }} {{ e.modelo }}" 
+                           target="_blank" class="btn btn-wa-premium text-decoration-none d-flex align-items-center justify-content-center">
+                            <i class="bi bi-whatsapp me-2"></i>Lo quiero
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+            {# BUCLE ACCESORIOS #}
+            {% for p in productos %}
+            <div class="col item-tienda" data-cat="{{ p.categoria|lower }}">
+                <div class="card product-card">
+                    <div class="img-wrapper">
+                        <img src="{{ p.imagen_url or 'https://via.placeholder.com/500?text=Accesorios' }}" alt="{{ p.nombre_parte }}">
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="card-brand">{{ p.categoria }}</div>
+                        <h4 class="card-title">{{ p.nombre_parte }}</h4>
+                        <p class="card-specs mb-4">{{ p.modelo_compatible }}</p>
+                        
+                        <div class="mb-4">
+                            {% if p.precio_venta_ars > 0 %}
+                                <div class="price-tag">$ {{ "{:,.0f}".format(p.precio_venta_ars) }}</div>
+                            {% else %}
+                                <div class="price-tag">$ {{ "{:,.0f}".format(p.precio_venta_usd * valor_dolar) }}</div>
+                            {% endif %}
+                            <div class="price-usd">u$d {{ "{:,.2f}".format(p.precio_venta_usd) }}</div>
+                        </div>
+
+                        <a href="https://wa.me/54911XXXXXXXX?text=Me interesa el producto: {{ p.nombre_parte }}" 
+                           target="_blank" class="btn btn-wa-premium text-decoration-none d-flex align-items-center justify-content-center">
+                            <i class="bi bi-whatsapp me-2"></i>Consultar
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+        </div>
+    </main>
+
+    <footer class="py-5 text-center border-top border-secondary mt-5" style="background: #000;">
+        <div class="container">
+            <!-- Título en Blanco Puro -->
+            <h3 class="fw-bold mb-4 text-white" style="letter-spacing: 2px;">MY POINT</h3>
+            
+            <!-- Textos en Blanco con opacidad (se ven como un gris claro elegante) -->
+            <p class="small text-white-50 mb-1">© 2024 My Point Premium Experience.</p>
+            <p class="small text-white-50 opacity-75">
+                <i class="bi bi-geo-alt-fill me-1 text-info"></i> Junin, Buenos Aires, Argentina.
+            </p>
+            
+            <!-- Agregamos unos iconos sociales para que no quede tan vacío -->
+            <!-- Agregamos los iconos sociales con colores originales -->
+            <div class="mt-4 d-flex justify-content-center gap-4">
+                <!-- Facebook -->
+                <a href="https://facebook.com/tu-pagina" target="_blank" class="social-link brand-facebook">
+                    <i class="bi bi-facebook"></i>
+                </a>
+
+                <!-- Instagram -->
+                <a href="https://instagram.com/tu-pagina" target="_blank" class="social-link brand-instagram">
+                    <i class="bi bi-instagram"></i>
+                </a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function filtrar(cat, elemento) {
+            document.querySelectorAll('.pill-filter').forEach(btn => btn.classList.remove('active'));
+            elemento.classList.add('active');
+
+            const items = document.querySelectorAll('.item-tienda');
+            items.forEach(item => {
+                if (cat === 'all' || item.getAttribute('data-cat') === cat) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        }
+
+        
+        /* Colores originales de redes sociales */
+        .social-link {
+            transition: transform 0.3s ease, filter 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .social-link:hover {
+            transform: scale(1.2); /* Se agranda un poquito al pasar el mouse */
+            filter: brightness(1.2);
+        }
+
+        .brand-instagram {
+            /* Degradado oficial de Instagram */
+            background: radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%, #d6249f 60%, #285AEB 90%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 2rem; /* Un poco más grande para que se luzca */
+        }
+
+        .brand-facebook {
+            color: #1877F2 !important; /* Azul oficial de Facebook */
+            font-size: 2rem;
+        }    
+
+
+    </script>
+</body>
+</html>

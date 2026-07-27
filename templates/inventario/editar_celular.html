@@ -101,6 +101,28 @@
                     <label for="observaciones" class="form-label">Observaciones:</label>
                     <textarea class="form-control" id="observaciones" name="observaciones" rows="3">{{ request.form.get('observaciones', celular.observaciones) }}</textarea>
                 </div>
+                <!-- CAMPO BATERÍA: Ahora siempre visible y con validación 
+
+                <div class="row g-3 mb-4 p-3 bg-light rounded border border-primary">
+                    <div class="col-md-12">
+                        <h5 class="text-primary"><i class="bi bi-globe me-2"></i>Configuración Tienda Online</h5>
+                    </div>
+                    <div class="col-md-8">
+                        <label for="imagen_url" class="form-label">URL de la Imagen del Producto:</label>
+                        <input type="url" class="form-control" id="imagen_url" name="imagen_url" 
+                            value="{{ celular.imagen_url or '' }}" placeholder="https://ejemplo.com/foto.jpg">
+                        <div class="form-text">Pega aquí el link de la foto (puedes buscarla en Google Imágenes).</div>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-center">
+                        <div class="form-check form-switch mt-3">
+                            <input class="form-check-input" type="checkbox" id="mostrar_en_web" name="mostrar_en_web" 
+                                value="1" {% if celular.mostrar_en_web %}checked{% endif %}>
+                            <label class="form-check-label fw-bold" for="mostrar_en_web">Publicar en la Web</label>
+                        </div>
+                    </div>
+                </div>-->
+
+
                 
                 <div class="col-12 mt-4 d-flex justify-content-end">
                     <a href="{{ url_for('inventario_celulares') }}" class="btn btn-secondary me-2"><i class="bi bi-x-circle me-1"></i>Cancelar</a>

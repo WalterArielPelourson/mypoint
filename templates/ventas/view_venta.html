@@ -108,6 +108,8 @@
                     </tr>
                 </thead>
                 <tbody>
+                    
+                    <!--
                     {% if venta.monto_cobrado_ars > 0 %}
                     <tr>
                         <td><i class="bi bi-cash me-2 text-success"></i>Efectivo (Pesos ARS)</td>
@@ -115,6 +117,7 @@
                     </tr>
                     {% endif %}
 
+                    
                     {% if venta.monto_cobrado_usd > 0 %}
                     <tr>
                         <td><i class="bi bi-currency-dollar me-2 text-success"></i>Efectivo (Dólares USD)</td>
@@ -141,7 +144,29 @@
                         <td><i class="bi bi-credit-card me-2 text-dark"></i>Tarjetas (Débito/Crédito)</td>
                         <td class="text-end">ARS {{ (venta.monto_debito_ars + venta.monto_credito_ars)|round(2) }}</td>
                     </tr>
+                    {% endif %}-->
+
+                    {# --- EFECTIVO --- #}
+                    {% if venta.monto_cobrado_ars > 0 %}
+                        <p class="mb-1">💰 <strong>Efectivo (ARS):</strong> $ {{ "{:,.2f}".format(venta.monto_cobrado_ars) }}</p>
                     {% endif %}
+                    {% if venta.monto_cobrado_usd > 0 %}
+                        <p class="mb-1">💵 <strong>Efectivo (USD):</strong> u$d {{ "{:,.2f}".format(venta.monto_cobrado_usd) }}</p>
+                    {% endif %}
+
+                    {# --- CUENTAS VIRTUALES DINÁMICAS --- #}
+                    {% if pagos_virtuales %}
+                        {% for pago in pagos_virtuales %}
+                            <p class="mb-1">
+                                💳 <strong>{{ pago.metodo_pago }}:</strong> 
+                                {% if pago.monto_ars > 0 %} $ {{ "{:,.2f}".format(pago.monto_ars) }} {% endif %}
+                                {% if pago.monto_usd > 0 %} u$d {{ "{:,.2f}".format(pago.monto_usd) }} {% endif %}
+                            </p>
+                        {% endfor %}
+                    {% endif %}
+
+
+
 
                     {% if venta.valor_celular_parte_pago > 0 %}
                     <tr>

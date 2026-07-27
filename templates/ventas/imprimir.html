@@ -190,7 +190,7 @@
                 </thead>
                 <tbody>
                     {% set cotiz = venta.valor_dolar_momento if venta.valor_dolar_momento > 0 else 1 %}
-                    
+                    <!--
                     {% if venta.monto_cobrado_usd and venta.monto_cobrado_usd > 0 %}
                     <tr><td>Efectivo (USD Billete)</td><td class="text-end">u$d {{ "{:,.2f}".format(venta.monto_cobrado_usd) }}</td><td class="text-end">-</td></tr>
                     {% endif %}
@@ -205,7 +205,49 @@
                     
                     {% if venta.monto_transferencia_ars and venta.monto_transferencia_ars > 0 %}
                     <tr><td>Transferencia / Digital (ARS)</td><td class="text-end">u$d {{ "{:,.2f}".format(venta.monto_transferencia_ars / cotiz) }}</td><td class="text-end">${{ "{:,.2f}".format(venta.monto_transferencia_ars) }}</td></tr>
+                    {% endif %}-->
+
+                    {# --- EFECTIVO EN DÓLARES --- #}
+                    {% if venta.monto_cobrado_usd and venta.monto_cobrado_usd > 0 %}
+                    <tr>
+                        <td>Efectivo (USD Billete)</td>
+                        <td class="text-end">u$d {{ "{:,.2f}".format(venta.monto_cobrado_usd) }}</td>
+                        <td class="text-end">-</td>
+                    </tr>
                     {% endif %}
+
+                    {# --- EFECTIVO EN PESOS --- #}
+                    {% if venta.monto_cobrado_ars and venta.monto_cobrado_ars > 0 %}
+                    <tr>
+                        <td>Efectivo (ARS)</td>
+                        <td class="text-end">u$d {{ "{:,.2f}".format(venta.monto_cobrado_ars / cotiz) }}</td>
+                        <td class="text-end">${{ "{:,.2f}".format(venta.monto_cobrado_ars) }}</td>
+                    </tr>
+                    {% endif %}
+
+                    {# --- COBROS POR CUENTAS VIRTUALES (DINÁMICO) --- #}
+                    {% if pagos_virtuales %}
+                        {% for pago in pagos_virtuales %}
+                        <tr>
+                            <td>{{ pago.metodo_pago }} {# Aquí saldrá 'MERCADO PAGO', 'BANCO', etc. #}</td>
+                            <td class="text-end">
+                                {% if pago.monto_usd > 0 %}
+                                    u$d {{ "{:,.2f}".format(pago.monto_usd) }}
+                                {% else %}
+                                    u$d {{ "{:,.2f}".format(pago.monto_ars / cotiz) }}
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if pago.monto_ars > 0 %}
+                                    ${{ "{:,.2f}".format(pago.monto_ars) }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% endif %}
+
                     
                     {% if venta.valor_celular_parte_pago and venta.valor_celular_parte_pago > 0 %}
                     <tr style="background-color: #f0f7ff;">

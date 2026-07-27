@@ -88,7 +88,7 @@
                 <div class="card-body">
                     <div style="max-height: 100px; overflow-y: auto;">
                         {% for rg in resumen_gastos %}
-                            {% if rg.clase not in ['Aportes Socios', 'Retiros Socios'] %}
+                            {% if rg.clase not in ['Aportes Socios', 'Retiros Socios', 'Cambio de Divisas', 'Otros' ] %}
                                 {% set ns.t_g_caja = ns.t_g_caja + (rg.total or 0) %}
                                 <div class="d-flex justify-content-between x-small mb-1">
                                     <span class="text-muted">{{ rg.clase or 'Otros' }}:</span>
