@@ -5473,24 +5473,14 @@ def reporte_rentabilidad():
     dolar_info = inject_dolar_values()
     dolar_c = dolar_info['valor_dolar_compra'] or 1.0
 
-    # --- 1. RESUMEN EQUIPOS (RECONSTRUCCIÓN DEL INGRESO NETO REAL) ---
-    # Ignoramos el precio_final_ars sucio y reconstruimos: Costo + Ganancia Original + Accesorios
+    # --- 1. RESUMEN EQUIPOS (Lógica de Precio Real Vendido para detectar pérdidas) ---
+    # Usamos el precio_final_ars real de la venta y le descontamos el recargo financiero (impuestos_pct)
     resumen_equipos = db_query("""
         SELECT 
             COALESCE(comp.tipo_item, 'CELULAR') as clase,
-            -- RECONSTRUCCIÓN: (Costo en ARS) + (Margen original ARS o USD) + (Accesorios adicionales)
-            COALESCE(SUM(
-                (c.costo_usd * v.valor_dolar_momento) + 
-                CASE 
-                    WHEN v.ganancia_pct > 0 THEN (c.costo_usd * v.valor_dolar_momento * v.ganancia_pct / 100.0)
-                    WHEN v.monto_agregado_ars > 0 THEN v.monto_agregado_ars
-                    WHEN v.monto_agregado_usd > 0 THEN (v.monto_agregado_usd * v.valor_dolar_momento)
-                    ELSE 0
-                END +
-                COALESCE((SELECT SUM(cantidad * precio_vendido_usd * v.valor_dolar_momento) 
-                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
-            ), 0) as total_venta, 
-            -- COSTO REAL
+            -- VENTA REAL NETA: Precio final cobrado dividido por el recargo de tarjeta
+            COALESCE(SUM(v.precio_final_ars / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))), 0) as total_venta, 
+            -- COSTO REAL: Lo que figura en la ficha del equipo
             COALESCE(SUM(c.costo_usd * v.valor_dolar_momento), 0) as total_costo
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id
@@ -5541,17 +5531,14 @@ def reporte_rentabilidad():
         GROUP BY sub_categoria
     """, (dolar_c, start_date, end_date_query))
 
-    # --- 4b. EGRESOS VIRTUALES (FILTRO DE AJUSTES Y COMPRA DE DÓLARES) ---
-    ### CAMBIO AQUÍ: Filtro expandido para excluir compra de divisas y ajustes ###
+    # --- 4b. EGRESOS VIRTUALES (CON TODOS TUS FILTROS PERSONALIZADOS) ---
     egr_virtuales_man = db_query("""
         SELECT metodo_pago as cuenta,
                COALESCE(SUM(monto_ars + (monto_usd * ?)), 0) as total
         FROM caja_movimientos
         WHERE (tipo LIKE 'EGRESO_MANUAL%' OR tipo = 'EGRESO_VIRTUAL')
           AND metodo_pago != 'EFECTIVO'
-          -- Excluir Ajustes
           AND LOWER(descripcion) NOT LIKE '%ajus%' 
-          -- Excluir Compra de Dólares (Cubre: compra usd, compra de usd, compra dolar, compra dolares)
           AND LOWER(descripcion) NOT LIKE '%compra%'
           AND LOWER(descripcion) NOT LIKE '%compr%'
           AND LOWER(descripcion) NOT LIKE '%comp%'
@@ -5567,30 +5554,14 @@ def reporte_rentabilidad():
           AND LOWER(descripcion) NOT LIKE '%vic%'
           AND LOWER(descripcion) NOT LIKE '%confun%'
           AND LOWER(descripcion) NOT LIKE '%erro%'
-          -- 3. Excluir Pagos a Proveedores (Para no duplicar el costo de mercadería)
           AND LOWER(descripcion) NOT LIKE '%prov%'
           AND tipo NOT LIKE '%PROVEEDOR%'
-          -- 3. Excluir Venta de Dólares (varias formas)
           AND LOWER(descripcion) NOT LIKE '%venta%usd%'
           AND LOWER(descripcion) NOT LIKE '%venta%dolar%'
-          -- 4. Excluir movimientos de socios si se hicieron por cuenta virtual
           AND (sub_categoria IS NULL OR sub_categoria NOT IN ('Aportes Socios', 'Retiros Socios'))
-          
           AND fecha BETWEEN ? AND ?
         GROUP BY metodo_pago
     """, (dolar_c, start_date, end_date_query))
-    
-    
-    # --- 4b. EGRESOS VIRTUALES ---
-    #egr_virtuales_man = db_query("""
-    #    SELECT metodo_pago as cuenta,
-    #           COALESCE(SUM(monto_ars + (monto_usd * ?)), 0) as total
-    #    FROM caja_movimientos
-    #    WHERE tipo = 'EGRESO_VIRTUAL'
-    #      AND metodo_pago != 'EFECTIVO'
-    #      AND fecha BETWEEN ? AND ?
-    #    GROUP BY metodo_pago
-    #""", (dolar_c, start_date, end_date_query))
 
     # --- 5. FLUJO DE CUENTAS ---
     cuentas = db_query("SELECT nombre FROM cuentas_entidades WHERE activo = 1")
@@ -5614,22 +5585,14 @@ def reporte_rentabilidad():
             'ing_usd': res['ing_usd'], 'egr_usd': res['egr_usd']
         })
 
-    # --- 6. DETALLE DE VENTAS (RECONSTRUIDO FILA POR FILA) ---
+    # --- 6. DETALLE DE VENTAS (MODIFICADO: Muestra el precio neto cobrado real) ---
     ventas_detalle = db_query("""
         SELECT v.fecha_venta, c.marca, c.modelo, c.imei, 
-               -- Reconstruimos el precio neto para que el margen sea el real negociado
-               ((c.costo_usd * v.valor_dolar_momento) + 
-                CASE 
-                    WHEN v.ganancia_pct > 0 THEN (c.costo_usd * v.valor_dolar_momento * v.ganancia_pct / 100.0)
-                    WHEN v.monto_agregado_ars > 0 THEN v.monto_agregado_ars
-                    WHEN v.monto_agregado_usd > 0 THEN (v.monto_agregado_usd * v.valor_dolar_momento)
-                    ELSE 0
-                END +
-                COALESCE((SELECT SUM(cantidad * precio_vendido_usd * v.valor_dolar_momento) 
-                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
-               ) as precio_final_ars, 
+               -- Limpiamos el precio final de los recargos de tarjeta para que el margen sea real
+               (v.precio_final_ars / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) as precio_final_ars, 
                COALESCE(c.costo_usd * v.valor_dolar_momento, 0) as costo_ars
-        FROM ventas v JOIN celulares c ON v.celular_id = c.id 
+        FROM ventas v 
+        JOIN celulares c ON v.celular_id = c.id 
         WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
     """, (start_date, end_date_query))
 
@@ -5659,7 +5622,6 @@ def reporte_rentabilidad():
                            ventas_detalle=ventas_detalle,
                            insumos_detalle=insumos_detalle,
                            start_date=start_date, end_date=end_date_display)
-
     
 #@app.route('/reportes/detalle_ventas_rentabilidad')
 #@login_required
@@ -5689,35 +5651,27 @@ def reporte_rentabilidad():
 def detalle_ventas_rentabilidad():
     start_date, end_date_display, end_date_query = get_date_filters()
     
-    # RECONSTRUCCIÓN COMPLETA EN DÓLARES (USD)
-    # Reconstruimos el precio neto sumando las partes originales del presupuesto
+    # LÓGICA DE PRECIO REAL NETO (USD)
+    # Usamos el precio_final_usd guardado al cobrar y le descontamos el recargo de tarjeta
+    # para obtener el ingreso real del local y compararlo contra el costo.
     query = """
-        SELECT v.id, v.fecha_venta, c.marca, c.modelo, c.imei, 
-               -- 1. RECONSTRUCCIÓN PRECIO DE VENTA NETO (USD)
-               (COALESCE(c.costo_usd, 0) + 
-                CASE 
-                    WHEN v.ganancia_pct > 0 THEN (COALESCE(c.costo_usd, 0) * v.ganancia_pct / 100.0)
-                    WHEN v.monto_agregado_ars > 0 THEN (v.monto_agregado_ars / v.valor_dolar_momento)
-                    WHEN v.monto_agregado_usd > 0 THEN v.monto_agregado_usd
-                    ELSE 0
-                END +
-                COALESCE((SELECT SUM(cantidad * precio_vendido_usd) 
-                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
-               ) as precio_final_usd, 
-               
-               COALESCE(c.costo_usd, 0) as costo_usd,
-               
-               -- 2. MARGEN REAL (Precio Neto Reconstruido - Costo)
-               ((COALESCE(c.costo_usd, 0) + 
-                CASE 
-                    WHEN v.ganancia_pct > 0 THEN (COALESCE(c.costo_usd, 0) * v.ganancia_pct / 100.0)
-                    WHEN v.monto_agregado_ars > 0 THEN (v.monto_agregado_ars / v.valor_dolar_momento)
-                    WHEN v.monto_agregado_usd > 0 THEN v.monto_agregado_usd
-                    ELSE 0
-                END +
-                COALESCE((SELECT SUM(cantidad * precio_vendido_usd) 
-                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
-               ) - COALESCE(c.costo_usd, 0)) as margen_usd
+        SELECT 
+            v.id, 
+            v.fecha_venta, 
+            c.marca, 
+            c.modelo, 
+            c.imei, 
+            
+            -- 1. PRECIO DE VENTA NETO REAL (USD)
+            -- Tomamos lo que pagó el cliente y le quitamos el recargo financiero (impuestos_pct)
+            (v.precio_final_usd / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) as precio_final_usd, 
+            
+            -- 2. COSTO DEL EQUIPO (USD)
+            COALESCE(c.costo_usd, 0) as costo_usd,
+            
+            -- 3. MARGEN REAL (Precio Neto Real - Costo)
+            -- Si este resultado es negativo, significa que hubo pérdida en la venta
+            ((v.precio_final_usd / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) - COALESCE(c.costo_usd, 0)) as margen_usd
 
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id 
@@ -5729,7 +5683,6 @@ def detalle_ventas_rentabilidad():
 
     return render_template('reportes/detalle_ventas.html', 
                            ventas=ventas, start_date=start_date, end_date=end_date_display)
-    
     
 
 @app.route('/exportar/detalle_ventas_usd')
