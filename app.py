@@ -3848,116 +3848,135 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
 @login_required
 @tecnico_required
 def listar_presupuestos_reparacion():
-    # 1. Capturamos los filtros de la URL
     filtro_cliente = request.args.get('cliente', '').strip()
     filtro_imei = request.args.get('imei', '').strip()
-    filtro_tecnico = request.args.get('tecnico', '').strip() # NUEVO
+    filtro_tecnico = request.args.get('tecnico', '').strip()
     filtro_tipo_servicio = request.args.get('tipo_servicio', '')
+    filtro_prov_ext = request.args.get('prov_ext', '').strip() # NUEVO
 
-    # 2. Obtenemos la lista de técnicos para el desplegable
     tecnicos_db = db_query("SELECT DISTINCT tecnico_nombre FROM servicios_reparacion WHERE tecnico_nombre IS NOT NULL ORDER BY tecnico_nombre ASC")
 
-    # 3. Base de la consulta
+    # CONSULTA CON JOIN PARA TRAER EL PROVEEDOR EXTERNO
     query = """
-        SELECT s.*, p.nombre, p.apellido, p.razon_social, p.cuit_cuil 
+        SELECT s.*, p.nombre, p.apellido, p.razon_social,
+               prov.razon_social as prov_externo_social, 
+               prov.nombre as prov_externo_nom, 
+               prov.apellido as prov_externo_ape
         FROM servicios_reparacion s 
         JOIN personas p ON s.cliente_id = p.id 
+        LEFT JOIN personas prov ON s.externo_proveedor_id = prov.id 
         WHERE s.status = 'PRESUPUESTO'
     """
+    # Esta es la variable que faltaba
+    prov_externos_db = db_query("""
+        SELECT DISTINCT p.id, p.nombre, p.apellido, p.razon_social
+        FROM personas p
+        JOIN servicios_reparacion s ON p.id = s.externo_proveedor_id
+        WHERE s.es_terciarizada = 1
+        ORDER BY p.razon_social, p.nombre ASC
+    """)
+
     params = []
 
-    # 4. Aplicar Filtros
     if filtro_cliente and filtro_cliente.isdigit():
         query += " AND p.id = ?"
         params.append(int(filtro_cliente))
+    elif filtro_cliente:
+        query += " AND (p.nombre LIKE ? OR p.apellido LIKE ? OR p.razon_social LIKE ?)"
+        term = f"%{filtro_cliente}%"
+        params.extend([term, term, term])
 
     if filtro_imei:
         query += " AND s.imei_equipo LIKE ?"
         params.append(f"%{filtro_imei}%")
 
-    if filtro_tecnico: # FILTRO DE TÉCNICO
+    if filtro_tecnico:
         query += " AND s.tecnico_nombre = ?"
         params.append(filtro_tecnico)
 
     if filtro_tipo_servicio:
         query += " AND s.tipo_servicio = ?"
         params.append(filtro_tipo_servicio)
+        
+    if filtro_prov_ext:
+        query += " AND s.externo_proveedor_id = ?"
+        params.append(filtro_prov_ext)
 
     query += " ORDER BY s.fecha_servicio DESC"
-    
     presupuestos = db_query(query, tuple(params))
     
-    # 5. Enviamos todo al HTML
     return render_template('presupuestos/listar_reparaciones.html', 
                            presupuestos=presupuestos,
-                           tecnicos=tecnicos_db, # Enviamos la lista para el select
-                           filtros_activos={
-                               'cliente': filtro_cliente, 
-                               'imei': filtro_imei, 
-                               'tecnico': filtro_tecnico, 
-                               'tipo_servicio': filtro_tipo_servicio
-                           })
+                           tecnicos=tecnicos_db,
+                           prov_externos=prov_externos_db,
+                           filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tecnico': filtro_tecnico, 'tipo_servicio': filtro_tipo_servicio, 'prov_ext': filtro_prov_ext})
+    
+    
+    
 @app.route('/servicio_tecnico/reparaciones/historial')
 @login_required
 @tecnico_required
 def listar_reparaciones_completadas():
     start_date, end_date_display, end_date_query = get_date_filters()
-    
-    # Capturamos los filtros desde la URL
     filtro_cliente = request.args.get('cliente', '').strip()
     filtro_imei = request.args.get('imei', '').strip()
     filtro_tecnico = request.args.get('tecnico', '').strip()
     filtro_tipo_servicio = request.args.get('tipo_servicio', '')
+    filtro_prov_ext = request.args.get('prov_ext', '').strip() # <--- DEFINIDA
 
-    # Base de la consulta
+    tecnicos_db = db_query("SELECT DISTINCT tecnico_nombre FROM servicios_reparacion WHERE tecnico_nombre IS NOT NULL ORDER BY tecnico_nombre ASC")
+
     query = """
-        SELECT s.*, p.nombre, p.apellido, p.razon_social 
+        SELECT s.*, p.nombre, p.apellido, p.razon_social,
+               prov.razon_social as prov_externo_social, 
+               prov.nombre as prov_externo_nom, 
+               prov.apellido as prov_externo_ape
         FROM servicios_reparacion s 
         JOIN personas p ON s.cliente_id = p.id 
+        LEFT JOIN personas prov ON s.externo_proveedor_id = prov.id 
         WHERE s.status = 'COMPLETADO' AND s.fecha_servicio BETWEEN ? AND ?
     """
+    prov_externos_db = db_query("""
+        SELECT DISTINCT p.id, p.nombre, p.apellido, p.razon_social
+        FROM personas p
+        JOIN servicios_reparacion s ON p.id = s.externo_proveedor_id
+        WHERE s.es_terciarizada = 1
+        ORDER BY p.razon_social, p.nombre ASC
+    """)
     params = [start_date, end_date_query]
 
-    # Obtenemos la lista de técnicos únicos que ya tienen trabajos registrados
-    tecnicos_db = db_query("SELECT DISTINCT tecnico_nombre FROM servicios_reparacion WHERE tecnico_nombre IS NOT NULL ORDER BY tecnico_nombre ASC")
-    
-    # Filtro por ID de Cliente (Select2)
     if filtro_cliente and filtro_cliente.isdigit():
         query += " AND p.id = ?"
         params.append(int(filtro_cliente))
-        
-    # Filtro por IMEI
+
     if filtro_imei:
         query += " AND s.imei_equipo LIKE ?"
         params.append(f"%{filtro_imei}%")
-        
-    # Filtro por Técnico (Exacto para el desplegable)
+
     if filtro_tecnico:
         query += " AND s.tecnico_nombre = ?"
         params.append(filtro_tecnico)
-            
-    # Filtro por Tipo de Servicio
+
     if filtro_tipo_servicio:
         query += " AND s.tipo_servicio = ?"
         params.append(filtro_tipo_servicio)
+        
+    # 3. Aplicamos el filtro al SQL principal
+    if filtro_prov_ext:
+        query += " AND s.externo_proveedor_id = ?"
+        params.append(filtro_prov_ext)
 
     query += " ORDER BY s.fecha_servicio DESC"
     reparaciones = db_query(query, tuple(params))
     
-    # Enviamos 'tecnicos=tecnicos_db' para llenar el <select> en el HTML
     return render_template('servicio_tecnico/reparaciones.html', 
                            reparaciones=reparaciones, 
-                           tecnicos=tecnicos_db, # <--- Agregado para el punto 1
+                           tecnicos=tecnicos_db,
+                           prov_externos=prov_externos_db,
                            titulo="Historial de Servicios Completados", 
                            start_date=start_date, 
                            end_date=end_date_display,
-                           filtros_activos={
-                               'cliente': filtro_cliente, 
-                               'imei': filtro_imei, 
-                               'tecnico': filtro_tecnico, 
-                               'tipo_servicio': filtro_tipo_servicio
-                           })    
-    
+                           filtros_activos={'cliente': filtro_cliente, 'imei': filtro_imei, 'tecnico': filtro_tecnico, 'tipo_servicio': filtro_tipo_servicio, 'prov_ext': filtro_prov_ext})
     
 @app.route('/servicio_tecnico/reparacion/<int:servicio_id>')
 @login_required

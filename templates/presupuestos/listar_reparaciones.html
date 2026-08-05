@@ -78,6 +78,18 @@
                     </select>
                 </div>
 
+                <div class="col-md-3">
+                    <label for="prov_ext" class="form-label fw-bold">Reparador Externo:</label>
+                    <select class="form-select border-danger" id="prov_ext" name="prov_ext">
+                        <option value="">-- Todos los laboratorios --</option>
+                        {% for p in prov_externos %}
+                            <option value="{{ p.id }}" {% if filtros_activos.prov_ext|string == p.id|string %}selected{% endif %}>
+                                {{ p.razon_social or (p.nombre + ' ' + p.apellido) }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text" style="font-size: 0.7rem;">Muestra solo trabajos enviados a este taller.</div>
+                </div>
 
                 <div class="col-md-3">
                     <label for="tipo_servicio" class="form-label fw-bold">Tipo de Servicio:</label>
@@ -137,9 +149,23 @@
                     <!-- 3. CLIENTE -->
                     <td>{{ pres.razon_social or (pres.nombre + ' ' + pres.apellido) }}</td>
                     
-                    <!-- 4. TIPO -->
-                    <td class="small">{{ pres.tipo_servicio }}</td>
-                    
+                    <!-- 4. TIPO 
+                    <td class="small">{{ pres.tipo_servicio }}</td>-->
+                    <td class="small">
+                        {{ pres.tipo_servicio }}<br>
+                        {% if pres.es_terciarizada == 1 %}
+                            <span class="badge bg-outline-danger text-danger border border-danger" style="font-size: 0.7rem;">
+                                <i class="bi bi-external-link"></i> TERCIARIZADA
+                            </span>
+                            <div class="small fw-bold text-uppercase mt-1" style="font-size: 0.7rem;">
+                                LAB: {{ pres.prov_externo_social or (pres.prov_externo_nom + ' ' + pres.prov_externo_ape) }}
+                            </div>
+                        {% else %}
+                            <span class="badge bg-outline-primary text-primary border border-primary" style="font-size: 0.7rem;">
+                                <i class="bi bi-house-door"></i> INTERNA
+                            </span>
+                        {% endif %}
+                    </td>
                     <!-- 5. EQUIPO (Agrupamos Modelo, IMEI y PIN) -->
                     <td>
                         <div class="fw-bold text-primary">{{ pres.modelo_equipo or 'Sin Modelo' }}</div>
