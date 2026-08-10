@@ -7786,12 +7786,37 @@ def ajuste_stock_equipos():
 
             db_conn = get_db()
             try:
-                # Verificación de IMEI Duplicado
-                existe = db_query("SELECT id FROM celulares WHERE imei = ?", (imei,))
+                # --- CAMBIO APLICADO: VERIFICACIÓN INTELIGENTE DE STOCK ---
+                # Buscamos el ID y el STOCK actual de ese IMEI
+                existe = db_query("SELECT id, stock FROM celulares WHERE imei = ?", (imei,))
+                
                 if existe:
-                    flash(f"Error: El IMEI/SN {imei} ya está registrado en el sistema.", "danger")
+                    item_id = existe[0]['id']
+                    stock_actual = existe[0]['stock']
+
+                    if stock_actual == 1:
+                        # Si ya está en stock, no permitimos duplicarlo
+                        flash(f"Error: El IMEI/SN {imei} ya está disponible en el stock actual.", "danger")
+                    else:
+                        # SI EXISTE PERO TIENE STOCK 0: Lo reactivamos (UPDATE)
+                        db_execute("""
+                            UPDATE celulares 
+                            SET marca=?, modelo=?, condicion=?, almacenamiento_gb=?, ram_gb=?, 
+                                color=?, bateria_salud=?, costo_usd=?, stock=1, 
+                                observaciones=?, es_parte_pago=0 
+                            WHERE id=?""",
+                            (marca, modelo, condicion, almacenamiento, ram, color, 
+                             bateria, costo_usd, f"REINGRESO POR AJUSTE: {observaciones_final}", item_id))
+                        
+                        registrar_movimiento(current_user.id, 'AJUSTE_REINGRESO', 'CELULAR', item_id, {
+                            'tipo': tipo_item,
+                            'imei': imei,
+                            'motivo': 'Reactivación de equipo con stock 0'
+                        })
+                        flash(f"Equipo {marca} {modelo} (IMEI: {imei}) reactivado exitosamente.", "success")
+                
                 else:
-                    # Inserción en la tabla celulares
+                    # SI EL IMEI NO EXISTE: Inserción normal
                     cel_id = db_execute("""
                         INSERT INTO celulares 
                         (marca, modelo, imei, condicion, almacenamiento_gb, ram_gb, color, bateria_salud, costo_usd, stock, observaciones, es_parte_pago) 
@@ -7807,7 +7832,9 @@ def ajuste_stock_equipos():
                         'costo': costo_usd
                     })
                     flash(f"Carga Inicial Exitosa: {marca} {modelo} ({condicion}).", "success")
+            
             except Exception as e:
+                app.logger.error(f"Error en ajuste carga inicial: {e}")
                 flash(f"Error: {e}", "danger")
 
         elif accion == 'DESCUENTO_DIFERENCIA':
