@@ -1012,6 +1012,7 @@ def eliminar_persona(persona_id):
 # =================================================================
 @app.route('/inventario/celulares')
 @login_required
+@tecnico_required
 def inventario_celulares():
     # Solo muestra celulares con stock > 0 para simplificar la vista de "disponibles"
     lista_celulares = db_query("SELECT * FROM celulares WHERE stock > 0 ORDER BY marca, modelo, condicion")
@@ -3569,7 +3570,7 @@ def cotizar_venta(celular_id):
             impuestos_pct = float(request.form.get('impuestos_pct', 0) or 0)
             tipo_base_impuesto = request.form.get('tipo_base_impuesto', 'TOTAL') # 'TOTAL' o 'PARCIAL'
             base_imponible_especifica_ars = float(request.form.get('base_imponible_impuesto_ars', 0) or 0)
-
+            base_imponible_especifica_usd = float(request.form.get('base_imponible_impuesto_usd', 0) or 0)
             precio_base_en_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
 
             if impuestos_pct > 0:

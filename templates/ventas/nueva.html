@@ -248,17 +248,17 @@
                                 <label class="form-label small text-muted mb-1">Base de Aplicación:</label>
                                 <select name="tipo_base_impuesto" id="tipo_base_impuesto" class="form-select" onchange="toggleBaseImpuesto()">
                                     <option value="TOTAL" selected>Aplicar sobre Total del Presupuesto</option>
-                                    <option value="PARCIAL">Aplicar sobre Monto Específico (ARS)</option>
+                                    <option value="PARCIAL">Aplicar sobre Monto Específico (USD)</option>
                                 </select>
                             </div>
                             <div class="col-md-5" id="grupo_base_especifica" style="display: none;">
-                                <label class="form-label small text-muted mb-1">Monto Base Imponible (ARS):</label>
+                                <label class="form-label small text-muted mb-1">Monto Base Imponible (USD):</label>
                                 <div class="input-group">
-                                    <span class="input-group-text bg-warning text-dark fw-bold">$</span>
+                                    <span class="input-group-text bg-warning text-dark fw-bold">USD</span>
                                     <input type="number" step="0.01" min="0" class="form-control border-warning fw-bold" 
-                                           name="base_imponible_impuesto_ars" id="base_imponible_impuesto_ars" placeholder="Ej: 400000.00">
+                                           name="base_imponible_impuesto_usd" id="base_imponible_impuesto_usd" placeholder="Ej: 400000.00">
                                 </div>
-                                <small class="text-muted d-block" style="font-size: 0.75rem;">El % se calculará únicamente sobre este importe en pesos.</small>
+                                <small class="text-muted d-block" style="font-size: 0.75rem;">El % se calculará únicamente sobre este importe en USD.</small>
                             </div>
                         </div>
                     </div>
@@ -383,33 +383,36 @@
             totalAcumuladoUsd = ($('#monto_agregado_moneda').val() === 'USD') ? costoUsdCelular + monto : costoUsdCelular + (cotizacion > 0 ? monto / cotizacion : 0);
         }
 
+        // Sumar accesorios vendidos
         $('.renglon-adicional').each(function() {
             totalAcumuladoUsd += (parseFloat($(this).find('.input-cantidad-adicional').val()) || 0) * (parseFloat($(this).find('.input-precio-adicional').val()) || 0);
         });
 
         $('#subtotal_usd_display').val('USD ' + totalAcumuladoUsd.toFixed(2));
 
-        // --- CÁLCULO DE PRECIO FINAL ARS (TOTAL VS PARCIAL) ---
-        const baseArsSinTax = totalAcumuladoUsd * cotizacion;
+        // --- CÁLCULO DE IMPUESTOS / RECARGOS NATIVO EN DÓLARES (USD) ---
         const taxPct = parseFloat($('#impuestos_pct').val()) || 0;
         const tipoBaseTax = $('#tipo_base_impuesto').val();
-        const baseManualArs = parseFloat($('#base_imponible_impuesto_ars').val()) || 0;
+        const baseManualUsd = parseFloat($('#base_imponible_impuesto_usd').val()) || 0;
 
-        let finalArs = baseArsSinTax;
+        let finalUsd = totalAcumuladoUsd;
 
         if (taxPct > 0) {
-            if (tipoBaseTax === 'PARCIAL' && baseManualArs > 0) {
-                // El porcentaje se aplica ÚNICAMENTE al monto en pesos indicado
-                const montoTaxArs = baseManualArs * (taxPct / 100.0);
-                finalArs = baseArsSinTax + montoTaxArs;
+            if (tipoBaseTax === 'PARCIAL' && baseManualUsd > 0) {
+                // Se calcula en DÓLARES sobre el monto específico en dólares
+                const montoTaxUsd = baseManualUsd * (taxPct / 100.0);
+                finalUsd = totalAcumuladoUsd + montoTaxUsd;
             } else {
-                // Se aplica a todo el total como siempre
-                finalArs = baseArsSinTax * (1 + taxPct / 100.0);
+                // Se aplica a todo el total en dólares
+                finalUsd = totalAcumuladoUsd * (1 + taxPct / 100.0);
             }
         }
         
-        $('#precio_final_ars_display').val('ARS ' + finalArs.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
-        $('#precio_final_usd_display').val('USD ' + (cotizacion > 0 ? finalArs / cotizacion : 0).toFixed(2));
+        // Conversión limpia a Pesos
+        const finalArs = finalUsd * cotizacion;
+
+        $('#precio_final_usd_display').val('USD ' + finalUsd.toFixed(2));
+        $('#precio_final_ars_display').val('ARS ' + finalArs.toLocaleString('es-AR', {minimumFractionDigits: 2}));
     }
 
     $(document).ready(function() {
