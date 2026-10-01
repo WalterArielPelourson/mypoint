@@ -1,12 +1,15 @@
 {% extends 'layout.html' %}
 
-{% block title %}Registrar Cobro Aplicado - {{ super() }}{% endblock %}
+{% block title %}Registrar Cobro Múltiple - {{ super() }}{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h1 class="mb-0"><i class="bi bi-cash-coin me-2 text-success"></i>Registrar Cobro Aplicado</h1>
-    <a href="{{ url_for('listar_clientes_cc') }}" class="btn btn-outline-secondary">
-        <i class="bi bi-arrow-left me-1"></i>Volver
+    <div>
+        <h2 class="mb-0"><i class="bi bi-wallet2 me-2 text-success"></i>Registrar Cobro Múltiple Aplicado</h2>
+        <p class="text-muted mb-0">Cliente: <strong>{{ cliente.razon_social or (cliente.nombre + ' ' + cliente.apellido) }}</strong> | CUIT: {{ cliente.cuit_cuil }}</p>
+    </div>
+    <a href="{{ url_for('ver_detalle_cc_cliente', cliente_id=cliente.id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Volver a Cuenta Corriente
     </a>
 </div>
 
@@ -23,7 +26,7 @@
                 </label>
 
                 <input type="radio" class="btn-check" name="imputacion" id="imp_servicios" value="SERVICIOS" 
-                       {% if imputacion == 'SERVICIOS' %}checked{% endif %} onchange="this.form.submit()">
+                       {% if imputacion == 'SERVICIOS' or imputacion == 'REPARACIONES' %}checked{% endif %} onchange="this.form.submit()">
                 <label class="btn btn-outline-primary py-2 fw-bold" for="imp_servicios">
                     <i class="bi bi-tools me-2"></i>SERVICIOS / REPARACIONES ($)
                 </label>
@@ -35,29 +38,32 @@
 <form method="POST" id="main_form_cobro">
     <input type="hidden" name="imputacion" value="{{ imputacion }}">
     
-    <div class="row">
-        <!-- Panel Izquierdo: Selección de comprobantes -->
-        <div class="col-md-7">
-            <div class="card shadow-sm mb-4 border-0">
-                <div class="card-header {% if imputacion == 'EQUIPOS' %}bg-primary{% else %}bg-info{% endif %} text-white py-3">
+    <div class="row g-4">
+        <!-- PANEL IZQUIERDO: DETALLE DE DEUDA A CANCELAR -->
+        <div class="col-lg-6">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header {% if imputacion == 'EQUIPOS' %}bg-primary{% else %}bg-info{% endif %} text-white py-3 d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">
                         <i class="bi bi-list-check me-2"></i>
-                        {{ 'Deuda de Equipos (Dólares)' if imputacion == 'EQUIPOS' else 'Deuda de Servicios (Pesos)' }}
+                        {{ 'Comprobantes de Equipos (USD)' if imputacion == 'EQUIPOS' else 'Comprobantes de Servicios (ARS)' }}
                     </h5>
+                    <span class="badge bg-light text-dark">
+                        Total Deuda: {{ 'u$d' if imputacion == 'EQUIPOS' else 'ARS $' }} {{ "{:,.2f}".format(total_deuda) }}
+                    </span>
                 </div>
                 <div class="card-body border">
                     <div class="alert alert-info py-2 small mb-3">
-                        <i class="bi bi-info-circle-fill me-2"></i>Escriba en la columna <b>"Monto a Aplicar"</b> cuánto dinero asigna a cada comprobante.
+                        <i class="bi bi-info-circle-fill me-2"></i>Indique cuánto cancela de cada comprobante. La suma de esta tabla es la <b>deuda base neta</b> que se dará por saldada.
                     </div>
 
-                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                    <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
                         <table class="table table-hover align-middle border" id="tabla_comprobantes">
-                            <thead class="table-dark sticky-top">
+                            <thead class="table-dark sticky-top small text-uppercase">
                                 <tr>
                                     <th>Vencimiento</th>
                                     <th>Concepto</th>
-                                    <th class="text-end">Saldo ({{ 'USD' if imputacion == 'EQUIPOS' else '$' }})</th>
-                                    <th class="text-center" style="width: 180px;">Aplicar ({{ 'USD' if imputacion == 'EQUIPOS' else '$' }})</th>
+                                    <th class="text-end">Saldo</th>
+                                    <th class="text-center" style="width: 170px;">Monto a Cancelar</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -76,19 +82,21 @@
                                             <small class="text-muted">Venta #{{ item.venta_id }}</small>
                                         {% else %}
                                             <div class="fw-bold text-info">Servicio #{{ item.id }}</div>
-                                            <small class="text-muted">Reparación</small>
+                                            {% if item.falla_reportada %}<small class="text-muted d-block">{{ item.falla_reportada }}</small>{% endif %}
+                                            {% if item.imei_equipo %}<small class="text-primary fw-bold d-block"><i class="bi bi-phone me-1"></i>IMEI: {{ item.imei_equipo }}</small>{% endif %}
                                         {% endif %}
                                     </td>
                                     <td class="text-end fw-bold">
-                                        {{ 'USD' if imputacion == 'EQUIPOS' else '$' }} {{ "{:,.2f}".format(item.saldo_pendiente) }}
+                                        {{ 'u$d' if imputacion == 'EQUIPOS' else '$' }} {{ "{:,.2f}".format(item.saldo_pendiente) }}
                                     </td>
                                     <td>
                                         <div class="input-group input-group-sm">
-                                            <span class="input-group-text">{{ 'USD' if item.tipo == 'CUOTA' else '$' }}</span>
+                                            <span class="input-group-text">{{ 'u$d' if item.tipo == 'CUOTA' else '$' }}</span>
                                             <input type="number" step="0.01" min="0" max="{{ item.saldo_pendiente + 0.10 }}" 
                                                    name="monto_aplicado[]" 
-                                                   class="form-control fw-bold input-aplicar" 
-                                                   placeholder="0.00" oninput="calcularTotalesAsignados()">
+                                                   class="form-control fw-bold text-end input-aplicar" 
+                                                   value="{{ "{:.2f}".format(item.saldo_pendiente) }}"
+                                                   placeholder="0.00" oninput="recalcularTodo()">
                                         </div>
                                     </td>
                                 </tr>
@@ -101,9 +109,9 @@
                         </table>
                     </div>
                 </div>
-                <div class="card-footer bg-light">
+                <div class="card-footer bg-light py-3">
                     <div class="d-flex justify-content-between align-items-center">
-                        <span class="fw-bold text-uppercase small text-secondary">Total aplicado en tabla:</span>
+                        <span class="fw-bold text-uppercase small text-secondary">Deuda neta a cancelar:</span>
                         <span class="fs-4 fw-bold text-primary" id="total_asignado_tabla">
                             {{ 'u$d' if imputacion == 'EQUIPOS' else '$' }} 0.00
                         </span>
@@ -112,74 +120,151 @@
             </div>
         </div>
 
-        <!-- Panel Derecho: Datos físicos del dinero -->
-        <div class="col-md-5">
+        <!-- PANEL DERECHO: MEDIOS DE PAGO MÚLTIPLES Y DISCRIMINACIÓN -->
+        <div class="col-lg-6">
             <div class="card shadow-sm border-success">
-                <div class="card-header bg-success text-white py-3">
-                    <h5 class="mb-0"><i class="bi bi-box-arrow-in-down me-2"></i>Dinero que entrega el Cliente</h5>
+                <div class="card-header bg-success text-white py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-cash-stack me-2"></i>Medios de Pago Múltiples</h5>
+                    <span class="badge bg-light text-dark fw-bold">Combinable</span>
                 </div>
                 <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Moneda física recibida:</label>
-                        <select class="form-select border-primary fw-bold" id="moneda" name="moneda" onchange="actualizarInterfaz()">
-                            <option value="ARS" selected>Pesos (ARS)</option>
-                            <option value="USD">Dólares (USD)</option>
-                        </select>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Cuenta de destino:</label>
-                        <select class="form-select border-success" name="cuenta_destino">
-                            <option value="EFECTIVO">Caja Efectivo</option>
-                            {% for cuenta in cuentas_entidades %}
-                                <option value="{{ cuenta.nombre }}">{{ cuenta.nombre }} ({{ cuenta.titular }})</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-
-                    <!-- Cotización (Se muestra siempre para calcular el impacto USD <-> ARS) -->
-                    <div id="seccion_dolar_cobro" class="mb-3 p-3 bg-light border rounded border-warning">
-                        <label class="form-label fw-bold small text-warning text-uppercase">Cotización de referencia:</label>
-                        <select name="tipo_dolar" id="tipo_dolar" class="form-select form-select-sm mb-2" onchange="actualizarInterfaz()">
-                            <option value="blue" data-val="{{ valor_blue_compra|default(0) }}">Blue: ${{ valor_blue_compra }}</option>
-                            <option value="oficial" data-val="{{ valor_bcra_compra|default(0) }}">Oficial: ${{ valor_bcra_compra }}</option>
-                            <option value="manual">Manual</option>
-                        </select>
-                        <input type="number" step="0.01" name="valor_dolar_manual" id="valor_dolar_manual" 
-                               class="form-control form-control-sm border-danger d-none" placeholder="Valor del dólar..." oninput="actualizarInterfaz()">
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold text-success">Monto total entregado:</label>
-                        <div class="input-group input-group-lg">
-                            <span class="input-group-text bg-success text-white" id="simbolo_moneda">$</span>
-                            <input type="number" step="0.01" class="form-control fw-bold text-success" id="monto_a_cobrar" name="monto_a_cobrar" 
-                                   required oninput="actualizarInterfaz()">
-                        </div>
-                        
-                        <div id="conversion_info" class="alert alert-warning mt-3 py-2">
-                            <small class="d-block fw-bold text-uppercase">Equivalencia para la deuda:</small>
-                            <span class="fs-4 fw-bold">
-                                <span id="label_moneda_impacto">{{ 'u$d' if imputacion == 'EQUIPOS' else 'ARS' }}</span> 
-                                <span id="valor_conversion">0.00</span>
-                            </span>
+                    
+                    <!-- COTIZACIÓN DE REFERENCIA -->
+                    <div class="p-3 mb-3 bg-light border border-warning rounded">
+                        <div class="row g-2 align-items-center">
+                            <div class="col-6">
+                                <label class="form-label fw-bold small text-warning text-uppercase mb-1">Cotización del Dólar:</label>
+                                <select name="tipo_dolar" id="tipo_dolar" class="form-select form-select-sm" onchange="toggleManualDolar()">
+                                    <option value="blue" data-val="{{ dolar_info.compra_blue|default(1.0) }}">Blue: ${{ dolar_info.compra_blue|round(2) }}</option>
+                                    <option value="oficial" data-val="{{ dolar_info.compra|default(1.0) }}">Oficial: ${{ dolar_info.compra|round(2) }}</option>
+                                    <option value="manual">Manual</option>
+                                </select>
+                            </div>
+                            <div class="col-6" id="grupo_dolar_manual" style="display: none;">
+                                <label class="form-label fw-bold small text-danger mb-1">Cotiz. Manual:</label>
+                                <input type="number" step="0.01" name="valor_dolar_manual" id="valor_dolar_manual" 
+                                       class="form-control form-control-sm border-danger" placeholder="0.00" oninput="recalcularTodo()">
+                            </div>
                         </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Observaciones:</label>
-                        <textarea class="form-control" name="observaciones" rows="2" placeholder="Nro de transferencia, quién pagó, etc..."></textarea>
+                    <!-- 1. CAJA EFECTIVO (BILLETES) -->
+                    <div class="card mb-3 border-secondary">
+                        <div class="card-header bg-secondary text-white py-1 small fw-bold">
+                            <i class="bi bi-wallet2 me-1"></i>Efectivo Físico (Sin Recargo)
+                        </div>
+                        <div class="card-body p-2 bg-light">
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label small mb-1 fw-bold">Efectivo ARS ($):</label>
+                                    <input type="number" step="0.01" class="form-control form-control-sm input-pago text-end fw-bold" 
+                                           id="monto_efectivo_ars" name="monto_efectivo_ars" placeholder="0.00" oninput="recalcularTodo()">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small mb-1 fw-bold text-success">Efectivo USD (u$d):</label>
+                                    <input type="number" step="0.01" class="form-control form-control-sm input-pago text-end fw-bold border-success" 
+                                           id="monto_efectivo_usd" name="monto_efectivo_usd" placeholder="0.00" oninput="recalcularTodo()">
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div id="alerta_desajuste" class="alert alert-danger d-none small">
-                        <i class="bi bi-x-octagon-fill me-2"></i> La sumatoria de la tabla debe ser igual al valor del dinero entregado.
+                    <!-- 2. CUENTAS VIRTUALES Y TARJETAS DE CRÉDITO -->
+                    <div class="card mb-3 border-primary">
+                        <div class="card-header bg-primary text-white py-1 small fw-bold d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-credit-card me-1"></i>Bancos, Mercado Pago y Tarjetas</span>
+                            <small class="opacity-75">Configura recargo por cuenta</small>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover mb-0 align-middle">
+                                    <thead class="table-light small text-uppercase" style="font-size: 0.75rem;">
+                                        <tr>
+                                            <th class="ps-2">Cuenta</th>
+                                            <th style="width: 130px;">Medio</th>
+                                            <th style="width: 110px;">Monto ARS</th>
+                                            <th style="width: 90px;">Monto USD</th>
+                                            <th style="width: 75px;">% Rec.</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="cuerpo_medios_virtuales">
+                                        {% for cta in cuentas_entidades %}
+                                        {% if cta.nombre != 'EFECTIVO' %}
+                                        <tr class="fila-medio-pago">
+                                            <td class="ps-2">
+                                                <input type="hidden" name="cuenta_id[]" value="{{ cta.id }}">
+                                                <strong class="small">{{ cta.nombre }}</strong>
+                                                <br><small class="text-muted" style="font-size: 0.7rem;">{{ cta.titular }}</small>
+                                            </td>
+                                            <td>
+                                                <select name="medio_tipo[]" class="form-select form-select-sm select-medio-tipo" onchange="toggleMedioRow(this)">
+                                                    <option value="TRANSFERENCIA" selected>Transf. (0%)</option>
+                                                    <option value="TARJETA_CREDITO">Tarjeta Crédito</option>
+                                                </select>
+                                                <input type="hidden" name="cuotas_tarjeta[]" value="1" class="hidden-cuotas">
+                                            </td>
+                                            <td>
+                                                <input type="number" step="0.01" name="monto_v_ars[]" class="form-control form-control-sm text-end input-pago v-ars" placeholder="0.00" oninput="recalcularTodo()">
+                                            </td>
+                                            <td>
+                                                <input type="number" step="0.01" name="monto_v_usd[]" class="form-control form-control-sm text-end input-pago v-usd" placeholder="0.00" oninput="recalcularTodo()">
+                                            </td>
+                                            <td>
+                                                <div class="input-group input-group-sm">
+                                                    <input type="number" step="0.5" min="0" max="100" name="recargo_pct[]" class="form-control form-control-sm text-end input-recargo-pct" value="0" oninput="recalcularTodo()">
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        {% endif %}
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- OBSERVACIONES -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">Observaciones / Nro de Cupón o Transferencia:</label>
+                        <input type="text" name="observaciones" class="form-control form-control-sm" placeholder="Ej: Cupón Visa #4321 / Transf. Bancaria Galicia">
+                    </div>
+
+                    <!-- MONITOR EN TIEMPO REAL: DISCRIMINACIÓN EXACTA -->
+                    <div class="card bg-dark text-white shadow-sm mb-3">
+                        <div class="card-header bg-black py-2 small fw-bold text-uppercase d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-pie-chart me-1"></i>Liquidación de la Operación</span>
+                            <span class="badge bg-warning text-dark" id="tag_estado_balance">Calculando...</span>
+                        </div>
+                        <div class="card-body p-3">
+                            <div class="d-flex justify-content-between small mb-1 text-light">
+                                <span>1. Base que cancela Deuda:</span>
+                                <span class="fw-bold" id="display_base_cubierta">$ 0.00</span>
+                            </div>
+                            <div class="d-flex justify-content-between small mb-2 text-warning">
+                                <span>2. Recargo Total Discriminado:</span>
+                                <span class="fw-bold" id="display_recargo_total">+ $ 0.00</span>
+                            </div>
+                            <hr class="my-1 border-secondary">
+                            <div class="d-flex justify-content-between align-items-center mt-2">
+                                <span class="fw-bold fs-6">TOTAL REAL A COBRAR:</span>
+                                <div class="text-end">
+                                    <div class="fs-4 fw-bold text-success" id="display_gran_total">ARS $0.00</div>
+                                    <small class="text-muted" id="display_gran_total_usd"></small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="alerta_desbalance" class="alert alert-danger d-none py-2 small mb-3">
+                        <i class="bi bi-x-octagon-fill me-2"></i>El total de pagos asignados en los medios de pago no cubre exactamente la deuda seleccionada en la tabla izquierda.
                     </div>
 
                     <div class="d-grid">
-                        <button type="submit" class="btn btn-success btn-lg fw-bold" id="btn-confirmar">
-                            CONFIRMAR COBRO
+                        <button type="submit" class="btn btn-success btn-lg fw-bold shadow" id="btn-confirmar-cobro">
+                            <i class="bi bi-check-circle me-1"></i>CONFIRMAR COBRO MÚLTIPLE
                         </button>
                     </div>
+
                 </div>
             </div>
         </div>
@@ -191,85 +276,117 @@
 <script>
     const MODO_IMPUTACION = "{{ imputacion }}"; // 'EQUIPOS' o 'SERVICIOS'
 
-    function actualizarInterfaz() {
-        const monedaEntrega = document.getElementById('moneda').value; // Moneda física (ARS/USD)
-        const montoEntrega = parseFloat(document.getElementById('monto_a_cobrar').value) || 0;
-        const tipoDolar = document.getElementById('tipo_dolar').value;
-        const manualInput = document.getElementById('valor_dolar_manual');
-        
-        // Símbolo del input derecho
-        document.getElementById('simbolo_moneda').innerText = (monedaEntrega === 'USD') ? 'USD' : '$';
-        
-        // Manejo de input manual de dólar
-        manualInput.classList.toggle('d-none', tipoDolar !== 'manual');
-        
-        let cotiz = 1;
-        if (tipoDolar === 'manual') {
-            cotiz = parseFloat(manualInput.value) || 0;
-        } else {
-            const select = document.getElementById('tipo_dolar');
-            cotiz = parseFloat(select.options[select.selectedIndex].getAttribute('data-val')) || 1;
+    function getCotizacionActiva() {
+        const sel = document.getElementById('tipo_dolar');
+        if (sel.value === 'manual') {
+            return parseFloat(document.getElementById('valor_dolar_manual').value) || 1.0;
         }
+        return parseFloat(sel.options[sel.selectedIndex].getAttribute('data-val')) || 1.0;
+    }
 
-        // CÁLCULO DE EQUIVALENCIA (Lo más importante)
-        let valorImpacto = 0;
-        
+    function toggleManualDolar() {
+        const esManual = document.getElementById('tipo_dolar').value === 'manual';
+        document.getElementById('grupo_dolar_manual').style.display = esManual ? 'block' : 'none';
+        recalcularTodo();
+    }
+
+    function toggleMedioRow(selectElem) {
+        const fila = selectElem.closest('tr');
+        const inputRecargo = fila.querySelector('.input-recargo-pct');
+        if (selectElem.value === 'TARJETA_CREDITO') {
+            if (parseFloat(inputRecargo.value) === 0) {
+                inputRecargo.value = "10"; // Sugerencia de recargo por defecto
+            }
+            inputRecargo.classList.add('border-warning');
+        } else {
+            inputRecargo.value = "0";
+            inputRecargo.classList.remove('border-warning');
+        }
+        recalcularTodo();
+    }
+
+    function recalcularTodo() {
+        const cotiz = getCotizacionActiva();
+
+        // 1. Sumatoria de la Deuda que se quiere cancelar en la tabla izquierda
+        let totalDeudaBaseACancelar = 0;
+        document.querySelectorAll('.input-aplicar').forEach(inp => {
+            totalDeudaBaseACancelar += parseFloat(inp.value) || 0;
+        });
+
+        // Formato para tabla izquierda
+        const simDeuda = (MODO_IMPUTACION === 'EQUIPOS') ? 'u$d ' : '$ ';
+        document.getElementById('total_asignado_tabla').innerText = simDeuda + totalDeudaBaseACancelar.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        // 2. Sumatoria de los Medios de Pago (Derecha)
+        const efArs = parseFloat(document.getElementById('monto_efectivo_ars').value) || 0;
+        const efUsd = parseFloat(document.getElementById('monto_efectivo_usd').value) || 0;
+
+        let totalBaseEntregadaARS = efArs + (efUsd * cotiz);
+        let totalRecargoARS = 0;
+
+        document.querySelectorAll('.fila-medio-pago').forEach(fila => {
+            const mArs = parseFloat(fila.querySelector('.v-ars').value) || 0;
+            const mUsd = parseFloat(fila.querySelector('.v-usd').value) || 0;
+            const pct = parseFloat(fila.querySelector('.input-recargo-pct').value) || 0;
+
+            if (mArs > 0 || mUsd > 0) {
+                const baseFilaARS = mArs + (mUsd * cotiz);
+                const recargoFilaARS = baseFilaARS * (pct / 100.0);
+
+                totalBaseEntregadaARS += baseFilaARS;
+                totalRecargoARS += recargoFilaARS;
+            }
+        });
+
+        const granTotalARS = totalBaseEntregadaARS + totalRecargoARS;
+        const granTotalUSD = granTotalARS / cotiz;
+
+        // 3. Render en el Monitor Discriminado
+        const fmtARS = (v) => "ARS $" + v.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        const fmtUSD = (v) => "u$d " + v.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        document.getElementById('display_base_cubierta').innerText = fmtARS(totalBaseEntregadaARS);
+        document.getElementById('display_recargo_total').innerText = "+ " + fmtARS(totalRecargoARS);
+        document.getElementById('display_gran_total').innerText = fmtARS(granTotalARS);
+        document.getElementById('display_gran_total_usd').innerText = `Equivale a ${fmtUSD(granTotalUSD)}`;
+
+        // 4. Validación de Coincidencia (Deuda Base vs Dinero Base Entregado)
+        let baseEquivalenteParaComparar = 0;
         if (MODO_IMPUTACION === 'EQUIPOS') {
-            // La tabla está en USD. Si me dan pesos, divido. Si me dan USD, es directo.
-            valorImpacto = (monedaEntrega === 'ARS') ? (montoEntrega / cotiz) : montoEntrega;
-            document.getElementById('label_moneda_impacto').innerText = 'USD';
+            baseEquivalenteParaComparar = totalBaseEntregadaARS / cotiz;
         } else {
-            // La tabla está en ARS. Si me dan USD, multiplico. Si me dan ARS, es directo.
-            valorImpacto = (monedaEntrega === 'USD') ? (montoEntrega * cotiz) : montoEntrega;
-            document.getElementById('label_moneda_impacto').innerText = 'ARS';
+            baseEquivalenteParaComparar = totalBaseEntregadaARS;
         }
 
-        document.getElementById('valor_conversion').innerText = valorImpacto.toFixed(2);
-        
-        validarAsignacion();
-    }
+        const diferencia = Math.abs(totalDeudaBaseACancelar - baseEquivalenteParaComparar);
+        const margen = (MODO_IMPUTACION === 'EQUIPOS') ? 0.05 : 1.5;
 
-    function calcularTotalesAsignados() {
-        let sumatoria = 0;
-        document.querySelectorAll('.input-aplicar').forEach(input => {
-            sumatoria += parseFloat(input.value) || 0;
-        });
-        
-        const simbolo = (MODO_IMPUTACION === 'EQUIPOS') ? 'USD' : '$';
-        document.getElementById('total_asignado_tabla').innerText = simbolo + ' ' + sumatoria.toLocaleString('es-AR', {minimumFractionDigits: 2});
-        
-        validarAsignacion();
-    }
+        const btn = document.getElementById('btn-confirmar-cobro');
+        const alerta = document.getElementById('alerta_desbalance');
+        const tag = document.getElementById('tag_estado_balance');
 
-    function validarAsignacion() {
-        const valorImpacto = parseFloat(document.getElementById('valor_conversion').innerText) || 0;
-        
-        let sumatoriaTabla = 0;
-        document.querySelectorAll('.input-aplicar').forEach(input => {
-            sumatoriaTabla += parseFloat(input.value) || 0;
-        });
-
-        const btn = document.getElementById('btn-confirmar');
-        const alerta = document.getElementById('alerta_desajuste');
-
-        // Tolerancia de céntimos para redondeos
-        const diferencia = Math.abs(sumatoriaTabla - valorImpacto);
-        const margenTolerancia = (MODO_IMPUTACION === 'EQUIPOS') ? 0.05 : 1.0;
-
-        if (sumatoriaTabla > 0 && diferencia <= margenTolerancia) {
+        if (totalDeudaBaseACancelar > 0 && diferencia <= margen) {
             btn.disabled = false;
-            btn.classList.replace('btn-danger', 'btn-success');
+            btn.classList.replace('btn-secondary', 'btn-success');
             alerta.classList.add('d-none');
+            tag.innerText = "COINCIDE (OK)";
+            tag.className = "badge bg-success";
         } else {
             btn.disabled = true;
-            btn.classList.replace('btn-success', 'btn-danger');
-            if (sumatoriaTabla > 0) alerta.classList.remove('d-none');
+            btn.classList.replace('btn-success', 'btn-secondary');
+            tag.innerText = "DESAJUSTE";
+            tag.className = "badge bg-danger";
+            if (totalBaseEntregadaARS > 0 || totalDeudaBaseACancelar > 0) {
+                alerta.classList.remove('d-none');
+            } else {
+                alerta.classList.add('d-none');
+            }
         }
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        actualizarInterfaz();
-        calcularTotalesAsignados();
+        recalcularTodo();
     });
 </script>
 {% endblock %}

@@ -327,27 +327,96 @@
         const precioBaseVentaUSD = parseFloat("{{ venta.precio_final_usd }}") || 0;
         const clienteId = "{{ venta.cliente_id }}";
 
-        // AJAX ANTICIPOS
+        // AJAX SEÑAS: HABILITA SELECCIÓN TANTO DE ANTICIPOS (+) COMO DE CANCELACIONES (-)
         $.getJSON(`/api/anticipos_disponibles/${clienteId}?imputacion=EQUIPOS`, function(data) {
             if (data && data.length > 0) {
                 $('#seccion_anticipos').removeClass('d-none');
+                $('#lista_anticipos').empty();
+
                 data.forEach(a => {
-                    $('#lista_anticipos').append(`
-                        <div class="form-check border-bottom py-2">
-                            <input class="form-check-input anticipo-check" type="checkbox" name="anticipos_ids[]" 
-                                   value="${a.id}" data-monto="${a.monto_usd}" id="ant_${a.id}">
-                            <label class="form-check-label d-flex justify-content-between w-100" for="ant_${a.id}">
-                                <span><i class="bi bi-calendar-event me-2"></i>${a.fecha_cobro.split(' ')[0]} - <strong>${a.observaciones}</strong></span>
-                                <span class="fw-bold text-success">u$d ${parseFloat(a.monto_usd).toFixed(2)}</span>
-                            </label>
-                        </div>
-                    `);
+                    const montoFmt = parseFloat(a.monto_usd_abs || Math.abs(a.monto_usd) || 0).toFixed(2);
+                    const fechaTxt = a.fecha_cobro ? a.fecha_cobro.split(' ')[0] : '';
+                    const obsTxt = a.observaciones || a.referencia || 'Seña';
+                    const esCancelacion = (a.tipo_movimiento === 'CANCELACION' || a.monto_usd < 0 || a.estado_anticipo === 'DEVUELTO');
+
+                    if (!esCancelacion) {
+                        // 1. ANTICIPO / ENTREGA (+) SELECCIONABLE CON CHECKBOX
+                        $('#lista_anticipos').append(`
+                            <div class="border-bottom py-2 row align-items-center fila-seña seña-positiva-row" style="background-color: #f8fff9;">
+                                <div class="col-md-7">
+                                    <div class="form-check">
+                                        <input class="form-check-input seña-positiva-check seña-check" type="checkbox" 
+                                               name="señas_positivas_ids[]" value="${a.id}" data-monto-max="${montoFmt}" id="seña_${a.id}" checked>
+                                        <label class="form-check-label" for="seña_${a.id}">
+                                            <span class="badge bg-success me-1"><i class="bi bi-plus-circle me-1"></i>Anticipo</span>
+                                            <span><small class="text-muted">${fechaTxt}</small> - <strong>${obsTxt}</strong></span>
+                                            <span class="badge bg-secondary ms-1">A Favor: +u$d ${montoFmt}</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-5 text-end">
+                                    <div class="input-group input-group-sm ms-auto" style="max-width: 230px;">
+                                        <span class="input-group-text bg-success text-white fw-bold">Sumar u$d</span>
+                                        <input type="number" step="0.01" min="0.01" max="${montoFmt}" 
+                                               class="form-control text-end fw-bold input-monto-pos border-success" 
+                                               name="seña_positiva_monto[]" value="${montoFmt}">
+                                    </div>
+                                </div>
+                            </div>
+                        `);
+                    } else {
+                        // 2. CANCELACIÓN / RETIRO (-) AHORA 100% SELECCIONABLE CON SU PROPIA CASILLA
+                        $('#lista_anticipos').append(`
+                            <div class="border-bottom py-2 row align-items-center fila-seña seña-negativa-row" style="background-color: #fff8f8;">
+                                <div class="col-md-7">
+                                    <div class="form-check">
+                                        <input class="form-check-input seña-negativa-check seña-check" type="checkbox" 
+                                               name="señas_negativas_ids[]" value="${a.id}" data-monto-max="${montoFmt}" id="canc_${a.id}" checked>
+                                        <label class="form-check-label" for="canc_${a.id}">
+                                            <span class="badge bg-danger me-1"><i class="bi bi-dash-circle me-1"></i>Cancelación</span>
+                                            <span><small class="text-muted">${fechaTxt}</small> - <strong class="text-danger">${obsTxt}</strong></span>
+                                            <span class="badge bg-danger-subtle text-danger border ms-1">Compensar: -u$d ${montoFmt}</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-5 text-end">
+                                    <div class="input-group input-group-sm ms-auto" style="max-width: 230px;">
+                                        <span class="input-group-text bg-danger text-white fw-bold">Restar u$d</span>
+                                        <input type="number" step="0.01" min="0.01" max="${montoFmt}" 
+                                               class="form-control text-end fw-bold input-monto-neg border-danger text-danger" 
+                                               name="seña_negativa_monto[]" value="${montoFmt}">
+                                    </div>
+                                </div>
+                            </div>
+                        `);
+                    }
                 });
+
+                calcularTotalPagado();
             }
         });
 
-        $(document).on('change', '.anticipo-check', function() {
+        // Eventos para recalcular al marcar o desmarcar CUALQUIERA de las dos (positivas o negativas)
+        $(document).on('change', '.seña-check', function() {
+            const fila = $(this).closest('.fila-seña');
+            const input = fila.find('input[type="number"]');
+            input.prop('disabled', !this.checked);
             calcularTotalPagado();
+        });
+
+        $(document).on('input', '.input-monto-pos, .input-monto-neg', function() {
+            calcularTotalPagado();
+        });
+
+        // FILTROS DE VISUALIZACIÓN (TODOS / SOLO ANTICIPOS / SOLO CANCELACIONES)
+        $(document).on('click', '.filter-btn', function() {
+            $('.filter-btn').removeClass('btn-dark active').addClass('btn-outline-dark');
+            $(this).removeClass('btn-outline-dark').addClass('btn-dark active');
+
+            const f = $(this).data('filter');
+            if (f === 'TODOS') $('.fila-seña').show();
+            else if (f === 'ENTREGA') { $('.seña-positiva-row').show(); $('.seña-negativa-row').hide(); }
+            else if (f === 'RETIRO') { $('.seña-positiva-row').hide(); $('.seña-negativa-row').show(); }
         });
 
         window.calcularTotalPagado = function() {
@@ -389,13 +458,30 @@
                 totalPagadoHoyUSD += parseFloat($(this).val()) || 0;
             });
             
-            // 4. Anticipos
-            let totalAnticipos = 0;
-            $('.anticipo-check:checked').each(function() {
-                totalAnticipos += parseFloat($(this).data('monto')) || 0;
+            // 4. CÁLCULO NETO DE SEÑAS: (ANTICIPOS MARCADOS) - (CANCELACIONES MARCADAS)
+            let totalPositivosUSD = 0;
+            $('.seña-positiva-check:checked').each(function() {
+                const fila = $(this).closest('.seña-positiva-row');
+                const max = parseFloat($(this).data('monto-max')) || 0;
+                let val = parseFloat(fila.find('.input-monto-pos').val()) || 0;
+                if (val > max) { val = max; fila.find('.input-monto-pos').val(max.toFixed(2)); }
+                totalPositivosUSD += val;
             });
-            totalPagadoHoyUSD += totalAnticipos;
-            $('#display_total_anticipos').text(totalAnticipos.toFixed(2));
+
+            let totalNegativosUSD = 0;
+            $('.seña-negativa-check:checked').each(function() {
+                const fila = $(this).closest('.seña-negativa-row');
+                const max = parseFloat($(this).data('monto-max')) || 0;
+                let val = parseFloat(fila.find('.input-monto-neg').val()) || 0;
+                if (val > max) { val = max; fila.find('.input-monto-neg').val(max.toFixed(2)); }
+                totalNegativosUSD += val;
+            });
+
+            // Crédito neto resultante de las señas seleccionadas
+            const netoSeñasUSD = totalPositivosUSD - totalNegativosUSD;
+            totalPagadoHoyUSD += netoSeñasUSD;
+            
+            $('#display_total_anticipos').text(netoSeñasUSD.toFixed(2));
 
             // 5. Pesos Efectivo
             totalPagadoHoyUSD += (parseFloat($('#monto_efectivo_ars').val()) || 0) / cotiz;

@@ -1,14 +1,33 @@
 {% extends "layout.html" %}
 {% block content %}
 <div class="container mt-4">
-    <div class="card shadow border-0">
-        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-            <h4 class="mb-0"><i class="fas fa-coins text-warning"></i> Nuevo Pago Anticipado</h4>
-            <span class="badge bg-secondary">Registro Manual de Saldo</span>
+    <div class="card shadow border-0" id="card_contenedor">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center" id="card_header">
+            <h4 class="mb-0" id="header_titulo"><i class="fas fa-coins text-warning me-2"></i> Gestión de Señas y Anticipos</h4>
+            <span class="badge bg-secondary" id="header_badge">Registro de Saldo</span>
         </div>
         <div class="card-body bg-light">
-            <form action="{{ url_for('pago_anticipado_cliente') }}" method="POST">
+            <form action="{{ url_for('pago_anticipado_cliente') }}" method="POST" id="form_pago_anticipado">
                 
+                <!-- NUEVO: SELECTOR DE TIPO DE OPERACIÓN (SUMAR O RESTAR) -->
+                <div class="p-3 mb-4 rounded border shadow-sm" id="box_tipo_operacion" style="background-color: #f8fff9; border-color: #28a745 !important;">
+                    <label class="form-label fw-bold text-uppercase small text-dark mb-2">Seleccione Tipo de Operación:</label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="tipo_operacion" id="op_sumar" value="SUMAR" checked onchange="actualizarModoOperacion()">
+                        <label class="btn btn-outline-success py-2 fw-bold" for="op_sumar">
+                            <i class="fas fa-plus-circle me-1"></i> + SUMAR SEÑA (Ingreso a favor del cliente)
+                        </label>
+
+                        <input type="radio" class="btn-check" name="tipo_operacion" id="op_restar" value="RESTAR" onchange="actualizarModoOperacion()">
+                        <label class="btn btn-outline-danger py-2 fw-bold" for="op_restar">
+                            <i class="fas fa-minus-circle me-1"></i> - RESTAR / DEVOLVER SEÑA (Egreso de Caja)
+                        </label>
+                    </div>
+                    <div class="mt-2 small text-muted" id="txt_ayuda_operacion">
+                        <i class="fas fa-info-circle me-1 text-success"></i> El dinero <strong>ingresa a la caja o banco</strong> y suma como saldo a favor disponible para el cliente.
+                    </div>
+                </div>
+
                 <div class="row">
                     <!-- RUBRO / IMPUTACIÓN -->
                     <div class="col-md-12 mb-4">
@@ -33,22 +52,24 @@
                         </div>
                     </div>
 
-                    <!-- Cliente (MODIFICADO PARA BÚSQUEDA SELECT2) -->
+                    <!-- Cliente (SELECT2 AJAX) -->
                     <div class="col-md-6 mb-3">
-                        <label class="form-label fw-bold">Buscar Cliente</label>
+                        <label class="form-label fw-bold">Buscar Cliente <span class="text-danger">*</span></label>
                         <select name="cliente_id" id="cliente_id" class="form-control select2-cliente-ajax" required>
                             <option value="">Escriba nombre, apellido o CUIT...</option>
                         </select>
                         <div class="form-text">Búsqueda inteligente por nombre o CUIT.</div>
                     </div>
 
-                    <!-- Medio de Pago -->
+                    <!-- Medio de Pago / Cuenta Destino -->
                     <div class="col-md-6 mb-3">
-                        <label class="form-label fw-bold">Medio de Cobro</label>
-                        <select name="cuenta_destino" class="form-select" required>
-                            <option value="EFECTIVO">💰 EFECTIVO (Caja Física)</option>
+                        <label class="form-label fw-bold" id="label_cuenta_destino">Medio de Cobro / Destino</label>
+                        <select name="cuenta_destino" id="cuenta_destino" class="form-select" required>
+                            <option value="EFECTIVO" selected>💰 EFECTIVO (Caja Física)</option>
                             {% for cuenta in cuentas_entidades %}
+                            {% if cuenta.nombre != 'EFECTIVO' %}
                             <option value="{{ cuenta.nombre }}">💳 {{ cuenta.nombre }} ({{ cuenta.titular }})</option>
+                            {% endif %}
                             {% endfor %}
                         </select>
                     </div>
@@ -59,12 +80,12 @@
                 <div class="row align-items-end">
                     <!-- Monto -->
                     <div class="col-md-4 mb-3">
-                        <label class="form-label fw-bold">Monto que entrega el cliente</label>
+                        <label class="form-label fw-bold" id="label_monto">Monto que entrega el cliente</label>
                         <div class="input-group input-group-lg">
-                            <input type="number" step="0.01" name="monto" id="input_monto" class="form-control border-primary" placeholder="0.00" required>
+                            <input type="number" step="0.01" min="0.01" name="monto" id="input_monto" class="form-control border-primary fw-bold" placeholder="0.00" required>
                             <select name="moneda" id="select_moneda" class="form-select bg-primary text-white" style="max-width: 100px;">
                                 <option value="ARS">ARS</option>
-                                <option value="USD">USD</option>
+                                <option value="USD" selected>USD</option>
                             </select>
                         </div>
                     </div>
@@ -74,9 +95,9 @@
                         <label class="form-label fw-bold text-muted" id="label_cotizacion">Cotización Dólar</label>
                         <div class="input-group">
                             <span class="input-group-text bg-white text-muted">
-                                <small>Ref: Blue ${{ valor_blue_compra }}</small>
+                                <small>Ref: Blue ${{ valor_blue_compra|default(1.0)|round(2) }}</small>
                             </span>
-                            <input type="number" step="0.01" name="valor_dolar_manual" id="input_cotizacion" class="form-control form-control-lg border-primary" placeholder="Ej: 1150">
+                            <input type="number" step="0.01" name="valor_dolar_manual" id="input_cotizacion" class="form-control form-control-lg border-primary" value="{{ valor_blue_compra|default(1.0)|round(2) }}" placeholder="Ej: 1150">
                         </div>
                         
                         <div id="info_conversion" class="form-text mt-2 fw-bold text-success" style="display: none;">
@@ -86,14 +107,16 @@
                 </div>
 
                 <div class="mb-4">
-                    <label class="form-label fw-bold">Concepto / Referencia</label>
-                    <input type="text" name="observaciones" class="form-control" placeholder="Ej: Seña para traer repuesto de iPhone X o reserva de equipo">
+                    <label class="form-label fw-bold" id="label_observaciones">Concepto / Referencia</label>
+                    <input type="text" name="observaciones" id="observaciones" class="form-control" placeholder="Ej: Seña para traer repuesto de iPhone X o reserva de equipo">
                 </div>
 
                 <div class="d-flex justify-content-between align-items-center">
-                    <a href="{{ url_for('listar_clientes_cc') }}" class="text-decoration-none text-muted"><i class="fas fa-arrow-left"></i> Volver a Cuentas Corrientes</a>
-                    <button type="submit" class="btn btn-primary btn-lg px-5 shadow">
-                        <i class="fas fa-save"></i> Registrar Anticipo
+                    <a href="{{ url_for('listar_clientes_cc') }}" class="text-decoration-none text-muted">
+                        <i class="fas fa-arrow-left me-1"></i> Volver a Cuentas Corrientes
+                    </a>
+                    <button type="submit" class="btn btn-primary btn-lg px-5 shadow fw-bold" id="btn_submit_accion">
+                        <i class="fas fa-save me-1"></i> Registrar Anticipo
                     </button>
                 </div>
             </form>
@@ -101,7 +124,7 @@
     </div>
 </div>
 
-<!-- jQuery y Select2 JS (Asegúrate de que estén en tu layout, sino agrégalos aquí) -->
+<!-- jQuery y Select2 JS -->
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
@@ -110,7 +133,7 @@
     $(document).ready(function() {
         // INICIALIZACIÓN DE SELECT2 CON BÚSQUEDA REMOTA (AJAX)
         $('.select2-cliente-ajax').select2({
-            theme: "classic", // Puedes cambiar por bootstrap-5 si tienes el CSS cargado
+            theme: "classic",
             placeholder: 'Escriba nombre, apellido o CUIT...',
             minimumInputLength: 1,
             ajax: {
@@ -119,8 +142,8 @@
                 delay: 250,
                 data: function (params) {
                     return {
-                        q: params.term, // Texto que el usuario escribe
-                        rol: 'cliente'  // Filtro de backend
+                        q: params.term,
+                        rol: 'cliente'
                     };
                 },
                 processResults: function (data) {
@@ -142,6 +165,42 @@
     const radioEquipos = document.getElementById('imp_equipos');
     const radioReparaciones = document.getElementById('imp_servicios');
 
+    // Función para alternar modo SUMAR / RESTAR
+    function actualizarModoOperacion() {
+        const esSumar = document.getElementById('op_sumar').checked;
+        const box = document.getElementById('box_tipo_operacion');
+        const txtAyuda = document.getElementById('txt_ayuda_operacion');
+        const labelCuenta = document.getElementById('label_cuenta_destino');
+        const labelMonto = document.getElementById('label_monto');
+        const btnSubmit = document.getElementById('btn_submit_accion');
+        const headerBadge = document.getElementById('header_badge');
+        const obsInput = document.getElementById('observaciones');
+
+        if (esSumar) {
+            box.style.backgroundColor = '#f8fff9';
+            box.style.borderColor = '#28a745';
+            txtAyuda.innerHTML = '<i class="fas fa-info-circle me-1 text-success"></i> El dinero <strong>ingresa a la caja o banco</strong> y suma como saldo a favor disponible para el cliente.';
+            labelCuenta.innerText = 'Medio de Cobro / Cuenta donde ingresa:';
+            labelMonto.innerText = 'Monto que entrega el cliente:';
+            headerBadge.innerText = 'Ingreso a Favor (+)';
+            headerBadge.className = 'badge bg-success';
+            btnSubmit.className = 'btn btn-primary btn-lg px-5 shadow fw-bold';
+            btnSubmit.innerHTML = '<i class="fas fa-save me-1"></i> Registrar Anticipo (+)';
+            obsInput.placeholder = 'Ej: Seña para reserva de equipo o repuesto';
+        } else {
+            box.style.backgroundColor = '#fff8f8';
+            box.style.borderColor = '#dc3545';
+            txtAyuda.innerHTML = '<i class="fas fa-exclamation-triangle me-1 text-danger"></i> Se registrará un <strong>egreso físico de dinero</strong> de la caja o banco y se descontará del saldo disponible de señas previas del cliente.';
+            labelCuenta.innerText = 'Cuenta desde donde sale el dinero a devolver:';
+            labelMonto.innerText = 'Monto a devolver / reintegrar al cliente:';
+            headerBadge.innerText = 'Devolución / Salida (-)';
+            headerBadge.className = 'badge bg-danger';
+            btnSubmit.className = 'btn btn-danger btn-lg px-5 shadow fw-bold';
+            btnSubmit.innerHTML = '<i class="fas fa-minus-circle me-1"></i> Registrar Devolución de Seña (-)';
+            obsInput.placeholder = 'Ej: Cancelación de reserva / reintegro de seña por cancelación';
+        }
+    }
+
     function actualizarInterfaz() {
         const monedaPago = selectMoneda.value;
         const esEquipos = radioEquipos.checked;
@@ -152,7 +211,6 @@
         if (esEquipos && monedaPago === 'USD') {
             inputCotizacion.disabled = true;
             inputCotizacion.required = false;
-            inputCotizacion.value = "";
             infoConversion.style.display = 'none';
         } 
         // TODOS LOS DEMÁS CASOS: Habilitado
@@ -162,12 +220,12 @@
             
             if (monto > 0 && cotizacion > 0) {
                 if (esEquipos && monedaPago === 'ARS') {
-                    // Calculando cuántos USD se acreditan
+                    // Calculando cuántos USD se acreditan / reintegran
                     displayResultado.innerText = (monto / cotizacion).toFixed(2);
                     labelMonedaCalc.innerText = "USD";
                     infoConversion.style.display = 'block';
                 } else if (!esEquipos && monedaPago === 'USD') {
-                    // Calculando cuántos Pesos se acreditan (Reparaciones)
+                    // Calculando cuántos Pesos se acreditan / reintegran (Reparaciones)
                     displayResultado.innerText = (monto * cotizacion).toFixed(2);
                     labelMonedaCalc.innerText = "ARS";
                     infoConversion.style.display = 'block';
@@ -186,6 +244,10 @@
     radioEquipos.addEventListener('change', actualizarInterfaz);
     radioReparaciones.addEventListener('change', actualizarInterfaz);
 
-    actualizarInterfaz();
+    // Inicializar estado al cargar la página
+    document.addEventListener('DOMContentLoaded', function() {
+        actualizarModoOperacion();
+        actualizarInterfaz();
+    });
 </script>
 {% endblock %}

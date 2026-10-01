@@ -2,10 +2,13 @@
 {% block content %}
 <div class="container-fluid">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2><i class="bi bi-currency-dollar"></i> Ventas y Márgenes (USD)</h2>
+        <div>
+            <h2 class="mb-1"><i class="bi bi-currency-dollar text-success"></i> Ventas y Márgenes Netos (USD)</h2>
+            <small class="text-muted">Margen calculado sobre Costo Real (Sin impuestos ni recargos)</small>
+        </div>
         <div class="d-flex gap-2">
             <a href="{{ url_for('exportar_detalle_ventas_usd', start_date=start_date, end_date=end_date) }}" class="btn btn-success">
-                <i class="bi bi-file-earmark-spreadsheet"></i> Exportar CSV
+                <i class="bi bi-file-earmark-spreadsheet me-1"></i> Exportar CSV
             </a>
             <a href="{{ url_for('reporte_rentabilidad', start_date=start_date, end_date=end_date) }}" class="btn btn-outline-secondary">
                 Volver al Resumen
@@ -13,22 +16,48 @@
         </div>
     </div>
 
+    {# ACUMULADOR PARA TOTALES DEL PIE DE TABLA #}
+    {% set ns = namespace(
+        total_costo_cel = 0,
+        total_costo_acc = 0,
+        total_costo_reg = 0,
+        total_costo = 0,
+        total_venta = 0,
+        total_margen = 0
+    ) %}
+
     <div class="card shadow-sm border-0">
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
+            <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
                 <thead class="table-dark">
                     <tr>
                         <th>Fecha</th>
                         <th>ID</th>
                         <th>Equipo / IMEI</th>
-                        <th class="text-end">Costo (USD)</th>
-                        <th class="text-end">Venta (USD)</th>
-                        <th class="text-end">Margen (USD)</th>
-                        <th class="text-center">% Margen</th>
+                        <th class="text-end">Costo Celular</th>
+                        <th class="text-end">Costo Accesorios</th>
+                        <th class="text-end">Costo Regalos</th>
+                        <th class="text-end fw-bold">Costo Total</th>
+                        <th class="text-end text-primary fw-bold">Venta Neta (USD)</th>
+                        <th class="text-end text-success fw-bold">Margen Neto</th>
+                        <th class="text-center bg-secondary">% Ganancia (s/Costo)</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for v in ventas %}
+                        {% set c_cel = v.costo_celular_usd if v.costo_celular_usd is defined else (v.costo_usd or 0) %}
+                        {% set c_acc = v.costo_accesorios_usd if v.costo_accesorios_usd is defined else 0 %}
+                        {% set c_reg = v.costo_regalos_usd if v.costo_regalos_usd is defined else 0 %}
+                        {% set c_tot = v.costo_total_usd if v.costo_total_usd is defined else (c_cel + c_acc + c_reg) %}
+                        {% set v_tot = v.venta_neta_usd if v.venta_neta_usd is defined else (v.precio_final_usd or 0) %}
+                        {% set m_net = v.margen_neto_usd if v.margen_neto_usd is defined else (v_tot - c_tot) %}
+
+                        {% set ns.total_costo_cel = ns.total_costo_cel + c_cel %}
+                        {% set ns.total_costo_acc = ns.total_costo_acc + c_acc %}
+                        {% set ns.total_costo_reg = ns.total_costo_reg + c_reg %}
+                        {% set ns.total_costo = ns.total_costo + c_tot %}
+                        {% set ns.total_venta = ns.total_venta + v_tot %}
+                        {% set ns.total_margen = ns.total_margen + m_net %}
                     <tr>
                         <td>{{ v.fecha_venta[:10] }}</td>
                         <td><span class="badge bg-light text-dark">#{{ v.id }}</span></td>
@@ -36,13 +65,37 @@
                             <span class="fw-bold">{{ v.marca }} {{ v.modelo }}</span><br>
                             <small class="text-muted">IMEI: {{ v.imei }}</small>
                         </td>
-                        <td class="text-end text-muted">USD {{ "{:,.2f}".format(v.costo_usd or 0) }}</td>
-                        <td class="text-end fw-bold">USD {{ "{:,.2f}".format(v.precio_final_usd or 0) }}</td>
-                        <td class="text-end text-success fw-bold">u$d {{ "{:,.2f}".format(v.margen_usd or 0) }}</td>
+                        <td class="text-end text-muted">
+                            USD {{ "{:,.2f}".format(c_cel) }}
+                        </td>
+                        <td class="text-end text-muted">
+                            {% if c_acc > 0 %}
+                                USD {{ "{:,.2f}".format(c_acc) }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-end text-muted">
+                            {% if c_reg > 0 %}
+                                <span class="text-warning-emphasis">USD {{ "{:,.2f}".format(c_reg) }}</span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-end fw-bold text-dark">
+                            USD {{ "{:,.2f}".format(c_tot) }}
+                        </td>
+                        <td class="text-end fw-bold text-primary">
+                            USD {{ "{:,.2f}".format(v_tot) }}
+                        </td>
+                        <td class="text-end fw-bold {{ 'text-success' if m_net >= 0 else 'text-danger' }}">
+                            u$d {{ "{:,.2f}".format(m_net) }}
+                        </td>
+                        <!-- CÁLCULO CORREGIDO: (Margen / Costo) * 100 -->
                         <td class="text-center">
-                            {% if v.precio_final_usd and v.precio_final_usd > 0 %}
-                                <span class="badge bg-light text-success border">
-                                    {{ "{:,.1f}".format((v.margen_usd / v.precio_final_usd) * 100) }}%
+                            {% if c_tot and c_tot > 0 %}
+                                <span class="badge bg-light {{ 'text-success' if m_net >= 0 else 'text-danger' }} border fw-bold fs-6">
+                                    {{ "{:,.1f}".format((m_net / c_tot) * 100) }}%
                                 </span>
                             {% else %}
                                 -
@@ -51,17 +104,31 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="7" class="text-center py-4 text-muted">No hay ventas registradas en este período.</td>
+                        <td colspan="10" class="text-center py-4 text-muted">No hay ventas registradas en este período.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
                 <tfoot class="table-light fw-bold">
                     <tr>
                         <td colspan="3" class="text-end">TOTALES DEL PERÍODO:</td>
-                        <td class="text-end text-muted">USD {{ "{:,.2f}".format(ventas | map(attribute='costo_usd') | map('default', 0) | sum) }}</td>
-                        <td class="text-end">USD {{ "{:,.2f}".format(ventas | map(attribute='precio_final_usd') | map('default', 0) | sum) }}</td>
-                        <td class="text-end text-success h5">USD {{ "{:,.2f}".format(ventas | map(attribute='margen_usd') | map('default', 0) | sum) }}</td>
-                        <td></td>
+                        <td class="text-end text-muted">USD {{ "{:,.2f}".format(ns.total_costo_cel) }}</td>
+                        <td class="text-end text-muted">USD {{ "{:,.2f}".format(ns.total_costo_acc) }}</td>
+                        <td class="text-end text-muted">USD {{ "{:,.2f}".format(ns.total_costo_reg) }}</td>
+                        <td class="text-end text-dark">USD {{ "{:,.2f}".format(ns.total_costo) }}</td>
+                        <td class="text-end text-primary">USD {{ "{:,.2f}".format(ns.total_venta) }}</td>
+                        <td class="text-end {{ 'text-success' if ns.total_margen >= 0 else 'text-danger' }} h6 mb-0">
+                            USD {{ "{:,.2f}".format(ns.total_margen) }}
+                        </td>
+                        <!-- CÁLCULO TOTAL CORREGIDO: (Total Margen / Total Costo) * 100 -->
+                        <td class="text-center">
+                            {% if ns.total_costo > 0 %}
+                                <span class="badge bg-dark text-white fs-6">
+                                    {{ "{:,.1f}".format((ns.total_margen / ns.total_costo) * 100) }}%
+                                </span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
                     </tr>
                 </tfoot>
             </table>

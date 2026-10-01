@@ -86,7 +86,7 @@
             <div class="card shadow-sm border-0 h-100 border-start border-danger border-4">
                 <div class="card-header bg-danger text-white py-1 small fw-bold text-uppercase">Gastos Operativos (Caja)</div>
                 <div class="card-body">
-                    <div style="max-height: 100px; overflow-y: auto;">
+                    <div style="max-height: 120px; overflow-y: auto;">
                         {% for rg in resumen_gastos %}
                             {% if rg.clase not in ['Aportes Socios', 'Retiros Socios', 'Cambio de Divisas', 'Otros' ] %}
                                 {% set ns.t_g_caja = ns.t_g_caja + (rg.total or 0) %}
@@ -103,19 +103,25 @@
             </div>
         </div>
 
-        <!-- EGRESOS VIRTUALES (SOLO MANUALES, NO PROVEEDORES) -->
+        <!-- EGRESOS VIRTUALES (DISCRIMINADO POR CUENTA Y DESCRIPCIÓN) -->
         <div class="col-md-6 col-lg-3">
             <div class="card shadow-sm border-0 h-100 border-start border-warning border-4">
                 <div class="card-header bg-warning text-dark py-1 small fw-bold text-uppercase">Egresos Virtuales (Operativos)</div>
                 <div class="card-body">
-                    <div style="max-height: 100px; overflow-y: auto;">
-                        {# IMPORTANTE: Aquí recorremos la variable filtrada en Python que solo trae EGRESO_MANUAL_VIRTUAL #}
+                    <div style="max-height: 120px; overflow-y: auto;">
                         {% for ev in egr_virtuales_man %}
                             {% set ns.t_egr_virtual_operativo = ns.t_egr_virtual_operativo + (ev.total or 0) %}
-                            <div class="d-flex justify-content-between x-small mb-1">
-                                <span class="text-muted">{{ ev.cuenta }}:</span>
-                                <span class="fw-bold">-${{ "{:,.2f}".format(ev.total or 0) }}</span>
+                            <div class="d-flex justify-content-between align-items-start x-small mb-1 border-bottom pb-1">
+                                <div class="me-2 text-truncate" style="max-width: 68%;">
+                                    <span class="badge bg-secondary-subtle text-dark border py-0 px-1">{{ ev.cuenta }}</span>
+                                    {% if ev.descripcion %}
+                                        <span class="text-muted d-block text-truncate" title="{{ ev.descripcion }}">{{ ev.descripcion }}</span>
+                                    {% endif %}
+                                </div>
+                                <span class="fw-bold text-danger text-nowrap">-${{ "{:,.2f}".format(ev.total or 0) }}</span>
                             </div>
+                        {% else %}
+                            <div class="text-muted x-small text-center py-2">Sin egresos operativos</div>
                         {% endfor %}
                     </div>
                     <hr class="my-2">
@@ -173,23 +179,65 @@
         {% endfor %}
     </div>
 
-    <!-- DETALLES ADICIONALES -->
+    <!-- DETALLES ADICIONALES Y AUDITORÍA -->
     <div class="mt-4 no-print text-center">
         <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#collapseDetalle">
-            <i class="bi bi-search"></i> Auditar Operaciones Individuales
+            <i class="bi bi-search"></i> Auditar Operaciones Individuales y Egresos
         </button>
     </div>
 
     <div class="collapse mt-3" id="collapseDetalle">
         <div class="card card-body shadow-sm border-0 bg-light">
             <h6 class="fw-bold mb-3 text-center text-muted text-uppercase small">Reportes detallados del período:</h6>
-            <div class="d-flex justify-content-center gap-3 flex-wrap">
+            <div class="d-flex justify-content-center gap-3 flex-wrap mb-4">
                 <a href="{{ url_for('detalle_ventas_rentabilidad', start_date=start_date, end_date=end_date) }}" class="btn btn-dark shadow-sm px-4">
                     <i class="bi bi-phone"></i> Detalle de Ventas
                 </a>
                 <a href="{{ url_for('detalle_servicios_rentabilidad', start_date=start_date, end_date=end_date) }}" class="btn btn-primary shadow-sm px-4">
                     <i class="bi bi-tools"></i> Detalle de Servicios
                 </a>
+            </div>
+
+            <!-- TABLA AUDITORÍA DETALLADA: EGRESOS VIRTUALES CON CUENTA Y DESCRIPCIÓN -->
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-dark text-white py-2 small fw-bold d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-bank me-2"></i>Auditoría de Egresos Operativos en Cuentas Virtuales</span>
+                    <span class="badge bg-warning text-dark">Discriminado por Cuenta y Motivo</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0 x-small">
+                            <thead class="table-light text-uppercase">
+                                <tr>
+                                    <th class="ps-3" style="width: 220px;">Cuenta Virtual</th>
+                                    <th>Descripción / Motivo del Egreso</th>
+                                    <th class="text-end pe-3" style="width: 220px;">Total Egresado (ARS)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for ev in egr_virtuales_man %}
+                                <tr>
+                                    <td class="ps-3">
+                                        <span class="badge bg-primary fs-6">{{ ev.cuenta }}</span>
+                                    </td>
+                                    <td>
+                                        <strong class="text-dark">{{ ev.descripcion or 'Sin descripción' }}</strong>
+                                    </td>
+                                    <td class="text-end pe-3 fw-bold text-danger fs-6">
+                                        -${{ "{:,.2f}".format(ev.total or 0) }}
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="3" class="text-center py-3 text-muted">
+                                        No se registraron egresos de cuentas virtuales en este período.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

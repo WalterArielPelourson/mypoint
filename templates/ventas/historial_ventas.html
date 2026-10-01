@@ -1,90 +1,135 @@
 {% extends 'layout.html' %}
-{% block title %}Historial de Ventas{% endblock %}
+
+{% block title %}Historial de Ventas - {{ super() }}{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h1><i class="bi bi-clock-history me-2"></i>Historial de Ventas</h1>
-    <!-- Botón Exportar: Pasa los filtros actuales de la URL al CSV -->
-    <a href="{{ url_for('exportar_ventas_historial', **request.args) }}" class="btn btn-outline-primary">
-        <i class="bi bi-file-earmark-spreadsheet me-1"></i>Exportar CSV
-    </a>
-</div>
-
-{# Filtros #}
-<div class="card mb-4 shadow-sm">
-    <div class="card-header bg-primary text-white">
-        <h5 class="mb-0"><i class="bi bi-funnel me-2"></i>Filtros de Historial</h5>
+<div class="container-fluid py-3">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <h2 class="mb-0"><i class="bi bi-clock-history me-2 text-primary"></i>Historial de Ventas Completadas</h2>
+            <small class="text-muted">Precios Comerciales: <strong>Sin Impuestos ni Recargos Financieros</strong></small>
+        </div>
+        <a href="{{ url_for('exportar_ventas_historial', start_date=start_date, end_date=end_date, cliente=filtros_activos.cliente, producto=filtros_activos.producto) }}" class="btn btn-success shadow-sm">
+            <i class="bi bi-file-earmark-excel me-1"></i> Exportar a Excel
+        </a>
     </div>
-    <div class="card-body">
-        <form method="GET" action="{{ url_for('historial_ventas') }}" class="row g-3 align-items-end">
-            <div class="col-md-2">
-                <label for="start_date" class="form-label fw-bold">Desde:</label>
-                <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}">
-            </div>
-            <div class="col-md-2">
-                <label for="end_date" class="form-label fw-bold">Hasta:</label>
-                <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}">
-            </div>
 
-            <div class="col-md-3">
-                <label for="cliente" class="form-label fw-bold">Cliente:</label>
-                <!-- CAMBIO: Select por Input de texto -->
-                <input type="text" 
-                       class="form-control" 
-                       id="cliente" 
-                       name="cliente" 
-                       placeholder="Nombre, apellido o razón..." 
-                       value="{{ filtros_activos.cliente }}">
-            </div>
+    {# FILTROS #}
+    <div class="card mb-4 shadow-sm border-0 bg-light">
+        <div class="card-body">
+            <form method="GET" action="{{ url_for('historial_ventas') }}" class="row g-3 align-items-end">
+                <div class="col-md-2">
+                    <label for="start_date" class="form-label small fw-bold">Desde:</label>
+                    <input type="date" class="form-control form-control-sm" id="start_date" name="start_date" value="{{ start_date }}">
+                </div>
+                <div class="col-md-2">
+                    <label for="end_date" class="form-label small fw-bold">Hasta:</label>
+                    <input type="date" class="form-control form-control-sm" id="end_date" name="end_date" value="{{ end_date }}">
+                </div>
 
-            <div class="col-md-3">
-                <label for="producto" class="form-label fw-bold">Equipo / IMEI:</label>
-                <input type="text" 
-                       class="form-control" 
-                       id="producto" 
-                       name="producto" 
-                       placeholder="Marca, modelo o IMEI..." 
-                       value="{{ filtros_activos.producto }}">
-            </div>
+                <div class="col-md-3">
+                    <label for="cliente" class="form-label small fw-bold">Cliente:</label>
+                    <input type="text" class="form-control form-control-sm" id="cliente" name="cliente" 
+                           placeholder="Nombre, apellido o razón..." value="{{ filtros_activos.cliente }}">
+                </div>
 
-            <div class="col-md-2 text-end">
-                <button type="submit" class="btn btn-primary w-100 mb-1"><i class="bi bi-search me-1"></i>Buscar</button>
-                <a href="{{ url_for('historial_ventas') }}" class="btn btn-secondary w-100"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar</a>
-            </div>
-        </form>
+                <div class="col-md-3">
+                    <label for="producto" class="form-label small fw-bold">Equipo / IMEI:</label>
+                    <input type="text" class="form-control form-control-sm" id="producto" name="producto" 
+                           placeholder="Marca, modelo o IMEI..." value="{{ filtros_activos.producto }}">
+                </div>
+
+                <div class="col-md-2 text-end">
+                    <button type="submit" class="btn btn-primary btn-sm w-100 mb-1"><i class="bi bi-search me-1"></i>Buscar</button>
+                    <a href="{{ url_for('historial_ventas') }}" class="btn btn-secondary btn-sm w-100"><i class="bi bi-arrow-clockwise me-1"></i>Limpiar</a>
+                </div>
+            </form>
+        </div>
     </div>
-</div>
 
-<div class="table-responsive">
-    <table class="table table-striped">
-        <thead class="table-dark">
-            <tr>
-                <th>Venta #</th>
-                <th>Fecha</th>
-                <th>Vendedor</th>
-                <th>Cliente</th>
-                <th>Equipo</th>
-                <th>Total ARS</th>
-                <th>Acciones</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for venta in ventas %}
-            <tr>
-                <td><strong>#{{ venta.id }}</strong></td>
-                <td>{{ venta.fecha_venta|datetimeformat }}</td>
-                <td class="small fw-bold text-secondary">
-                    <i class="bi bi-person-badge me-1"></i>{{ venta.vendedor_real or 'Sistema' }}
-                </td>
-                <td>{{ venta.razon_social or (venta.nombre + ' ' + venta.apellido) }}</td>
-                <td>{{ venta.marca }} {{ venta.modelo }}</td>
-                <td>${{ "{:,.2f}".format(venta.precio_final_ars) }}</td>
-                <td>
-                    <a href="{{ url_for('view_venta', venta_id=venta.id) }}" class="btn btn-sm btn-info"><i class="bi bi-eye"></i></a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    {# ACUMULADOR PARA TOTALES DEL PIE DE TABLA #}
+    {% set ns = namespace(total_ars=0, total_usd=0, total_saldo=0) %}
+
+    <div class="card shadow-sm border-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                <thead class="table-dark">
+                    <tr>
+                        <th>ID</th>
+                        <th>Fecha</th>
+                        <th>Cliente</th>
+                        <th>Equipo / IMEI</th>
+                        <th class="text-end">Venta Comercial (USD)</th>
+                        <th class="text-end">Venta Comercial (ARS)</th>
+                        <th class="text-end">Cotiz. Dólar</th>
+                        <th class="text-end">Saldo Pendiente</th>
+                        <th class="text-center">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in ventas %}
+                        {% set v_usd = v.venta_neta_usd if v.venta_neta_usd is defined else (v.precio_final_usd or 0) %}
+                        {% set v_ars = v.venta_neta_ars if v.venta_neta_ars is defined else (v.precio_final_ars or 0) %}
+                        {% set s_pend = v.saldo_pendiente or 0 %}
+
+                        {% set ns.total_usd = ns.total_usd + v_usd %}
+                        {% set ns.total_ars = ns.total_ars + v_ars %}
+                        {% set ns.total_saldo = ns.total_saldo + s_pend %}
+                    <tr>
+                        <td><span class="badge bg-light text-dark border">#{{ v.id }}</span></td>
+                        <td>{{ v.fecha_venta[:10] }}</td>
+                        <td>
+                            <strong>{{ v.razon_social or (v.nombre ~ ' ' ~ v.apellido) }}</strong>
+                        </td>
+                        <td>
+                            <span class="fw-bold">{{ v.marca }} {{ v.modelo }}</span><br>
+                            <small class="text-muted">IMEI: {{ v.imei }}</small>
+                        </td>
+                        <td class="text-end fw-bold text-primary">
+                            u$d {{ "{:,.2f}".format(v_usd) }}
+                        </td>
+                        <td class="text-end fw-bold text-dark">
+                            $ {{ "{:,.2f}".format(v_ars) }}
+                        </td>
+                        <td class="text-end text-muted">
+                            ${{ "{:,.2f}".format(v.valor_dolar_momento or 0) }}
+                        </td>
+                        <td class="text-end">
+                            {% if s_pend > 0.05 %}
+                                <span class="badge bg-warning text-dark">$ {{ "{:,.2f}".format(s_pend) }}</span>
+                            {% else %}
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">Saldado</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('view_venta', venta_id=v.id) }}" class="btn btn-outline-primary" title="Ver Comprobante">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <a href="{{ url_for('imprimir_venta', venta_id=v.id) }}" target="_blank" class="btn btn-outline-secondary" title="Imprimir">
+                                    <i class="bi bi-printer"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center py-4 text-muted">No se encontraron ventas completadas con los filtros aplicados.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light fw-bold">
+                    <tr>
+                        <td colspan="4" class="text-end text-uppercase">TOTALES COMERCIALES:</td>
+                        <td class="text-end text-primary fs-6">u$d {{ "{:,.2f}".format(ns.total_usd) }}</td>
+                        <td class="text-end text-dark fs-6">$ {{ "{:,.2f}".format(ns.total_ars) }}</td>
+                        <td></td>
+                        <td class="text-end text-danger">$ {{ "{:,.2f}".format(ns.total_saldo) }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
 </div>
 {% endblock %}

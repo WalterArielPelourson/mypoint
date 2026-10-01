@@ -2507,10 +2507,13 @@ def cobrar_cliente(cliente_id):
     hoy = datetime.now().date()
     imputacion_elegida = request.form.get('imputacion', 'EQUIPOS') if request.method == 'POST' else request.args.get('imputacion', 'EQUIPOS')
 
+    # REGLA MONEDAS: True si es Equipos (USD), False si es Servicios/Reparaciones (ARS)
+    es_rubro_equipos = (imputacion_elegida == 'EQUIPOS')
+
     items_pendientes = []
     
-    if imputacion_elegida == 'EQUIPOS':
-        # Buscamos CUOTAS: El saldo real es 'monto_ars' (lo que falta pagar)
+    if es_rubro_equipos:
+        # BOLSA EQUIPOS: Base nativa en USD
         items_pendientes = db_query("""
             SELECT 'CUOTA' as tipo, vc.id, vc.venta_id, vc.numero_cuota, 
                    vc.monto_ars, v.valor_dolar_momento,
@@ -2522,10 +2525,11 @@ def cobrar_cliente(cliente_id):
             ORDER BY vc.fecha_vencimiento ASC
         """, (cliente_id,))
     else:
-        # Buscar Servicios: El saldo está en ARS
+        # BOLSA SERVICIOS / REPARACIONES: Base nativa en ARS
         items_pendientes = db_query("""
             SELECT 'SERVICIO' as tipo, id, NULL as venta_id, NULL as numero_cuota,
-                   COALESCE(saldo_pendiente, 0) as saldo_pendiente, fecha_servicio as fecha
+                   COALESCE(saldo_pendiente, 0) as saldo_pendiente, fecha_servicio as fecha,
+                   falla_reportada, imei_equipo
             FROM servicios_reparacion 
             WHERE cliente_id = ? AND status = 'COMPLETADO' 
             AND COALESCE(saldo_pendiente, 0) > 0.01 
@@ -2547,7 +2551,7 @@ def cobrar_cliente(cliente_id):
     if request.method == 'POST':
         db_conn = get_db()
         try:
-            # --- SELECCIÓN DE DÓLAR PARA LA ENTRADA DE DINERO ---
+            # --- 1. CAPTURA DE COTIZACIÓN ---
             tipo_dolar_elegido = request.form.get('tipo_dolar', 'blue')
             if tipo_dolar_elegido == 'oficial':
                 cotiz_hoy = float(dolar_info['compra'] or 1.0)
@@ -2556,96 +2560,206 @@ def cobrar_cliente(cliente_id):
             else:
                 cotiz_hoy = float(dolar_info['compra_blue'] or 1.0)
 
-            monto_fisico_entregado = float(request.form.get('monto_a_cobrar', 0) or 0)
-            moneda_pago = request.form.get('moneda', 'ARS')
-            cuenta_destino = request.form.get('cuenta_destino', 'EFECTIVO')
-            observaciones = request.form.get('observaciones', '')
+            if cotiz_hoy <= 0:
+                cotiz_hoy = 1.0
 
-            # --- CAPTURA DE ASIGNACIÓN ---
+            observaciones = request.form.get('observaciones', '').strip()
+
+            # --- 2. CAPTURA DE MEDIOS DE PAGO (PAGOS MÚLTIPLES O SIMPLE) ---
+            monto_efectivo_ars = float(request.form.get('monto_efectivo_ars', 0) or 0)
+            monto_efectivo_usd = float(request.form.get('monto_efectivo_usd', 0) or 0)
+
+            ids_cuentas = request.form.getlist('cuenta_id[]')
+            medios_tipo = request.form.getlist('medio_tipo[]')
+            montos_v_ars = request.form.getlist('monto_v_ars[]')
+            montos_v_usd = request.form.getlist('monto_v_usd[]')
+            recargos_pct = request.form.getlist('recargo_pct[]')
+            cuotas_list = request.form.getlist('cuotas_tarjeta[]')
+
+            # Fallback si viene de formulario de cobro directo simple
+            forma_cobro_simple = request.form.get('forma_cobro', '')
+            cuenta_destino_simple = request.form.get('cuenta_destino', 'EFECTIVO')
+            recargo_tarjeta_simple = float(request.form.get('recargo_tarjeta_pct', 0) or 0) if forma_cobro_simple == 'TARJETA_CREDITO' else 0.0
+            cuotas_tarjeta_simple = request.form.get('cuotas_tarjeta', '1')
+            monto_a_cobrar_simple = float(request.form.get('monto_a_cobrar', 0) or 0)
+            moneda_simple = request.form.get('moneda', 'ARS')
+
+            # Comprobantes seleccionados en la tabla de la izquierda
             ids_comprobantes = request.form.getlist('item_id[]')
             tipos_comprobantes = request.form.getlist('item_tipo[]')
             montos_aplicados = request.form.getlist('monto_aplicado[]')
 
-            if monto_fisico_entregado <= 0:
-                flash("El monto a cobrar debe ser positivo.", "danger")
+            # Suma de la deuda que se asignó a cancelar (en la moneda nativa del rubro)
+            suma_base_cancelatoria_nativa = sum(float(x or 0) for x in montos_aplicados)
+
+            if suma_base_cancelatoria_nativa <= 0 and monto_a_cobrar_simple <= 0:
+                flash("Debe asignar un monto a cancelar en los comprobantes.", "warning")
                 return redirect(url_for('cobrar_cliente', cliente_id=cliente_id, imputacion=imputacion_elegida))
-            
-            # Calculamos el impacto real en ambas monedas usando la cotización elegida
-            if moneda_pago == 'USD':
-                monto_usd_contable = monto_fisico_entregado
-                monto_ars_contable = monto_fisico_entregado * cotiz_hoy
-                monto_usd_fisico = monto_fisico_entregado # Para la caja
-            else:
-                monto_ars_contable = monto_fisico_entregado
-                monto_usd_contable = monto_fisico_entregado / cotiz_hoy
-                monto_usd_fisico = 0.0 # Para la caja
 
             db_conn.execute("BEGIN TRANSACTION")
-            
-            items_pagados_detalle = []
-            total_impacto_usd_aplicado = 0
 
-            for i in range(len(ids_comprobantes)):
-                monto_especifico_input = float(montos_aplicados[i] or 0)
-                
-                if monto_especifico_input > 0:
-                    id_ref = ids_comprobantes[i]
-                    tipo_ref = tipos_comprobantes[i]
-                    
-                    if tipo_ref == 'CUOTA':
-                        # El monto_especifico_input viene en USD
-                        total_impacto_usd_aplicado += monto_especifico_input
-                        
-                        # Obtenemos datos de la venta original para descontar PESOS correctamente del saldo
+            items_pagados_detalle = []
+            pagos_para_caja = []
+            desglose_recibos = []
+
+            # Detectamos el porcentaje de recargo aplicado en la operación
+            pct_recargo_operacion = 0.0
+            hay_pagos_multiples = (len(ids_cuentas) > 0 and any((float(a or 0) > 0 or float(u or 0) > 0) for a, u in zip(montos_v_ars, montos_v_usd)))
+
+            if hay_pagos_multiples or monto_efectivo_ars > 0 or monto_efectivo_usd > 0:
+                if monto_efectivo_ars > 0:
+                    pagos_para_caja.append({'cuenta': 'EFECTIVO', 'ars': monto_efectivo_ars, 'usd': 0.0, 'tipo': 'EFECTIVO', 'pct': 0})
+                    desglose_recibos.append(f"Efectivo ARS: ${monto_efectivo_ars:,.2f}")
+
+                if monto_efectivo_usd > 0:
+                    pagos_para_caja.append({'cuenta': 'EFECTIVO', 'ars': 0.0, 'usd': monto_efectivo_usd, 'tipo': 'EFECTIVO_USD', 'pct': 0})
+                    desglose_recibos.append(f"Efectivo USD: u$d {monto_efectivo_usd:,.2f}")
+
+                for i in range(len(ids_cuentas)):
+                    m_ars = float(montos_v_ars[i] or 0)
+                    m_usd = float(montos_v_usd[i] or 0)
+                    pct = float(recargos_pct[i] or 0)
+                    c_id = ids_cuentas[i]
+                    medio = medios_tipo[i] if i < len(medios_tipo) else 'TRANSFERENCIA'
+
+                    if m_ars > 0 or m_usd > 0:
+                        if pct > pct_recargo_operacion:
+                            pct_recargo_operacion = pct
+                        cta_info = db_query_func(db_conn, "SELECT nombre FROM cuentas_entidades WHERE id = ?", (c_id,))[0]
+                        ing_ars = m_ars + (m_ars * (pct / 100.0))
+                        ing_usd = m_usd + (m_usd * (pct / 100.0))
+
+                        pagos_para_caja.append({'cuenta': cta_info['nombre'], 'ars': ing_ars, 'usd': ing_usd, 'tipo': medio, 'pct': pct})
+                        desglose_recibos.append(f"{cta_info['nombre']} ({medio})")
+            else:
+                pct_recargo_operacion = recargo_tarjeta_simple
+                m_base = monto_a_cobrar_simple if monto_a_cobrar_simple > 0 else suma_base_cancelatoria_nativa
+                m_con_rec = m_base * (1 + pct_recargo_operacion / 100.0)
+
+                pagos_para_caja.append({
+                    'cuenta': cuenta_destino_simple,
+                    'ars': m_con_rec if moneda_simple == 'ARS' else (m_con_rec * cotiz_hoy),
+                    'usd': m_con_rec if moneda_simple == 'USD' else (m_con_rec / cotiz_hoy),
+                    'tipo': forma_cobro_simple or 'COBRO',
+                    'pct': pct_recargo_operacion
+                })
+                desglose_recibos.append(f"{forma_cobro_simple or 'Cobro'} ({cuenta_destino_simple}) [Recargo: {pct_recargo_operacion}%]")
+
+            # =========================================================================
+            # PUNTO 1: COBRO Y COMPENSACIÓN ESTRICTAMENTE EN MONEDA NATIVA
+            # =========================================================================
+            if es_rubro_equipos:
+                # --- RUBRO EQUIPOS: TODO NATIVO EN DÓLARES (USD) ---
+                base_cobro_usd = suma_base_cancelatoria_nativa if suma_base_cancelatoria_nativa > 0 else (monto_a_cobrar_simple if moneda_simple == 'USD' else monto_a_cobrar_simple / cotiz_hoy)
+                recargo_cobro_usd = base_cobro_usd * (pct_recargo_operacion / 100.0)
+                total_cobrado_usd = base_cobro_usd + recargo_cobro_usd
+
+                # Para guardar en cobros_clientes:
+                monto_final_usd_db = total_cobrado_usd
+                monto_recargo_usd_db = recargo_cobro_usd
+                monto_final_ars_db = total_cobrado_usd * cotiz_hoy
+                monto_recargo_ars_db = 0.0
+
+                # Descontar cuotas de equipos en USD
+                for i in range(len(ids_comprobantes)):
+                    monto_u = float(montos_aplicados[i] or 0)
+                    if monto_u > 0:
+                        id_ref = int(ids_comprobantes[i])
                         venta = db_query_func(db_conn, "SELECT v.valor_dolar_momento, v.id as v_id FROM ventas_cuotas vc JOIN ventas v ON vc.venta_id = v.id WHERE vc.id = ?", (id_ref,))[0]
-                        monto_ars_a_restar = monto_especifico_input * venta['valor_dolar_momento']
-                        
-                        # ACTUALIZACIÓN DEL SALDO PENDIENTE
+                        monto_ars_a_restar = monto_u * venta['valor_dolar_momento']
+
                         db_execute_func(db_conn, "UPDATE ventas_cuotas SET monto_ars = monto_ars - ? WHERE id = ?", (monto_ars_a_restar, id_ref))
                         db_execute_func(db_conn, "UPDATE ventas_cuotas SET estado = 'PAGADO' WHERE id = ? AND monto_ars <= 1.0", (id_ref,))
                         db_execute_func(db_conn, "UPDATE ventas SET saldo_pendiente = saldo_pendiente - ? WHERE id = ?", (monto_ars_a_restar, venta['v_id']))
-                        
-                        items_pagados_detalle.append(f"Cuota ID:{id_ref} (u$d {monto_especifico_input})")
-                    
-                    else:
-                        # Servicios (ARS)
-                        impacto_en_usd = monto_especifico_input / cotiz_hoy
-                        total_impacto_usd_aplicado += impacto_en_usd
-                        
-                        db_execute_func(db_conn, "UPDATE servicios_reparacion SET saldo_pendiente = saldo_pendiente - ? WHERE id = ?", (monto_especifico_input, id_ref))
-                        items_pagados_detalle.append(f"Servicio #{id_ref} (-${monto_especifico_input})")
+                        items_pagados_detalle.append(f"Cuota ID:{id_ref} (u$d {monto_u:.2f})")
 
-            # --- CORRECCIÓN: Definir referencia antes del INSERT ---
+            else:
+                # --- RUBRO SERVICIOS / REPARACIONES: TODO NATIVO EN PESOS (ARS) ---
+                base_cobro_ars = suma_base_cancelatoria_nativa if suma_base_cancelatoria_nativa > 0 else (monto_a_cobrar_simple if moneda_simple == 'ARS' else monto_a_cobrar_simple * cotiz_hoy)
+                recargo_cobro_ars = base_cobro_ars * (pct_recargo_operacion / 100.0)
+                total_cobrado_ars = base_cobro_ars + recargo_cobro_ars
+
+                # Para guardar en cobros_clientes:
+                monto_final_ars_db = total_cobrado_ars
+                monto_recargo_ars_db = recargo_cobro_ars
+                monto_final_usd_db = 0.0
+                monto_recargo_usd_db = 0.0
+
+                # Descontar servicios en ARS
+                for i in range(len(ids_comprobantes)):
+                    monto_a = float(montos_aplicados[i] or 0)
+                    if monto_a > 0:
+                        id_ref = int(ids_comprobantes[i])
+                        db_execute_func(db_conn, "UPDATE servicios_reparacion SET saldo_pendiente = MAX(0, saldo_pendiente - ?) WHERE id = ?", (monto_a, id_ref))
+                        items_pagados_detalle.append(f"Servicio #{id_ref} (-${monto_a:.2f})")
+
+            # --- REGISTRO EN COBROS_CLIENTES ---
+            metodo_pago_guardar = 'TARJETA_CREDITO' if pct_recargo_operacion > 0 else (pagos_para_caja[0]['tipo'] if len(pagos_para_caja) == 1 else 'PAGO_MULTIPLE')
+            imputacion_final_db = 'EQUIPOS' if es_rubro_equipos else 'SERVICIOS'
+
+            ref_texto = f"Cobro {imputacion_final_db}"
+            if es_rubro_equipos:
+                ref_texto += f" | Base: u$d {base_cobro_usd:.2f} | Recargo: u$d {recargo_cobro_usd:.2f}"
+            else:
+                ref_texto += f" | Base: ${base_cobro_ars:,.2f} | Recargo: ${recargo_cobro_ars:,.2f}"
+
             if items_pagados_detalle:
-                referencia = ", ".join(items_pagados_detalle)
-            else:
-                referencia = f"Cobro {imputacion_elegida}"
+                ref_texto += f" | {', '.join(items_pagados_detalle)}"
+            if desglose_recibos:
+                ref_texto += f" | Medios: {', '.join(desglose_recibos)}"
+            if observaciones:
+                ref_texto += f" | Obs: {observaciones}"
 
-            # Registro de cobro: Pasamos monto_usd_contable para congelar la cotización
-            cobro_id = db_execute_func(db_conn, """
-                INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                  monto_ars_contable, monto_usd_contable, cuenta_destino, referencia, observaciones, imputacion_elegida), return_id=True)
+            try:
+                cobro_id = db_execute_func(db_conn, """
+                    INSERT INTO cobros_clientes (
+                        cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, 
+                        metodo_pago, referencia, observaciones, imputacion, estado_anticipo,
+                        monto_recargo_ars, monto_recargo_usd
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'COBRADO', ?, ?)
+                """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                      monto_final_ars_db, monto_final_usd_db, metodo_pago_guardar, 
+                      ref_texto, observaciones, imputacion_final_db, 
+                      monto_recargo_ars_db, monto_recargo_usd_db), return_id=True)
+            except sqlite3.OperationalError:
+                # Fallback por si la base no tiene aún las columnas de recargo
+                cobro_id = db_execute_func(db_conn, """
+                    INSERT INTO cobros_clientes (
+                        cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, 
+                        metodo_pago, referencia, observaciones, imputacion, estado_anticipo
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'COBRADO')
+                """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                      monto_final_ars_db, monto_final_usd_db, metodo_pago_guardar, 
+                      ref_texto, observaciones, imputacion_final_db), return_id=True)
 
-            # Impacto en Caja
-            if moneda_pago == 'USD':
-                registrar_movimiento_caja(current_user.id, 'INGRESO_COBRO_DEUDA_USD', 0, monto_usd_fisico, 
-                                          f"Cobro {imputacion_elegida} u$d - {cliente['nombre']}", cobro_id, None, cuenta_destino)
-            else:
-                registrar_movimiento_caja(current_user.id, 'INGRESO_COBRO_DEUDA_ARS', monto_ars_contable, 0, 
-                                          f"Cobro {imputacion_elegida} - {cliente['nombre']}", cobro_id, None, cuenta_destino)
+            # --- IMPACTO FÍSICO EN CAJA / CUENTAS ---
+            for p in pagos_para_caja:
+                desc_asiento = f"Cobro {imputacion_final_db} [{p['tipo']}] - {cliente['nombre'] or cliente['razon_social']}"
+                if p.get('pct', 0) > 0:
+                    desc_asiento += f" (Inc. Recargo {p['pct']}%)"
+                cta = p['cuenta'] or 'EFECTIVO'
+
+                if p['ars'] > 0:
+                    registrar_movimiento_caja(current_user.id, f"INGRESO_COBRO_{p['tipo']}_ARS", p['ars'], 0, desc_asiento, cobro_id, None, cta)
+                if p['usd'] > 0:
+                    registrar_movimiento_caja(current_user.id, f"INGRESO_COBRO_{p['tipo']}_USD", 0, p['usd'], desc_asiento, cobro_id, None, cta)
 
             db_conn.commit()
-            flash(f"Cobro registrado y saldos actualizados correctamente.", "success")
-            return redirect(url_for('listar_clientes_cc'))
+            
+            msg_exito = f"Cobro registrado exitosamente en {imputacion_final_db}. "
+            if es_rubro_equipos:
+                msg_exito += f"Total: u$d {total_cobrado_usd:.2f} (Base: u$d {base_cobro_usd:.2f} + Recargo: u$d {recargo_cobro_usd:.2f})."
+            else:
+                msg_exito += f"Total: ${total_cobrado_ars:,.2f} ARS (Base: ${base_cobro_ars:,.2f} + Recargo: ${recargo_cobro_ars:,.2f})."
+                
+            flash(msg_exito, "success")
+            return redirect(url_for('ver_detalle_cc_cliente', cliente_id=cliente_id))
 
         except Exception as e:
-            if 'db_conn' in locals():
-                db_conn.rollback()
-            app.logger.error(f"Error cobro: {e}", exc_info=True)
-            flash(f"Error: {e}", "danger")
-            return redirect(url_for('cobrar_cliente', cliente_id=cliente_id))
+            if 'db_conn' in locals(): db_conn.rollback()
+            app.logger.error(f"Error cobro cliente: {e}", exc_info=True)
+            flash(f"Error al procesar el cobro: {e}", "danger")
+            return redirect(url_for('cobrar_cliente', cliente_id=cliente_id, imputacion=imputacion_elegida))
 
     return render_template('cuentas_corrientes/cobrar_cliente.html', 
                            cliente=cliente, items=items_pendientes, 
@@ -2805,7 +2919,6 @@ def registrar_pago_proveedor(proveedor_id):
 
 @app.route('/cuentas_corrientes/cliente/detalle/<int:cliente_id>')
 @login_required
-@tecnico_required
 def ver_detalle_cc_cliente(cliente_id):
     cliente = db_query("SELECT * FROM personas WHERE id = ?", (cliente_id,))[0]
     movimientos = []
@@ -2815,14 +2928,13 @@ def ver_detalle_cc_cliente(cliente_id):
     cotiz_actual = float(dolar_info['compra_blue'] or 1.0)
 
     # 1. DEBE y HABER: Ventas y sus CUOTAS (Moneda base: USD)
-    # MODIFICACIÓN: Agregamos JOIN con la tabla celulares para obtener marca, modelo e imei
     ventas = db_query("""
         SELECT v.id, v.fecha_venta, v.precio_final_ars, v.precio_final_usd, v.valor_dolar_momento, 
                v.cantidad_cuotas, v.monto_cobrado_ars, v.monto_cobrado_usd, 
                v.monto_transferencia_ars, v.monto_mp_ars, v.monto_debito_ars, 
                v.monto_credito_ars, v.monto_virtual_usd, v.valor_celular_parte_pago,
                c.marca, c.modelo, c.imei
-        FROM ventas v
+        FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id
         WHERE v.cliente_id = ? AND v.status = 'COMPLETADA'
     """, (cliente_id,))
@@ -2830,17 +2942,36 @@ def ver_detalle_cc_cliente(cliente_id):
     for v in ventas:
         cotiz_v = v['valor_dolar_momento'] or 1.0
         
-        # Preparamos el nombre del equipo para usarlo en los conceptos
         marca = v['marca'] if v['marca'] else "Equipo"
         modelo = v['modelo'] if v['modelo'] else "Desconocido"
         imei = v['imei'] if v['imei'] else "S/N"
         info_equipo = f"{marca} {modelo} (IMEI: {imei})"
+
+        # --- CORRECCIÓN MATEMÁTICA CLAVE: NETEO EXACTO DE SEÑAS EN LA VENTA ---
+        # 1. Sumamos las señas positivas aplicadas a esta venta
+        res_pos = db_query("""
+            SELECT COALESCE(SUM(ABS(monto_usd)), 0) as total 
+            FROM cobros_clientes 
+            WHERE estado_anticipo = 'APLICADO' 
+              AND monto_usd > 0 
+              AND referencia LIKE ?
+        """, (f'%Venta #{v["id"]}%',))
+        señas_pos_venta = res_pos[0]['total'] or 0.0
+
+        # 2. Restamos las cancelaciones compensadas en esta venta
+        res_neg = db_query("""
+            SELECT COALESCE(SUM(ABS(monto_usd)), 0) as total 
+            FROM cobros_clientes 
+            WHERE estado_anticipo = 'APLICADO' 
+              AND (monto_usd < 0 OR referencia LIKE '%Compensado%')
+              AND referencia LIKE ?
+        """, (f'%Venta #{v["id"]}%',))
+        cancelaciones_comp_venta = res_neg[0]['total'] or 0.0
+
+        # El crédito real que cubrió la venta es el neto (ej. 200 - 50 = 150)
+        monto_anticipos_aplicados = max(0.0, señas_pos_venta - cancelaciones_comp_venta)
         
-        # --- LÓGICA DE ANTICIPOS (Reintegrada según tu solicitud) ---
-        res_ant = db_query("SELECT SUM(monto_usd) as total FROM cobros_clientes WHERE estado_anticipo = 'APLICADO' AND referencia LIKE ?", (f'%Venta #{v["id"]}%',))
-        monto_anticipos_aplicados = res_ant[0]['total'] or 0.0
-        
-        # --- A. Entrega Inicial (DEBE REFORZADO) ---
+        # --- A. Entrega Inicial (DEBE) ---
         total_pago_hoy_ars = (
             (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + 
             (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + 
@@ -2857,17 +2988,17 @@ def ver_detalle_cc_cliente(cliente_id):
 
         if total_debe_inicial_usd > 0.01:
             movimientos.append({
+                'id': v['id'],
                 'fecha': v['fecha_venta'],
                 'tipo': 'DEBE',
                 'monto_reg': total_debe_inicial_usd,
                 'moneda_display': 'USD',
-                # MODIFICADO: Se agrega info_equipo a la descripción
-                'descripcion': f"Venta #{v['id']} - {info_equipo} - Compromiso Inicial (Deuda Real)", 
+                'descripcion': f"Venta #{v['id']} - {info_equipo} - Compromiso Inicial", 
                 'rubro': 'EQUIPOS',
                 'ref': v['id']
             })
 
-        # --- B. CUOTAS EN EL DEBE (Reintegrado) ---
+        # --- B. CUOTAS EN EL DEBE ---
         if v['cantidad_cuotas'] >= 1:
             cuotas = db_query("SELECT * FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
             for c in cuotas:
@@ -2880,11 +3011,11 @@ def ver_detalle_cc_cliente(cliente_id):
                 monto_cuota_ars = c['monto_original_ars'] if (c['monto_original_ars'] and c['monto_original_ars'] > 0) else c['monto_ars']
 
                 movimientos.append({
+                    'id': c['id'],
                     'fecha': c['fecha_vencimiento'] + " 09:00:00",
                     'tipo': 'DEBE', 
                     'monto_reg': monto_cuota_ars / cotiz_v,
                     'moneda_display': 'USD',
-                    # MODIFICADO: Se agrega info_equipo a la descripción
                     'descripcion': f"Venta #{v['id']} - {info_equipo} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
                     'rubro': 'EQUIPOS',
                     'vencida': es_vencida,
@@ -2892,7 +3023,7 @@ def ver_detalle_cc_cliente(cliente_id):
                     'ref': v['id']
                 })
 
-        # --- C. HABER: Lo entregado HOY (Haber de la venta) ---
+        # --- C. HABER: Lo entregado HOY en la venta ---
         total_ars_entregado_hoy = (
             (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + 
             (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + 
@@ -2903,104 +3034,188 @@ def ver_detalle_cc_cliente(cliente_id):
         
         if monto_reg_haber_hoy_usd > 0.01:
             movimientos.append({
+                'id': v['id'],
                 'fecha': v['fecha_venta'], 
                 'tipo': 'HABER', 
                 'monto_reg': monto_reg_haber_hoy_usd, 
                 'moneda_display': 'USD', 
-                # MODIFICADO: Se agrega info_equipo a la descripción
                 'descripcion': f"Pago Inicial Recibido - Venta #{v['id']} ({info_equipo})", 
                 'rubro': 'EQUIPOS', 
                 'es_cuota': False, 
                 'ref': v['id']
             })
 
-    # 2. DEBE: Servicios (Inamovible en ARS)
+    # 2. DEBE: Servicios / Reparaciones (ARS)
     servicios = db_query("SELECT id, fecha_servicio, precio_final_ars, falla_reportada FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'", (cliente_id,))
     for s in servicios:
         movimientos.append({
+            'id': s['id'],
             'fecha': s['fecha_servicio'], 'tipo': 'DEBE', 'monto_reg': s['precio_final_ars'], 
             'moneda_display': 'ARS', 'descripcion': f"Servicio #{s['id']} - {s['falla_reportada']}", 
             'rubro': 'SERVICIOS', 'vencida': False, 'es_cuota': False, 'ref': s['id']
         })
 
-    # 3. HABER: Cobros (Incluye los Anticipos en su fecha original)
-    #cobros = db_query("SELECT id, fecha_cobro, monto_ars, monto_usd, metodo_pago, observaciones, imputacion, estado_anticipo, referencia FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
-    #for p in cobros:
-    #    if p['imputacion'] == 'EQUIPOS':
-            # USAMOS EL MONTO_USD GUARDADO (Para que coincida con el listado)
-           # monto_reg = p['monto_usd'] if (p['monto_usd'] and p['monto_usd'] > 0) else (p['monto_ars'] / cotiz_actual)
-            
-            # Si el monto_usd ya está en la DB (con la corrección anterior), lo usamos.
-            # Solo si no existe (pagos viejos), calculamos con el dólar actual como último recurso.
-    #        if p['monto_usd'] and p['monto_usd'] > 0:
-    #            monto_reg = p['monto_usd']
-    #        else:
-    #            monto_reg = p['monto_ars'] / cotiz_actual
-            
-           
-            
-            
-            # Si el anticipo ya fue mostrado como "Aplicado" arriba, lo mostramos aquí solo como el ingreso original de dinero
-   #         desc_pago = f"Pago Cta.Cte. ({p['metodo_pago']})"
-   #         if p['estado_anticipo'] == 'APLICADO':
-   #             desc_pago = f"Anticipo Aplicado ({p['metodo_pago']})"
+ # 3. HABER / DEBE: Cobros, Señas, Devoluciones y Compensación Automática en Moneda Nativa
+    try:
+        cobros = db_query("""
+            SELECT id, fecha_cobro, monto_ars, monto_usd, metodo_pago, observaciones, imputacion, estado_anticipo, referencia,
+                   COALESCE(monto_recargo_ars, 0) as monto_recargo_ars,
+                   COALESCE(monto_recargo_usd, 0) as monto_recargo_usd
+            FROM cobros_clientes 
+            WHERE cliente_id = ?
+            ORDER BY fecha_cobro ASC, id ASC
+        """, (cliente_id,))
+    except Exception:
+        cobros = db_query("""
+            SELECT id, fecha_cobro, monto_ars, monto_usd, metodo_pago, observaciones, imputacion, estado_anticipo, referencia 
+            FROM cobros_clientes 
+            WHERE cliente_id = ?
+            ORDER BY fecha_cobro ASC, id ASC
+        """, (cliente_id,))
 
-   #         movimientos.append({
-   #             'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': monto_reg, 
-   #             'moneda_display': 'USD', 'descripcion': desc_pago, 
-   #             'rubro': 'EQUIPOS', 'es_cuota': False, 'ref': p['id']
-   #         })
-   #     else:
-   #         movimientos.append({
-   #             'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': p['monto_ars'], 
-   #             'moneda_display': 'ARS', 'descripcion': f"Pago Cta.Cte. ({p['metodo_pago']})", 
-   #             'rubro': 'SERVICIOS', 'es_cuota': False, 'ref': p['id']
-   #         })
-   
-   # 3. HABER: Cobros (Incluye los Anticipos en su fecha original)
-    cobros = db_query("SELECT id, fecha_cobro, monto_ars, monto_usd, metodo_pago, observaciones, imputacion, estado_anticipo, referencia FROM cobros_clientes WHERE cliente_id = ?", (cliente_id,))
     for p in cobros:
-        if p['imputacion'] == 'EQUIPOS':
-            # Si el monto_usd ya está en la DB (con la corrección anterior), lo usamos.
-            # Usamos abs() porque los AJUSTES de DÉBITO se guardan como montos negativos.
-            if p['monto_usd'] and abs(p['monto_usd']) > 0:
-                monto_reg = p['monto_usd']
-            else:
-                monto_reg = p['monto_ars'] / cotiz_actual
+        es_rubro_equipos = (p['imputacion'] == 'EQUIPOS')
+
+        if es_rubro_equipos:
+            # =========================================================================
+            # BOLSA EQUIPOS: BASE, RECARGO Y COMPENSACIÓN 100% EN DÓLARES (USD)
+            # =========================================================================
+            monto_val = p['monto_usd'] if (p['monto_usd'] is not None and abs(p['monto_usd']) > 0) else ((p['monto_ars'] or 0) / cotiz_actual)
             
-            # --- LÓGICA DE DESCRIPCIÓN ---
-            if p['metodo_pago'] == 'AJUSTE':
-                # Si es un ajuste manual del SuperAdmin
-                desc_pago = f"⚠️ {p['referencia']}: {p['observaciones']}"
-            else:
-                # Si el anticipo ya fue mostrado como "Aplicado" arriba, lo mostramos aquí solo como el ingreso original de dinero
-                desc_pago = f"Pago Cta.Cte. ({p['metodo_pago']})"
-                if p['estado_anticipo'] == 'APLICADO':
-                    desc_pago = f"Anticipo Aplicado ({p['metodo_pago']})"
+            # Captura del recargo en USD (de columna o parseo de referencia histórica)
+            recargo_usd = p['monto_recargo_usd'] if ('monto_recargo_usd' in p.keys() and p['monto_recargo_usd']) else 0.0
+            if recargo_usd == 0 and p['referencia']:
+                try:
+                    if 'Recargo: u$d ' in p['referencia']:
+                        recargo_usd = float(p['referencia'].split('Recargo: u$d ')[1].split(' |')[0].replace(',', ''))
+                    elif 'Recargo: $' in p['referencia']:
+                        recargo_usd = float(p['referencia'].split('Recargo: $')[1].split(' |')[0].replace(',', '')) / cotiz_actual
+                except Exception:
+                    pass
 
-            movimientos.append({
-                'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': monto_reg, 
-                'moneda_display': 'USD', 'descripcion': desc_pago, 
-                'rubro': 'EQUIPOS', 'es_cuota': False, 'ref': f"{p['id'] or ''} {p['observaciones']}"#'ref':  p['observaciones'] + p['id']
-            })
+            es_devolucion = (p['estado_anticipo'] == 'DEVUELTO' or monto_val < 0 or 'DEVOLUCIÓN' in (p['referencia'] or '').upper())
+
+            if es_devolucion:
+                # La devolución en efectivo es una salida física: se anota en el DEBE para compensar el crédito previo
+                movimientos.append({
+                    'id': p['id'],
+                    'fecha': p['fecha_cobro'],
+                    'tipo': 'DEBE',
+                    'monto_reg': abs(monto_val),
+                    'moneda_display': 'USD',
+                    'descripcion': f"↩️ Devolución / Reintegro de Seña: {p['observaciones'] or p['referencia']}",
+                    'rubro': 'EQUIPOS',
+                    'es_cuota': False,
+                    'ref': p['id']
+                })
+            else:
+                # COMPENSACIÓN AUTOMÁTICA EQUIPOS EN USD:
+                # Si hubo recargo, se anota en el DEBE (USD) para equilibrar el HABER cobrado en la tarjeta
+                if recargo_usd > 0:
+                    movimientos.append({
+                        'id': p['id'],
+                        'fecha': p['fecha_cobro'],
+                        'tipo': 'DEBE',
+                        'monto_reg': recargo_usd,
+                        'moneda_display': 'USD',
+                        'descripcion': f"⚡ Recargo Financiero Tarjeta ({p['metodo_pago']}) - Cobro #{p['id']}",
+                        'rubro': 'EQUIPOS',
+                        'es_cuota': False,
+                        'ref': p['id']
+                    })
+
+                if p['metodo_pago'] == 'AJUSTE':
+                    desc_pago = f"⚠️ {p['referencia']}: {p['observaciones']}"
+                elif p['metodo_pago'] == 'TARJETA_CREDITO':
+                    desc_pago = f"💳 {p['referencia']}"
+                elif p['metodo_pago'] == 'PAGO_MULTIPLE':
+                    desc_pago = f"💵/💳 {p['referencia']}"
+                elif p['estado_anticipo'] == 'APLICADO':
+                    desc_pago = f"Seña Aplicada ({p['metodo_pago']})"
+                else:
+                    desc_pago = f"Seña / Anticipo ({p['metodo_pago']})"
+
+                movimientos.append({
+                    'id': p['id'],
+                    'fecha': p['fecha_cobro'],
+                    'tipo': 'HABER',
+                    'monto_reg': abs(monto_val),
+                    'moneda_display': 'USD',
+                    'descripcion': desc_pago,
+                    'rubro': 'EQUIPOS',
+                    'es_cuota': False,
+                    'ref': p['id']
+                })
+
         else:
-            # --- LÓGICA PARA SERVICIOS / VARIOS (ARS) ---
-            if p['metodo_pago'] == 'AJUSTE':
-                # Si es un ajuste manual del SuperAdmin
-                desc_pago = f"⚠️ {p['referencia']}: {p['observaciones']}"
+            # =========================================================================
+            # BOLSA SERVICIOS / REPARACIONES: BASE, RECARGO Y COMPENSACIÓN 100% EN PESOS (ARS)
+            # =========================================================================
+            monto_val_ars = p['monto_ars'] or 0
+            
+            # Captura del recargo en ARS (de columna o parseo de referencia histórica)
+            recargo_ars = p['monto_recargo_ars'] if ('monto_recargo_ars' in p.keys() and p['monto_recargo_ars']) else 0.0
+            if recargo_ars == 0 and p['referencia']:
+                try:
+                    if 'Recargo: $' in p['referencia']:
+                        recargo_ars = float(p['referencia'].split('Recargo: $')[1].split(' |')[0].replace(',', ''))
+                except Exception:
+                    pass
+
+            es_devolucion = (p['estado_anticipo'] == 'DEVUELTO' or monto_val_ars < 0 or 'DEVOLUCIÓN' in (p['referencia'] or '').upper())
+
+            if es_devolucion:
+                movimientos.append({
+                    'id': p['id'],
+                    'fecha': p['fecha_cobro'],
+                    'tipo': 'DEBE',
+                    'monto_reg': abs(monto_val_ars),
+                    'moneda_display': 'ARS',
+                    'descripcion': f"↩️ Devolución de Seña en Efectivo: {p['observaciones'] or p['referencia']}",
+                    'rubro': 'SERVICIOS',
+                    'es_cuota': False,
+                    'ref': p['id']
+                })
             else:
-                desc_pago = f"Pago Cta.Cte. ({p['metodo_pago']})"
+                # COMPENSACIÓN AUTOMÁTICA SERVICIOS EN ARS:
+                # Si hubo recargo, se anota en el DEBE (ARS) para equilibrar el HABER cobrado en la tarjeta
+                if recargo_ars > 0:
+                    movimientos.append({
+                        'id': p['id'],
+                        'fecha': p['fecha_cobro'],
+                        'tipo': 'DEBE',
+                        'monto_reg': recargo_ars,
+                        'moneda_display': 'ARS',
+                        'descripcion': f"⚡ Recargo Financiero Tarjeta ({p['metodo_pago']}) - Cobro #{p['id']}",
+                        'rubro': 'SERVICIOS',
+                        'es_cuota': False,
+                        'ref': p['id']
+                    })
 
-            movimientos.append({
-                'fecha': p['fecha_cobro'], 'tipo': 'HABER', 'monto_reg': p['monto_ars'], 
-                'moneda_display': 'ARS', 'descripcion': desc_pago, 
-                'rubro': 'SERVICIOS', 'es_cuota': False, 'ref': p['id']
-            })
-   ##########################
-   
+                if p['metodo_pago'] == 'AJUSTE':
+                    desc_pago = f"⚠️ {p['referencia']}: {p['observaciones']}"
+                elif p['metodo_pago'] == 'TARJETA_CREDITO':
+                    desc_pago = f"💳 {p['referencia']}"
+                elif p['metodo_pago'] == 'PAGO_MULTIPLE':
+                    desc_pago = f"💵/💳 {p['referencia']}"
+                else:
+                    desc_pago = f"Pago ({p['metodo_pago']})"
 
-    # Ordenar y calcular saldo acumulado
-    movimientos.sort(key=lambda x: x['fecha'])
+                movimientos.append({
+                    'id': p['id'],
+                    'fecha': p['fecha_cobro'],
+                    'tipo': 'HABER',
+                    'monto_reg': abs(monto_val_ars),
+                    'moneda_display': 'ARS',
+                    'descripcion': desc_pago,
+                    'rubro': 'SERVICIOS',
+                    'es_cuota': False,
+                    'ref': p['id']
+                })
+
+    # ORDENAMIENTO CRONOLÓGICO POR FECHA E ID
+    movimientos.sort(key=lambda x: (x['fecha'], x.get('id', 0)))
+    
     saldo_equipos_usd_acum = 0
     saldo_servicios_ars_acum = 0
 
@@ -3018,7 +3233,8 @@ def ver_detalle_cc_cliente(cliente_id):
                            saldo_equipos=saldo_equipos_usd_acum,
                            saldo_servicios=saldo_servicios_ars_acum)
     
-    
+        
+      
 @app.route('/ventas/plan_cuotas/<int:venta_id>')
 @login_required
 def ver_plan_cuotas(venta_id):
@@ -3336,19 +3552,40 @@ def cotizar_venta(celular_id):
                     })
 
             # Sumamos los adicionales al precio base antes de impuestos
-            precio_final_usd_pre_tax += total_adicionales_usd
+            #precio_final_usd_pre_tax += total_adicionales_usd
             # ==========================================================
 
             # Convertimos el total acumulado de USD a ARS usando el DOLAR ELEGIDO
-            precio_final_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
+            #precio_final_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
 
             # Aplicar impuestos sobre el valor resultante en pesos
-            if impuestos_pct > 0:
-                precio_final_ars *= (1 + impuestos_pct / 100)
+            #if impuestos_pct > 0:
+            #    precio_final_ars *= (1 + impuestos_pct / 100)
             
             # Recalculamos el precio_final_usd para guardar en DB el valor real post-impuestos
-            precio_final_usd = precio_final_ars / valor_dolar_venta_local
+            #precio_final_usd = precio_final_ars / valor_dolar_venta_local
 
+            # --- CÁLCULO DE IMPUESTOS (TOTAL VS MONTO ESPECÍFICO) ---
+            impuestos_pct = float(request.form.get('impuestos_pct', 0) or 0)
+            tipo_base_impuesto = request.form.get('tipo_base_impuesto', 'TOTAL') # 'TOTAL' o 'PARCIAL'
+            base_imponible_especifica_ars = float(request.form.get('base_imponible_impuesto_ars', 0) or 0)
+
+            precio_base_en_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
+
+            if impuestos_pct > 0:
+                if tipo_base_impuesto == 'PARCIAL' and base_imponible_especifica_ars > 0:
+                    # El porcentaje se aplica ÚNICAMENTE al monto que el usuario especificó
+                    monto_impuesto_ars = base_imponible_especifica_ars * (impuestos_pct / 100.0)
+                    precio_final_ars = precio_base_en_ars + monto_impuesto_ars
+                else:
+                    # Se aplica a todo el total como siempre
+                    precio_final_ars = precio_base_en_ars * (1 + impuestos_pct / 100.0)
+            else:
+                precio_final_ars = precio_base_en_ars
+            
+            precio_final_usd = precio_final_ars / valor_dolar_venta_local
+            
+            
             fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             #fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
             
@@ -4051,6 +4288,48 @@ def mostrar_formulario_pago(venta_id):
                            form_data=form_data)
 
 
+# ==========================================================
+# UTILIDADES: COEFICIENTES Y CÁLCULO DE TARJETAS
+# ==========================================================
+def obtener_coeficientes_tarjetas_db():
+    """Retorna lista de tuplas dict con cuotas, coeficiente y descripción"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT cuotas, coeficiente, descripcion FROM coeficientes_tarjetas ORDER BY cuotas ASC")
+    filas = c.fetchall()
+    conn.close()
+    return [dict(f) for f in filas]
+
+def calcular_recargo_tarjeta(monto_base, cuotas):
+    """Calcula recargo y cuota según el coeficiente registrado"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT coeficiente FROM coeficientes_tarjetas WHERE cuotas = ?", (cuotas,))
+    fila = c.fetchone()
+    conn.close()
+    
+    coef = float(fila['coeficiente']) if fila else 1.0
+    monto_total = round(float(monto_base) * coef, 2)
+    monto_recargo = round(monto_total - float(monto_base), 2)
+    recargo_pct = round((coef - 1.0) * 100, 2)
+    monto_cuota = round(monto_total / cuotas, 2) if cuotas > 0 else monto_total
+    
+    return {
+        "coeficiente": coef,
+        "monto_base": round(float(monto_base), 2),
+        "monto_recargo": monto_recargo,
+        "monto_total": monto_total,
+        "monto_cuota": monto_cuota,
+        "recargo_pct": recargo_pct
+    }
+
+# Endpoint JSON para que tus formularios web calculen cuotas y recargos dinámicamente con JS
+@app.route('/api/coeficientes_tarjetas', methods=['GET'])
+def api_coeficientes_tarjetas():
+    return jsonify(obtener_coeficientes_tarjetas_db())
+
+
+
 @app.route('/cuentas_corrientes/cliente/pago_anticipado', methods=['GET', 'POST'])
 @login_required
 def pago_anticipado_cliente():
@@ -4061,95 +4340,135 @@ def pago_anticipado_cliente():
             monto = float(request.form.get('monto', 0))
             moneda = request.form.get('moneda', 'ARS')
             cuenta_destino = request.form.get('cuenta_destino', 'EFECTIVO')
-            
-            # --- SELECCIÓN DE RUBRO ---
             imputacion = request.form.get('imputacion', 'EQUIPOS') 
-            observaciones = request.form.get('observaciones', 'Pago por anticipado / Seña')
+            tipo_operacion = request.form.get('tipo_operacion', 'SUMAR') # 'SUMAR' o 'RESTAR'
+            observaciones_user = request.form.get('observaciones', '').strip()
             
-            # --- COTIZACIÓN ---
             valor_manual = request.form.get('valor_dolar_manual')
             dolar_info = obtener_cotizacion_dolar()
-            
-            # Determinamos la cotización a usar
-            if valor_manual and float(valor_manual) > 0:
-                cotiz = float(valor_manual)
-            else:
-                # Backup con API si no hay manual (en casos bloqueados o errores)
-                cotiz = float(dolar_info['venta_blue'] or 1.0)
+            cotiz = float(valor_manual) if (valor_manual and float(valor_manual) > 0) else float(dolar_info['venta_blue'] or 1.0)
 
             if not cliente_id or monto <= 0:
-                flash("Debe seleccionar un cliente y un monto válido.", "danger")
+                flash("Debe seleccionar un cliente y un monto válido mayor a cero.", "danger")
                 return redirect(url_for('pago_anticipado_cliente'))
 
             db_conn.execute("BEGIN TRANSACTION")
 
-            # --- LÓGICA DE CONVERSIÓN Y REDONDEO (PUNTO 2) ---
-            # Caso especial: Equipos en USD (Siempre 1 a 1, no importa la cotización manual)
             if imputacion == 'EQUIPOS' and moneda == 'USD':
                 monto_usd = round(monto, 2)
-                # El valor ARS se guarda como referencia histórica usando la cotización de la API
-                monto_ars = round(monto * float(dolar_info['venta_blue'] or 1.0), 2)
-            
-            # Otros casos: ARS para Equipos, o Reparaciones (ARS/USD)
+                monto_ars = round(monto * cotiz, 2)
             else:
                 if moneda == 'ARS':
                     monto_ars = round(monto, 2)
-                    # Aquí usamos la cotización manual para la división
                     monto_usd = round(monto / cotiz, 2) if cotiz > 0 else 0
-                else: # Pago en USD para Reparaciones (Cuenta ARS)
+                else:
                     monto_usd = round(monto, 2)
-                    # Aquí usamos la cotización manual para la multiplicación
                     monto_ars = round(monto * cotiz, 2)
 
-            # 2. Registrar en cobros_clientes (Usando los valores calculados y redondeados)
-            cobro_id = db_execute_func(db_conn, """
-                INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion, 
-        estado_anticipo)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,'DISPONIBLE')
-            """, (cliente_id, current_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-                  monto_ars, monto_usd, cuenta_destino, f"PAGO ANTICIPADO / SEÑA ({imputacion})", observaciones, imputacion), return_id=True)
+            fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # 3. Impacto en Caja/Cuentas Virtuales
-            tipo_mov = f'INGRESO_ANTICIPO_{imputacion}_{moneda}'
-            m_ars_caja = monto if moneda == 'ARS' else 0
-            m_usd_caja = monto if moneda == 'USD' else 0
-            
-            registrar_movimiento_caja(current_user.id, tipo_mov, monto_ars=m_ars_caja, monto_usd=m_usd_caja, 
-                                      descripcion=f"Anticipo {imputacion} - Cliente ID:{cliente_id} - {observaciones}", 
-                                      referencia_id=cobro_id, metodo_pago=cuenta_destino)
+            # =======================================================
+            # REGISTRO INDIVIDUAL INMUTABLE (NO MODIFICA FILAS ANTERIORES)
+            # =======================================================
+            if tipo_operacion == 'SUMAR':
+                obs_final = observaciones_user or f"Seña / Anticipo ({imputacion})"
+                
+                cobro_id = db_execute_func(db_conn, """
+                    INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion, estado_anticipo)
+                    VALUES (?, ?, ?, ?, ?, ?, 'SEÑA / ANTICIPO (+)', ?, ?, 'DISPONIBLE')
+                """, (cliente_id, current_user.id, fecha_actual, monto_ars, monto_usd, cuenta_destino, obs_final, imputacion), return_id=True)
+
+                registrar_movimiento_caja(
+                    user_id=current_user.id,
+                    tipo=f'INGRESO_ANTICIPO_{imputacion}_{moneda}',
+                    monto_ars=monto if moneda == 'ARS' else 0,
+                    monto_usd=monto if moneda == 'USD' else 0,
+                    descripcion=f"Ingreso Seña {imputacion} - Cliente #{cliente_id} - {obs_final}",
+                    referencia_id=cobro_id,
+                    metodo_pago=cuenta_destino
+                )
+                flash(f"Seña de {'u$d ' + str(monto_usd) if moneda == 'USD' else '$ ' + str(monto_ars)} registrada exitosamente a favor del cliente.", "success")
+
+            else:
+                # DEVOLUCIÓN INDIVIDUAL: Se graba como un movimiento separado sin tocar la seña original
+                obs_final = observaciones_user or f"Devolución de Seña ({imputacion})"
+
+                cobro_id = db_execute_func(db_conn, """
+                    INSERT INTO cobros_clientes (cliente_id, user_id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, imputacion, estado_anticipo)
+                    VALUES (?, ?, ?, ?, ?, ?, 'DEVOLUCIÓN DE SEÑA (-)', ?, ?, 'DEVUELTO')
+                """, (cliente_id, current_user.id, fecha_actual, -monto_ars, -monto_usd, cuenta_destino, obs_final, imputacion), return_id=True)
+
+                registrar_movimiento_caja(
+                    user_id=current_user.id,
+                    tipo=f'EGRESO_DEVOLUCION_ANTICIPO_{imputacion}_{moneda}',
+                    monto_ars=monto if moneda == 'ARS' else 0,
+                    monto_usd=monto if moneda == 'USD' else 0,
+                    descripcion=f"Egreso Devolución Seña {imputacion} - Cliente #{cliente_id} - {obs_final}",
+                    referencia_id=cobro_id,
+                    metodo_pago=cuenta_destino
+                )
+                flash(f"Devolución de seña por {'u$d ' + str(monto_usd) if moneda == 'USD' else '$ ' + str(monto_ars)} registrada exitosamente en caja y cuenta corriente.", "info")
 
             db_conn.commit()
-            flash(f"Pago anticipado para {imputacion} registrado exitosamente.", "success")
             return redirect(url_for('ver_detalle_cc_cliente', cliente_id=cliente_id))
 
         except Exception as e:
             if db_conn:
                 db_conn.rollback()
-            app.logger.error(f"Error en pago anticipado: {e}")
+            app.logger.error(f"Error en seña/devolución: {e}", exc_info=True)
             flash(f"Error: {e}", "danger")
             return redirect(url_for('pago_anticipado_cliente'))
 
-    # GET: Cargar formulario
     clientes = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_cliente = 1 ORDER BY apellido ASC")
     dolar = obtener_cotizacion_dolar()
-    return render_template('cuentas_corrientes/pago_anticipado.html', 
-                           clientes=clientes, 
-                           valor_blue_compra=dolar['compra_blue'], 
-                           valor_bcra_compra=dolar['compra'])
-    
-    
+    return render_template('cuentas_corrientes/pago_anticipado.html', clientes=clientes, valor_blue_compra=dolar['compra_blue'], valor_bcra_compra=dolar['compra'])
 
+   
+
+#@app.route('/api/anticipos_disponibles/<int:cliente_id>')
+#@login_required
+#def api_get_anticipos_disponibles(cliente_id):
+#    imputacion = request.args.get('imputacion', 'EQUIPOS')
+#    anticipos = db_query("""
+#        SELECT id, fecha_cobro, monto_ars, monto_usd, observaciones 
+#        FROM cobros_clientes 
+#        WHERE cliente_id = ? AND estado_anticipo = 'DISPONIBLE' 
+#        AND (imputacion = ? OR imputacion = 'ANTICIPO')
+#    """, (cliente_id, imputacion))
+#    return jsonify([dict(a) for a in anticipos])
 @app.route('/api/anticipos_disponibles/<int:cliente_id>')
 @login_required
 def api_get_anticipos_disponibles(cliente_id):
     imputacion = request.args.get('imputacion', 'EQUIPOS')
+    
+    # Traemos cada seña y cada devolución individual por su ID exacto
     anticipos = db_query("""
-        SELECT id, fecha_cobro, monto_ars, monto_usd, observaciones 
+        SELECT id, fecha_cobro, monto_ars, monto_usd, observaciones, referencia, estado_anticipo, metodo_pago 
         FROM cobros_clientes 
-        WHERE cliente_id = ? AND estado_anticipo = 'DISPONIBLE' 
-        AND (imputacion = ? OR imputacion = 'ANTICIPO')
+        WHERE cliente_id = ? 
+          AND (imputacion = ? OR imputacion = 'ANTICIPO')
+          AND (
+              referencia LIKE '%SEÑA%' 
+              OR referencia LIKE '%ANTICIPO%' 
+              OR referencia LIKE '%DEVOLUCIÓN%'
+              OR estado_anticipo IN ('DISPONIBLE', 'DEVUELTO')
+          )
+          AND referencia NOT LIKE '%Cuota ID:%'
+          AND referencia NOT LIKE '%Cobro Múltiple%'
+        ORDER BY fecha_cobro ASC, id ASC
     """, (cliente_id, imputacion))
-    return jsonify([dict(a) for a in anticipos])
+
+    resultado = []
+    for a in anticipos:
+        d = dict(a)
+        es_devolucion = (d['monto_usd'] < 0 or d['estado_anticipo'] == 'DEVUELTO' or 'DEVOLUCIÓN' in (d['referencia'] or '').upper())
+        d['tipo_movimiento'] = 'CANCELACION' if es_devolucion else 'ANTICIPO'
+        d['monto_usd_abs'] = abs(d['monto_usd'])
+        d['monto_ars_abs'] = abs(d['monto_ars'])
+        resultado.append(d)
+
+    return jsonify(resultado)
+
 
 
 @app.route('/ventas/rapida', methods=['GET', 'POST'])
@@ -4379,14 +4698,73 @@ def procesar_pago(venta_id):
                 total_ingresado_virtual_usd += (ingreso_final_ars / valor_dolar_pago) + ingreso_final_usd
 
         # 4. PROCESAR ANTICIPOS (SEÑAS)
-        anticipos_seleccionados = request.form.getlist('anticipos_ids[]')
-        monto_anticipos_usd_total = 0.0
-        for a_id in anticipos_seleccionados:
-            anticipo_data = db_query_func(db_conn, "SELECT monto_usd FROM cobros_clientes WHERE id = ? AND estado_anticipo = 'DISPONIBLE'", (a_id,))
-            if anticipo_data:
-                monto_anticipos_usd_total += anticipo_data[0]['monto_usd']
-                db_execute_func(db_conn, "UPDATE cobros_clientes SET estado_anticipo = 'APLICADO', referencia = referencia || ' (Aplicado a Venta #' || ? || ')' WHERE id = ?", (venta_id, a_id))
+        #anticipos_seleccionados = request.form.getlist('anticipos_ids[]')
+        #monto_anticipos_usd_total = 0.0
+        #for a_id in anticipos_seleccionados:
+        #    anticipo_data = db_query_func(db_conn, "SELECT monto_usd FROM cobros_clientes WHERE id = ? AND estado_anticipo = 'DISPONIBLE'", (a_id,))
+        #    if anticipo_data:
+        #        monto_anticipos_usd_total += anticipo_data[0]['monto_usd']
+        #        db_execute_func(db_conn, "UPDATE cobros_clientes SET estado_anticipo = 'APLICADO', referencia = referencia || ' (Aplicado a Venta #' || ? || ')' WHERE id = ?", (venta_id, a_id))
 
+        # --- 4. PROCESAR SEÑAS (ANTICIPOS POSITIVOS Y CANCELACIONES NEGATIVAS) ---
+        ids_positivos = request.form.getlist('señas_positivas_ids[]')
+        montos_pos_usar = request.form.getlist('seña_positiva_monto[]')
+        
+        ids_negativos = request.form.getlist('señas_negativas_ids[]')
+        montos_neg_usar = request.form.getlist('seña_negativa_monto[]')
+
+        total_anticipos_positivos_usd = 0.0
+        total_cancelaciones_negativas_usd = 0.0
+
+        # A) Procesar Anticipos Positivos (+)
+        for idx, p_id in enumerate(ids_positivos):
+            p_data = db_query_func(db_conn, "SELECT monto_usd, monto_ars, referencia FROM cobros_clientes WHERE id = ?", (p_id,))
+            if p_data:
+                saldo_pos_usd = p_data[0]['monto_usd']
+                usar_pos = float(montos_pos_usar[idx] or 0) if idx < len(montos_pos_usar) else saldo_pos_usd
+                usar_pos = min(usar_pos, saldo_pos_usd)
+
+                if usar_pos > 0:
+                    total_anticipos_positivos_usd += usar_pos
+                    remanente_pos = saldo_pos_usd - usar_pos
+
+                    if remanente_pos <= 0.05:
+                        db_execute_func(db_conn, """
+                            UPDATE cobros_clientes 
+                            SET estado_anticipo = 'APLICADO', 
+                                referencia = referencia || ' (Aplicado en Venta #' || ? || ')' 
+                            WHERE id = ?
+                        """, (venta_id, p_id))
+                    else:
+                        db_execute_func(db_conn, """
+                            UPDATE cobros_clientes 
+                            SET monto_usd = ?, 
+                                referencia = referencia || ' (Se usaron u$d ' || ? || ' en Venta #' || ? || ')' 
+                            WHERE id = ?
+                        """, (remanente_pos, f"{usar_pos:.2f}", venta_id, p_id))
+
+        # B) Procesar Cancelaciones / Retiros Negativos (-)
+        for idx, n_id in enumerate(ids_negativos):
+            n_data = db_query_func(db_conn, "SELECT monto_usd, referencia FROM cobros_clientes WHERE id = ?", (n_id,))
+            if n_data:
+                saldo_neg_usd = abs(n_data[0]['monto_usd'])
+                usar_neg = float(montos_neg_usar[idx] or 0) if idx < len(montos_neg_usar) else saldo_neg_usd
+                usar_neg = min(usar_neg, saldo_neg_usd)
+
+                if usar_neg > 0:
+                    total_cancelaciones_negativas_usd += usar_neg
+                    # Queda liquidada y vinculada a la venta para que no vuelva a descontarse
+                    db_execute_func(db_conn, """
+                        UPDATE cobros_clientes 
+                        SET estado_anticipo = 'APLICADO', 
+                            referencia = referencia || ' (Compensado en Venta #' || ? || ')' 
+                        WHERE id = ?
+                    """, (venta_id, n_id))
+
+        # CÁLCULO NETO DE CRÉDITO POR SEÑAS
+        monto_anticipos_usd_total = total_anticipos_positivos_usd - total_cancelaciones_negativas_usd
+        
+        
         # 5. PROCESAR PARTE DE PAGO (HASTA 4 EQUIPOS)
         usar_parte_pago = 'usar_parte_pago' in request.form
         valor_pp_usd = 0.0
@@ -4752,13 +5130,34 @@ def editar_presupuesto_venta(venta_id):
                         VALUES (?, ?, ?, ?)""", (venta_id, r_id_p, promo_cants[i], costo_p))
 
             # --- CÁLCULOS TOTALES FINALES ---
+            #precio_final_usd_pre_tax += total_adicionales_usd
+            #precio_final_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
+            #if impuestos_pct > 0:
+            #    precio_final_ars *= (1 + impuestos_pct / 100)
+            
+            #precio_final_usd = precio_final_ars / valor_dolar_venta_local
+
+            # --- CÁLCULOS TOTALES FINALES CON IMPUESTO GENERAL O SOBRE MONTO ESPECÍFICO ---
             precio_final_usd_pre_tax += total_adicionales_usd
-            precio_final_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
+            precio_base_en_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
+
+            # Captura de la configuración de base imponible
+            tipo_base_impuesto = request.form.get('tipo_base_impuesto', 'TOTAL')  # 'TOTAL' o 'PARCIAL'
+            base_imponible_especifica_ars = float(request.form.get('base_imponible_impuesto_ars', 0) or 0)
+
             if impuestos_pct > 0:
-                precio_final_ars *= (1 + impuestos_pct / 100)
+                if tipo_base_impuesto == 'PARCIAL' and base_imponible_especifica_ars > 0:
+                    # El porcentaje se aplica ÚNICAMENTE sobre el monto específico indicado
+                    monto_impuesto_ars = base_imponible_especifica_ars * (impuestos_pct / 100.0)
+                    precio_final_ars = precio_base_en_ars + monto_impuesto_ars
+                else:
+                    # Se aplica sobre el total general como siempre
+                    precio_final_ars = precio_base_en_ars * (1 + impuestos_pct / 100.0)
+            else:
+                precio_final_ars = precio_base_en_ars
             
             precio_final_usd = precio_final_ars / valor_dolar_venta_local
-
+            
             # Actualizar tabla de ventas
             db_execute_func(db_conn, """
                 UPDATE ventas SET 
@@ -5553,6 +5952,7 @@ def reporte_rentabilidad():
     # --- 4b. EGRESOS VIRTUALES (CON TODOS TUS FILTROS PERSONALIZADOS) ---
     egr_virtuales_man = db_query("""
         SELECT metodo_pago as cuenta,
+               COALESCE(descripcion, 'Sin descripción') as descripcion,
                COALESCE(SUM(monto_ars + (monto_usd * ?)), 0) as total
         FROM caja_movimientos
         WHERE (tipo LIKE 'EGRESO_MANUAL%' OR tipo = 'EGRESO_VIRTUAL')
@@ -5579,7 +5979,8 @@ def reporte_rentabilidad():
           AND LOWER(descripcion) NOT LIKE '%venta%dolar%'
           AND (sub_categoria IS NULL OR sub_categoria NOT IN ('Aportes Socios', 'Retiros Socios'))
           AND fecha BETWEEN ? AND ?
-        GROUP BY metodo_pago
+        GROUP BY metodo_pago, descripcion
+        ORDER BY metodo_pago ASC, total DESC
     """, (dolar_c, start_date, end_date_query))
 
     # --- 5. FLUJO DE CUENTAS ---
@@ -5670,91 +6071,163 @@ def reporte_rentabilidad():
 def detalle_ventas_rentabilidad():
     start_date, end_date_display, end_date_query = get_date_filters()
     
-    # LÓGICA DE PRECIO REAL NETO (USD)
-    # Usamos el precio_final_usd guardado al cobrar y le descontamos el recargo de tarjeta
-    # para obtener el ingreso real del local y compararlo contra el costo.
-    query = """
+    # CONSULTA: VENTA NETA Y MARGEN 100% LIMPIOS DE IMPUESTOS Y RECARGOS
+    ventas = db_query("""
         SELECT 
-            v.id, 
-            v.fecha_venta, 
-            c.marca, 
-            c.modelo, 
-            c.imei, 
-            
-            -- 1. PRECIO DE VENTA NETO REAL (USD)
-            -- Tomamos lo que pagó el cliente y le quitamos el recargo financiero (impuestos_pct)
-            (v.precio_final_usd / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) as precio_final_usd, 
-            
-            -- 2. COSTO DEL EQUIPO (USD)
-            COALESCE(c.costo_usd, 0) as costo_usd,
-            
-            -- 3. MARGEN REAL (Precio Neto Real - Costo)
-            -- Si este resultado es negativo, significa que hubo pérdida en la venta
-            ((v.precio_final_usd / (1 + (COALESCE(v.impuestos_pct, 0) / 100.0))) - COALESCE(c.costo_usd, 0)) as margen_usd
+            sub.id,
+            sub.fecha_venta,
+            sub.marca,
+            sub.modelo,
+            sub.imei,
+            sub.precio_final_usd,
+            sub.venta_neta_usd,
+            sub.costo_celular_usd,
+            sub.costo_accesorios_usd,
+            sub.costo_regalos_usd,
+            sub.costo_total_usd,
+            -- MARGEN NETO REAL LIMPIO (Venta Comercial Neta - Costo Total)
+            (sub.venta_neta_usd - sub.costo_total_usd) AS margen_neto_usd
+        FROM (
+            SELECT 
+                v.id, 
+                v.fecha_venta, 
+                c.marca, 
+                c.modelo, 
+                c.imei,
+                v.precio_final_usd,
+                
+                -- 1. VENTA COMERCIAL NETA (Costo + Ganancia del Celular + Precio de Accesorios)
+                -- Totalmente blindado contra impuestos y recargos
+                (
+                    CASE 
+                        WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                        WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                        WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                        -- Si no hay ganancia guardada, deduce impuestos y accesorios de precio_final_usd para no duplicar
+                        ELSE (
+                            (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                            / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                        )
+                    END 
+                    + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+                ) AS venta_neta_usd,
+                
+                -- 2. DESGLOSE DE COSTOS REALES
+                COALESCE(c.costo_usd, 0) AS costo_celular_usd,
+                COALESCE((
+                    SELECT SUM(iav.cantidad * COALESCE(iav.costo_usd_momento, 0)) 
+                    FROM items_adicionales_venta iav 
+                    WHERE iav.venta_id = v.id
+                ), 0.0) AS costo_accesorios_usd,
+                COALESCE((
+                    SELECT SUM(ipv.cantidad * COALESCE(ipv.costo_usd_momento, 0)) 
+                    FROM items_promocionales_venta ipv 
+                    WHERE ipv.venta_id = v.id
+                ), 0.0) AS costo_regalos_usd,
+                
+                -- 3. COSTO TOTAL
+                (
+                    COALESCE(c.costo_usd, 0) + 
+                    COALESCE((SELECT SUM(iav.cantidad * COALESCE(iav.costo_usd_momento, 0)) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0) +
+                    COALESCE((SELECT SUM(ipv.cantidad * COALESCE(ipv.costo_usd_momento, 0)) FROM items_promocionales_venta ipv WHERE ipv.venta_id = v.id), 0.0)
+                ) AS costo_total_usd
 
-        FROM ventas v 
-        JOIN celulares c ON v.celular_id = c.id 
-        WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
-        ORDER BY v.fecha_venta DESC
-    """
-
-    ventas = db_query(query, (start_date, end_date_query))
+            FROM ventas v 
+            JOIN celulares c ON v.celular_id = c.id 
+            WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
+        ) AS sub
+        ORDER BY sub.fecha_venta DESC
+    """, (start_date, end_date_query))
 
     return render_template('reportes/detalle_ventas.html', 
-                           ventas=ventas, start_date=start_date, end_date=end_date_display)
+                           ventas=ventas, 
+                           start_date=start_date, 
+                           end_date=end_date_display)
     
-
+    
 @app.route('/exportar/detalle_ventas_usd')
 @login_required
 @admin_required
 def exportar_detalle_ventas_usd():
     start_date, _, end_date_query = get_date_filters()
     
-    # Usamos EXACTAMENTE la misma query de reconstrucción para que el Excel coincida con la pantalla
-    query = """
-        SELECT v.id, v.fecha_venta, c.marca, c.modelo, c.imei, 
-               (COALESCE(c.costo_usd, 0) + 
-                CASE 
-                    WHEN v.ganancia_pct > 0 THEN (COALESCE(c.costo_usd, 0) * v.ganancia_pct / 100.0)
-                    WHEN v.monto_agregado_ars > 0 THEN (v.monto_agregado_ars / v.valor_dolar_momento)
-                    WHEN v.monto_agregado_usd > 0 THEN v.monto_agregado_usd
-                    ELSE 0
-                END +
-                COALESCE((SELECT SUM(cantidad * precio_vendido_usd) 
-                          FROM items_adicionales_venta WHERE venta_id = v.id), 0)
-               ) as precio_final_usd, 
-               COALESCE(c.costo_usd, 0) as costo_usd
-        FROM ventas v 
-        JOIN celulares c ON v.celular_id = c.id 
-        WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
-        ORDER BY v.fecha_venta DESC
-    """
-    
-    ventas = db_query(query, (start_date, end_date_query))
+    # CONSULTA SINCRONIZADA IDÉNTICA A LA VISTA WEB
+    ventas = db_query("""
+        SELECT 
+            sub.id,
+            sub.fecha_venta,
+            sub.marca,
+            sub.modelo,
+            sub.imei,
+            sub.precio_final_usd,
+            sub.venta_neta_usd,
+            sub.costo_celular_usd,
+            sub.costo_accesorios_usd,
+            sub.costo_regalos_usd,
+            sub.costo_total_usd,
+            (sub.venta_neta_usd - sub.costo_total_usd) AS margen_neto_usd
+        FROM (
+            SELECT 
+                v.id, 
+                v.fecha_venta, 
+                c.marca, 
+                c.modelo, 
+                c.imei,
+                v.precio_final_usd,
+                (
+                    CASE 
+                        WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                        WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                        WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                        ELSE (
+                            (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                            / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                        )
+                    END 
+                    + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+                ) AS venta_neta_usd,
+                COALESCE(c.costo_usd, 0) AS costo_celular_usd,
+                COALESCE((SELECT SUM(iav.cantidad * COALESCE(iav.costo_usd_momento, 0)) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0) AS costo_accesorios_usd,
+                COALESCE((SELECT SUM(ipv.cantidad * COALESCE(ipv.costo_usd_momento, 0)) FROM items_promocionales_venta ipv WHERE ipv.venta_id = v.id), 0.0) AS costo_regalos_usd,
+                (
+                    COALESCE(c.costo_usd, 0) + 
+                    COALESCE((SELECT SUM(iav.cantidad * COALESCE(iav.costo_usd_momento, 0)) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0) +
+                    COALESCE((SELECT SUM(ipv.cantidad * COALESCE(ipv.costo_usd_momento, 0)) FROM items_promocionales_venta ipv WHERE ipv.venta_id = v.id), 0.0)
+                ) AS costo_total_usd
+            FROM ventas v 
+            JOIN celulares c ON v.celular_id = c.id 
+            WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
+        ) AS sub
+        ORDER BY sub.fecha_venta DESC
+    """, (start_date, end_date_query))
 
     output = io.StringIO()
-    output.write('\ufeff') # BOM para Excel
+    output.write('\ufeff')
     writer = csv.writer(output, delimiter=';')
     
-    writer.writerow(['Fecha', 'ID Venta', 'Marca', 'Modelo', 'IMEI', 'Costo (USD)', 'Venta Neta (USD)', 'Margen Real (USD)'])
+    writer.writerow([
+        'Fecha', 'Venta ID', 'Marca', 'Modelo', 'IMEI', 
+        'Venta Neta Comercial (USD)', 'Costo Celular (USD)', 'Costo Accesorios (USD)', 
+        'Costo Regalos (USD)', 'Costo Total (USD)', 'Margen Neto Comercial (USD)'
+    ])
     
     for v in ventas:
-        # Calculamos el margen antes de escribir la fila
-        margen = v['precio_final_usd'] - v['costo_usd']
-        
         writer.writerow([
             v['fecha_venta'], 
             v['id'], 
             v['marca'], 
             v['modelo'], 
             v['imei'],
-            f"{v['costo_usd']:.2f}".replace('.', ','),
-            f"{v['precio_final_usd']:.2f}".replace('.', ','),
-            f"{margen:.2f}".replace('.', ',')
+            f"{v['venta_neta_usd']:.2f}".replace('.', ','),
+            f"{v['costo_celular_usd']:.2f}".replace('.', ','),
+            f"{v['costo_accesorios_usd']:.2f}".replace('.', ','),
+            f"{v['costo_regalos_usd']:.2f}".replace('.', ','),
+            f"{v['costo_total_usd']:.2f}".replace('.', ','),
+            f"{v['margen_neto_usd']:.2f}".replace('.', ',')
         ])
     
     output.seek(0)
-    filename = f"Detalle_Ventas_Netas_USD_{start_date}.csv"
+    filename = f"Detalle_Rentabilidad_Ventas_Netas_{start_date}.csv"
     return Response(output, mimetype="text/csv", headers={"Content-Disposition": f"attachment;filename={filename}"})
 
 
@@ -6335,26 +6808,57 @@ def reporte_ventas_totales():
     filtro_tipo = request.args.get('tipo', 'TODOS')
     filtro_vendedor = request.args.get('vendedor', '')
 
-    params_v = [start_date, end_date_query]
-    params_s = [start_date, end_date_query]
+    # Obtenemos cotización real para convertir servicios a USD (en vez de dividir por 1000 fijo)
+    dolar_info = inject_dolar_values()
+    valor_dolar_venta_local = float(dolar_info.get('valor_dolar_venta') or 1.0)
+    if valor_dolar_venta_local <= 0:
+        valor_dolar_venta_local = 1.0
 
-    # --- CONSULTA UNIFICADA CORREGIDA ---
+    params_v = [start_date, end_date_query]
+    params_s = [valor_dolar_venta_local, start_date, end_date_query]
+
+    # --- CONSULTA UNIFICADA: VENTA NETA COMERCIAL (SIN IMPUESTOS NI RECARGOS) ---
     query = """ 
     SELECT * FROM (
-        -- VENTAS DE EQUIPOS
+        -- VENTAS DE EQUIPOS (Valor Comercial Puro sin IVA ni Recargo de Tarjeta)
         SELECT 
             v.fecha_venta as fecha,
             'EQUIPO' as categoria,
             v.id as ref_id,
-            -- Lógica blindada para el nombre del cliente
             CASE 
                 WHEN p.razon_social IS NOT NULL AND p.razon_social != '' THEN p.razon_social
                 ELSE TRIM(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, ''))
             END as cliente,
             c.marca || ' ' || c.modelo || ' (' || c.imei || ')' as descripcion,
             'VENTA DIRECTA' as vendedor,
-            v.precio_final_ars as total_ars,
-            v.precio_final_usd as total_usd,
+            -- TOTAL ARS COMERCIAL PURO
+            (
+                (
+                    CASE 
+                        WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                        WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                        WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                        ELSE (
+                            (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                            / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                        )
+                    END 
+                    + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+                ) * v.valor_dolar_momento
+            ) as total_ars,
+            -- TOTAL USD COMERCIAL PURO
+            (
+                CASE 
+                    WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                    WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                    WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                    ELSE (
+                        (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                        / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                    )
+                END 
+                + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+            ) as total_usd,
             v.status as estado
         FROM ventas v
         JOIN personas p ON v.cliente_id = p.id
@@ -6363,12 +6867,11 @@ def reporte_ventas_totales():
 
         UNION ALL
 
-        -- SERVICIOS Y ACCESORIOS
+        -- SERVICIOS Y ACCESORIOS (Con conversión USD real del día)
         SELECT 
             s.fecha_servicio as fecha,
             s.tipo_servicio as categoria,
             s.id as ref_id,
-            -- Lógica blindada para el nombre del cliente
             CASE 
                 WHEN p.razon_social IS NOT NULL AND p.razon_social != '' THEN p.razon_social
                 ELSE TRIM(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, ''))
@@ -6377,8 +6880,8 @@ def reporte_ventas_totales():
             COALESCE(s.tecnico_nombre, 'SIN ASIGNAR') as vendedor,
             s.precio_final_ars as total_ars,
             CASE 
-                WHEN s.precio_final_ars > 0 THEN (s.precio_final_ars / 1000.0) 
-                ELSE 0 
+                WHEN s.precio_final_ars > 0 THEN (s.precio_final_ars / ?) 
+                ELSE 0.0 
             END as total_usd,
             s.status as estado
         FROM servicios_reparacion s
@@ -6401,11 +6904,13 @@ def reporte_ventas_totales():
     query += " ORDER BY fecha DESC"
     
     ventas = db_query(query, tuple(final_params))
-    total_ars = sum(v['total_ars'] for v in ventas)
+    total_ars = sum((v['total_ars'] or 0) for v in ventas)
+    total_usd = sum((v['total_usd'] or 0) for v in ventas)
     
     return render_template('reportes/ventas_totales.html', 
                            ventas=ventas, 
                            total_ars=total_ars,
+                           total_usd=total_usd,
                            start_date=start_date, 
                            end_date=end_date_display,
                            filtros={'tipo': filtro_tipo, 'vendedor': filtro_vendedor})
@@ -6419,10 +6924,15 @@ def exportar_ventas_totales():
     filtro_tipo = request.args.get('tipo', 'TODOS')
     filtro_vendedor = request.args.get('vendedor', '')
 
-    params_v = [start_date, end_date_query]
-    params_s = [start_date, end_date_query]
+    dolar_info = inject_dolar_values()
+    valor_dolar_venta_local = float(dolar_info.get('valor_dolar_venta') or 1.0)
+    if valor_dolar_venta_local <= 0:
+        valor_dolar_venta_local = 1.0
 
-    # 2. La misma QUERY UNIFICADA (UNION ALL) para que coincidan los datos
+    params_v = [start_date, end_date_query]
+    params_s = [valor_dolar_venta_local, start_date, end_date_query]
+
+    # 2. La misma QUERY UNIFICADA LIMPIA DE IMPUESTOS Y RECARGOS
     query = """
     SELECT * FROM (
         SELECT 
@@ -6435,8 +6945,32 @@ def exportar_ventas_totales():
             END as cliente,
             c.marca || ' ' || c.modelo || ' (' || c.imei || ')' as descripcion,
             'VENTA DIRECTA' as vendedor,
-            v.precio_final_ars as total_ars,
-            v.precio_final_usd as total_usd
+            (
+                (
+                    CASE 
+                        WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                        WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                        WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                        ELSE (
+                            (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                            / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                        )
+                    END 
+                    + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+                ) * v.valor_dolar_momento
+            ) as total_ars,
+            (
+                CASE 
+                    WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                    WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                    WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                    ELSE (
+                        (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                        / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                    )
+                END 
+                + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+            ) as total_usd
         FROM ventas v
         JOIN personas p ON v.cliente_id = p.id
         JOIN celulares c ON v.celular_id = c.id
@@ -6455,7 +6989,10 @@ def exportar_ventas_totales():
             s.falla_reportada as descripcion,
             COALESCE(s.tecnico_nombre, 'SIN ASIGNAR') as vendedor,
             s.precio_final_ars as total_ars,
-            CASE WHEN s.precio_final_ars > 0 THEN (s.precio_final_ars / 1000.0) ELSE 0 END as total_usd
+            CASE 
+                WHEN s.precio_final_ars > 0 THEN (s.precio_final_ars / ?) 
+                ELSE 0.0 
+            END as total_usd
         FROM servicios_reparacion s
         JOIN personas p ON s.cliente_id = p.id
         WHERE s.status = 'COMPLETADO' AND s.fecha_servicio BETWEEN ? AND ?
@@ -6483,8 +7020,8 @@ def exportar_ventas_totales():
     output.write('\ufeff') # BOM para que Excel reconozca tildes
     writer = csv.writer(output, delimiter=';') # Punto y coma para Excel en español
     
-    # Encabezados de las columnas
-    writer.writerow(['Fecha', 'Categoría', 'ID Referencia', 'Cliente', 'Descripción / Item',  'Total ARS', 'Total USD'])
+    # Encabezados de las columnas comerciales
+    writer.writerow(['Fecha', 'Categoría', 'ID Referencia', 'Cliente', 'Descripción / Item',  'Total ARS Comercial', 'Total USD Comercial'])
     
     # Escribir las filas de datos
     for v in ventas:
@@ -6494,21 +7031,21 @@ def exportar_ventas_totales():
             v['ref_id'],
             v['cliente'],
             v['descripcion'],
-            
-            f"{v['total_ars']:.2f}".replace('.', ','), # Formato número para Excel
-            f"{v['total_usd']:.2f}".replace('.', ',')
+            f"{(v['total_ars'] or 0.0):.2f}".replace('.', ','),
+            f"{(v['total_usd'] or 0.0):.2f}".replace('.', ',')
         ])
     
     output.seek(0)
     fecha_str = datetime.now().strftime("%Y-%m-%d")
-    filename = f"Reporte_Ventas_Totales_{fecha_str}.csv"
+    filename = f"Reporte_Ventas_Totales_Comerciales_{fecha_str}.csv"
     
     return Response(
         output,
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment;filename={filename}"}
     )
-
+    
+    
 
 # ... (resto del código de app.py) ...
 # ... (resto del código de app.py) ...
@@ -7450,22 +7987,50 @@ def exportar_compras():
 @login_required
 def historial_ventas():
     start_date, end_date_display, end_date_query = get_date_filters()
-    # Capturamos el texto del cliente
     filtro_cliente = request.args.get('cliente', '').strip()
     filtro_producto = request.args.get('producto', '').strip()
 
+    # CONSULTA: VENTA NETA COMERCIAL PURA EN ARS Y USD (Sin impuestos ni recargos de tarjeta)
     query = """
-        SELECT v.*, c.marca, c.modelo, c.imei, p.nombre, p.apellido, p.razon_social,
-               u.username as vendedor_real 
+        SELECT 
+            v.*, 
+            c.marca, c.modelo, c.imei, 
+            p.nombre, p.apellido, p.razon_social,
+            -- VENTA NETA EN USD
+            (
+                CASE 
+                    WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                    WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                    WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                    ELSE (
+                        (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                        / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                    )
+                END 
+                + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+            ) AS venta_neta_usd,
+            -- VENTA NETA EN ARS
+            (
+                (
+                    CASE 
+                        WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                        WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                        WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                        ELSE (
+                            (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                            / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                        )
+                    END 
+                    + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+                ) * v.valor_dolar_momento
+            ) AS venta_neta_ars
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id 
         JOIN personas p ON v.cliente_id = p.id 
-        LEFT JOIN users u ON v.user_id = u.id
         WHERE v.status = 'COMPLETADA' AND v.fecha_venta BETWEEN ? AND ?
     """
     params = [start_date, end_date_query]
 
-    # NUEVA LÓGICA DE BÚSQUEDA DE CLIENTE POR TEXTO
     if filtro_cliente:
         query += """ AND (
             LOWER(p.nombre) LIKE LOWER(?) OR 
@@ -7482,27 +8047,53 @@ def historial_ventas():
 
     query += " ORDER BY v.fecha_venta DESC"
     ventas = db_query(query, tuple(params))
-    
-    # Ya no necesitamos enviar 'clientes_disponibles' porque usaremos un input de texto
+
     return render_template('ventas/historial_ventas.html', 
                            ventas=ventas,
                            start_date=start_date, 
                            end_date=end_date_display,
                            filtros_activos={'cliente': filtro_cliente, 'producto': filtro_producto})
-    
-    
-# NUEVA RUTA: Exportar historial con filtros aplicados
+
+
 @app.route('/exportar/ventas/historial')
 @login_required
 def exportar_ventas_historial():
     start_date, _, end_date_query = get_date_filters()
-    filtro_cliente = request.args.get('cliente', '')
+    filtro_cliente = request.args.get('cliente', '').strip()
     filtro_producto = request.args.get('producto', '').strip()
 
     query = """
-        SELECT v.id, v.fecha_venta, c.marca, c.modelo, c.imei, 
-               v.precio_final_ars, v.precio_final_usd, v.valor_dolar_momento, 
-               p.nombre, p.apellido, p.razon_social, v.saldo_pendiente
+        SELECT 
+            v.id, v.fecha_venta, c.marca, c.modelo, c.imei, 
+            p.nombre, p.apellido, p.razon_social, v.saldo_pendiente, v.valor_dolar_momento,
+            -- VENTA NETA COMERCIAL EN USD
+            (
+                CASE 
+                    WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                    WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                    WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                    ELSE (
+                        (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                        / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                    )
+                END 
+                + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+            ) AS venta_neta_usd,
+            -- VENTA NETA COMERCIAL EN ARS
+            (
+                (
+                    CASE 
+                        WHEN v.ganancia_pct IS NOT NULL THEN (COALESCE(c.costo_usd, 0) * (1 + v.ganancia_pct / 100.0))
+                        WHEN v.monto_agregado_usd IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + v.monto_agregado_usd)
+                        WHEN v.monto_agregado_ars IS NOT NULL THEN (COALESCE(c.costo_usd, 0) + (v.monto_agregado_ars / COALESCE(NULLIF(v.valor_dolar_momento, 0), 1.0)))
+                        ELSE (
+                            (v.precio_final_usd - COALESCE((SELECT SUM(iav2.cantidad * iav2.precio_vendido_usd) FROM items_adicionales_venta iav2 WHERE iav2.venta_id = v.id), 0.0))
+                            / (1 + COALESCE(v.impuestos_pct, 0) / 100.0)
+                        )
+                    END 
+                    + COALESCE((SELECT SUM(iav.cantidad * iav.precio_vendido_usd) FROM items_adicionales_venta iav WHERE iav.venta_id = v.id), 0.0)
+                ) * v.valor_dolar_momento
+            ) AS venta_neta_ars
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id 
         JOIN personas p ON v.cliente_id = p.id 
@@ -7511,8 +8102,15 @@ def exportar_ventas_historial():
     params = [start_date, end_date_query]
 
     if filtro_cliente:
-        query += " AND p.id = ?"
-        params.append(filtro_cliente)
+        query += """ AND (
+            LOWER(p.nombre) LIKE LOWER(?) OR 
+            LOWER(p.apellido) LIKE LOWER(?) OR 
+            LOWER(p.razon_social) LIKE LOWER(?) OR
+            LOWER(COALESCE(p.nombre, '') || ' ' || COALESCE(p.apellido, '')) LIKE LOWER(?)
+        )"""
+        term = f"%{filtro_cliente}%"
+        params.extend([term, term, term, term])
+
     if filtro_producto:
         query += " AND (c.marca LIKE ? OR c.modelo LIKE ? OR c.imei LIKE ?)"
         params.extend([f"%{filtro_producto}%", f"%{filtro_producto}%", f"%{filtro_producto}%"])
@@ -7521,44 +8119,30 @@ def exportar_ventas_historial():
     ventas = db_query(query, tuple(params))
 
     output = io.StringIO()
-    output.write('\ufeff') # BOM para que Excel detecte UTF-8 y tildes
-    writer = csv.writer(output, delimiter=';') # Punto y coma para Excel en español
+    output.write('\ufeff')
+    writer = csv.writer(output, delimiter=';')
     
-    # Encabezado (Evitamos "ID" por error SYLK)
-    writer.writerow(['Venta_ID', 'Fecha', 'Cliente', 'Equipo', 'IMEI', 'Precio Final ARS', 'Precio Final USD', 'Cotiz Dolar', 'Saldo Pendiente'])
+    writer.writerow(['Venta_ID', 'Fecha', 'Cliente', 'Equipo', 'IMEI', 'Venta Comercial ARS', 'Venta Comercial USD', 'Cotiz Dolar', 'Saldo Pendiente'])
 
     for v in ventas:
         cliente = v['razon_social'] or f"{v['nombre']} {v['apellido']}"
-        
-        # --- CORRECCIÓN ESPECÍFICA PARA PRECIO FINAL USD ---
-        # 1. Obtenemos el valor (si es None usamos 0)
-        val_usd = v['precio_final_usd'] if v['precio_final_usd'] is not None else 0.0
-        # 2. Formateamos a 2 decimales y cambiamos punto por coma para Excel
-        precio_usd_export = f"{val_usd:.2f}".replace('.', ',')
-        
-        # Hacemos lo mismo para los otros valores numéricos para que todo el reporte sea funcional
-        precio_ars_export = f"{(v['precio_final_ars'] or 0.0):.2f}".replace('.', ',')
-        dolar_export = f"{(v['valor_dolar_momento'] or 0.0):.2f}".replace('.', ',')
-        saldo_export = f"{(v['saldo_pendiente'] or 0.0):.2f}".replace('.', ',')
-
         writer.writerow([
             v['id'], 
             v['fecha_venta'], 
             cliente, 
             f"{v['marca']} {v['modelo']}", 
             v['imei'],
-            precio_ars_export, 
-            precio_usd_export, # <--- Valor corregido
-            dolar_export, 
-            saldo_export
+            f"{(v['venta_neta_ars'] or 0.0):.2f}".replace('.', ','),
+            f"{(v['venta_neta_usd'] or 0.0):.2f}".replace('.', ','),
+            f"{(v['valor_dolar_momento'] or 0.0):.2f}".replace('.', ','),
+            f"{(v['saldo_pendiente'] or 0.0):.2f}".replace('.', ',')
         ])
 
     output.seek(0)
-    return Response(output, mimetype="text/csv", 
-                    headers={"Content-Disposition": f"attachment;filename=historial_ventas_{start_date}.csv"})
-    
-    
-    
+    return Response(output, mimetype="text/csv", headers={"Content-Disposition": f"attachment;filename=ventas_comerciales_{start_date}.csv"})
+
+
+
 @app.route('/exportar/reparaciones')
 @login_required
 def exportar_reparaciones():
