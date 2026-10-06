@@ -3569,14 +3569,14 @@ def cotizar_venta(celular_id):
             # --- CÁLCULO DE IMPUESTOS (TOTAL VS MONTO ESPECÍFICO) ---
             impuestos_pct = float(request.form.get('impuestos_pct', 0) or 0)
             tipo_base_impuesto = request.form.get('tipo_base_impuesto', 'TOTAL') # 'TOTAL' o 'PARCIAL'
-            base_imponible_especifica_ars = float(request.form.get('base_imponible_impuesto_ars', 0) or 0)
+            #base_imponible_especifica_ars = float(request.form.get('base_imponible_impuesto_ars', 0) or 0)
             base_imponible_especifica_usd = float(request.form.get('base_imponible_impuesto_usd', 0) or 0)
             precio_base_en_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
 
             if impuestos_pct > 0:
-                if tipo_base_impuesto == 'PARCIAL' and base_imponible_especifica_ars > 0:
+                if tipo_base_impuesto == 'PARCIAL' and base_imponible_especifica_usd > 0:
                     # El porcentaje se aplica ÚNICAMENTE al monto que el usuario especificó
-                    monto_impuesto_ars = base_imponible_especifica_ars * (impuestos_pct / 100.0)
+                    monto_impuesto_ars = base_imponible_especifica_usd * (impuestos_pct / 100.0)
                     precio_final_ars = precio_base_en_ars + monto_impuesto_ars
                 else:
                     # Se aplica a todo el total como siempre
@@ -5001,15 +5001,7 @@ def confirmar_reparacion_pago(servicio_id):
 @login_required
 def editar_presupuesto_venta(venta_id):
     db_conn = get_db()
-    # 1. Obtener los datos del presupuesto actual
-    #venta_data = db_query("SELECT * FROM ventas WHERE id = ? AND status = 'PRESUPUESTO'", (venta_id,))
-    #if not venta_data:
-    #    flash("El presupuesto no existe o ya ha sido procesado.", "danger")
-    #    return redirect(url_for('listar_presupuestos_venta'))
     
-    #venta = venta_data[0]
-    
-    # MODIFICACIÓN CLAVE: Agregamos el JOIN para traer el nombre del cliente
     venta_data = db_query("""
         SELECT v.*, p.nombre, p.apellido, p.razon_social, p.cuit_cuil 
         FROM ventas v 
@@ -5022,8 +5014,6 @@ def editar_presupuesto_venta(venta_id):
         return redirect(url_for('listar_presupuestos_venta'))
     
     venta = venta_data[0]
-    
-       
     
     if request.method == 'POST':
         try:
@@ -5039,33 +5029,14 @@ def editar_presupuesto_venta(venta_id):
             else:
                 valor_dolar_venta_local = float(dolar_info['venta_blue'] or 1.0)
 
+            if valor_dolar_venta_local <= 0:
+                valor_dolar_venta_local = 1.0
+
             # --- DATOS BÁSICOS ---
             cliente_id = int(request.form['cliente_id'])
-            impuestos_pct = float(request.form.get('impuestos_pct', 0) or 0)
             observaciones = request.form.get('observaciones', '').strip()
             
-            # --- LÓGICA DE PRECIO Y GANANCIA ---
-            #ganancia_tipo = request.form.get('ganancia_tipo')
-            #costo_base_usd = db_query_func(db_conn, "SELECT costo_usd FROM celulares WHERE id = ?", (venta['celular_id'],))[0]['costo_usd']
-            
-            #precio_final_usd_pre_tax = 0.0
-            #monto_agregado_ars_db = None
-            #monto_agregado_usd_db = None
-            #ganancia_pct_db = None
-
-            #if ganancia_tipo == 'porcentaje':
-            #    ganancia_pct_db = float(request.form.get('ganancia_pct', 0) or 0)
-            #    precio_final_usd_pre_tax = costo_base_usd * (1 + ganancia_pct_db / 100)
-            #else:
-            #    monto_agregado = float(request.form.get('monto_agregado', 0) or 0)
-            #    if request.form.get('monto_agregado_moneda') == 'USD':
-            #        precio_final_usd_pre_tax = costo_base_usd + monto_agregado
-            #        monto_agregado_usd_db = monto_agregado
-            #    else:
-            #        precio_final_usd_pre_tax = costo_base_usd + (monto_agregado / valor_dolar_venta_local)
-            #        monto_agregado_ars_db = monto_agregado
-                    
-            # --- LÓGICA DE PRECIO Y GANANCIA ---
+            # --- LÓGICA DE PRECIO BASE Y GANANCIA DEL CELULAR ---
             ganancia_tipo = request.form.get('ganancia_tipo')
             costo_base_usd = db_query_func(db_conn, "SELECT costo_usd FROM celulares WHERE id = ?", (venta['celular_id'],))[0]['costo_usd']
             
@@ -5076,31 +5047,17 @@ def editar_presupuesto_venta(venta_id):
 
             if ganancia_tipo == 'porcentaje':
                 ganancia_pct_db = float(request.form.get('ganancia_pct', 0) or 0)
-                precio_final_usd_pre_tax = costo_base_usd * (1 + ganancia_pct_db / 100)
-                # Al ser porcentaje, nos aseguramos de que los montos fijos queden vacíos
-                monto_agregado_ars_db = None
-                monto_agregado_usd_db = None
+                precio_final_usd_pre_tax = costo_base_usd * (1 + ganancia_pct_db / 100.0)
             else:
                 monto_agregado = float(request.form.get('monto_agregado', 0) or 0)
-                moneda_seleccionada = request.form.get('monto_agregado_moneda')
-                
-                if moneda_seleccionada == 'USD':
+                if request.form.get('monto_agregado_moneda') == 'USD':
                     precio_final_usd_pre_tax = costo_base_usd + monto_agregado
                     monto_agregado_usd_db = monto_agregado
-                    # Limpiamos explícitamente el campo ARS
-                    monto_agregado_ars_db = None
                 else:
-                    # Caso ARS
                     precio_final_usd_pre_tax = costo_base_usd + (monto_agregado / valor_dolar_venta_local)
                     monto_agregado_ars_db = monto_agregado
-                    # Limpiamos explícitamente el campo USD
-                    monto_agregado_usd_db = None
-                
-                # Al ser monto fijo, el porcentaje debe ser nulo
-                ganancia_pct_db = None        
-            
 
-            # --- ACTUALIZACIÓN DE ÍTEMS ADICIONALES (Venta Accesorios) ---
+            # --- ACTUALIZACIÓN DE ÍTEMS ADICIONALES (Accesorios Vendidos) ---
             db_execute_func(db_conn, "DELETE FROM items_adicionales_venta WHERE venta_id = ?", (venta_id,))
             add_ids = request.form.getlist('add_item_id[]')
             add_cants = request.form.getlist('add_cantidad[]')
@@ -5118,7 +5075,7 @@ def editar_presupuesto_venta(venta_id):
                         INSERT INTO items_adicionales_venta (venta_id, repuesto_id, cantidad, precio_vendido_usd, costo_usd_momento) 
                         VALUES (?, ?, ?, ?, ?)""", (venta_id, r_id, cant, p_usd, costo_m))
 
-            # --- ACTUALIZACIÓN DE REGALOS (PROMOCIONES) ---
+            # --- ACTUALIZACIÓN DE REGALOS (Promociones Sin Cargo) ---
             db_execute_func(db_conn, "DELETE FROM items_promocionales_venta WHERE venta_id = ?", (venta_id,))
             promo_ids = request.form.getlist('promo_item_id[]')
             promo_cants = request.form.getlist('promo_cantidad[]')
@@ -5130,45 +5087,49 @@ def editar_presupuesto_venta(venta_id):
                         INSERT INTO items_promocionales_venta (venta_id, repuesto_id, cantidad, costo_usd_momento) 
                         VALUES (?, ?, ?, ?)""", (venta_id, r_id_p, promo_cants[i], costo_p))
 
-            # --- CÁLCULOS TOTALES FINALES ---
-            #precio_final_usd_pre_tax += total_adicionales_usd
-            #precio_final_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
-            #if impuestos_pct > 0:
-            #    precio_final_ars *= (1 + impuestos_pct / 100)
-            
-            #precio_final_usd = precio_final_ars / valor_dolar_venta_local
-
-            # --- CÁLCULOS TOTALES FINALES CON IMPUESTO GENERAL O SOBRE MONTO ESPECÍFICO ---
+            # --- CÁLCULO TOTAL COMERCIAL BASE (Antes de Impuestos/Recargos) ---
             precio_final_usd_pre_tax += total_adicionales_usd
-            precio_base_en_ars = precio_final_usd_pre_tax * valor_dolar_venta_local
 
-            # Captura de la configuración de base imponible
-            tipo_base_impuesto = request.form.get('tipo_base_impuesto', 'TOTAL')  # 'TOTAL' o 'PARCIAL'
-            base_imponible_especifica_ars = float(request.form.get('base_imponible_impuesto_ars', 0) or 0)
+            # --- MODIFICACIÓN CLAVE: RECARGO SOBRE PARTE DEL TOTAL (USD) ---
+            impuestos_pct = float(request.form.get('impuestos_pct', 0) or 0)
+            tipo_base_impuesto = request.form.get('tipo_base_impuesto', 'TOTAL') # 'TOTAL' o 'PARCIAL'
+            base_imponible_especifica_usd = float(request.form.get('base_imponible_impuesto_usd', 0) or 0)
 
             if impuestos_pct > 0:
-                if tipo_base_impuesto == 'PARCIAL' and base_imponible_especifica_ars > 0:
-                    # El porcentaje se aplica ÚNICAMENTE sobre el monto específico indicado
-                    monto_impuesto_ars = base_imponible_especifica_ars * (impuestos_pct / 100.0)
-                    precio_final_ars = precio_base_en_ars + monto_impuesto_ars
+                if tipo_base_impuesto == 'PARCIAL' and base_imponible_especifica_usd > 0:
+                    # El porcentaje se aplica ÚNICAMENTE a la porción de dólares indicada
+                    monto_recargo_usd = base_imponible_especifica_usd * (impuestos_pct / 100.0)
+                    precio_final_usd = precio_final_usd_pre_tax + monto_recargo_usd
                 else:
-                    # Se aplica sobre el total general como siempre
-                    precio_final_ars = precio_base_en_ars * (1 + impuestos_pct / 100.0)
+                    # Se aplica al total general
+                    precio_final_usd = precio_final_usd_pre_tax * (1 + impuestos_pct / 100.0)
             else:
-                precio_final_ars = precio_base_en_ars
-            
-            precio_final_usd = precio_final_ars / valor_dolar_venta_local
-            
-            # Actualizar tabla de ventas
-            db_execute_func(db_conn, """
-                UPDATE ventas SET 
-                    cliente_id=?, valor_dolar_momento=?, impuestos_pct=?, ganancia_pct=?, 
-                    monto_agregado_ars=?, monto_agregado_usd=?, precio_final_ars=?, 
-                    precio_final_usd=?, observaciones=? 
-                WHERE id=?
-            """, (cliente_id, valor_dolar_venta_local, impuestos_pct, ganancia_pct_db, 
-                  monto_agregado_ars_db, monto_agregado_usd_db, precio_final_ars, 
-                  precio_final_usd, observaciones, venta_id))
+                precio_final_usd = precio_final_usd_pre_tax
+
+            precio_final_ars = precio_final_usd * valor_dolar_venta_local
+
+            # Actualizar tabla ventas guardando también la configuración del recargo parcial
+            try:
+                db_execute_func(db_conn, """
+                    UPDATE ventas SET 
+                        cliente_id=?, valor_dolar_momento=?, impuestos_pct=?, ganancia_pct=?, 
+                        monto_agregado_ars=?, monto_agregado_usd=?, precio_final_ars=?, 
+                        precio_final_usd=?, observaciones=?, tipo_base_impuesto=?, base_imponible_impuesto_usd=?
+                    WHERE id=?
+                """, (cliente_id, valor_dolar_venta_local, impuestos_pct, ganancia_pct_db, 
+                      monto_agregado_ars_db, monto_agregado_usd_db, precio_final_ars, 
+                      precio_final_usd, observaciones, tipo_base_impuesto, base_imponible_especifica_usd, venta_id))
+            except sqlite3.OperationalError:
+                # Fallback si aún no se corrió la migración
+                db_execute_func(db_conn, """
+                    UPDATE ventas SET 
+                        cliente_id=?, valor_dolar_momento=?, impuestos_pct=?, ganancia_pct=?, 
+                        monto_agregado_ars=?, monto_agregado_usd=?, precio_final_ars=?, 
+                        precio_final_usd=?, observaciones=? 
+                    WHERE id=?
+                """, (cliente_id, valor_dolar_venta_local, impuestos_pct, ganancia_pct_db, 
+                      monto_agregado_ars_db, monto_agregado_usd_db, precio_final_ars, 
+                      precio_final_usd, observaciones, venta_id))
 
             db_conn.commit()
             registrar_movimiento(current_user.id, 'MODIFICACION_PRESUPUESTO', 'VENTA', venta_id)
@@ -5177,13 +5138,12 @@ def editar_presupuesto_venta(venta_id):
 
         except Exception as e:
             db_conn.rollback()
-            app.logger.error(f"Error editando presupuesto de venta: {e}")
+            app.logger.error(f"Error editando presupuesto de venta: {e}", exc_info=True)
             flash(f"Error: {e}", "danger")
 
     # --- DATOS PARA EL RENDER (GET) ---
     clientes = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY apellido")
     celular = db_query("SELECT * FROM celulares WHERE id = ?", (venta['celular_id'],))[0]
-    # Recuperamos accesorios y regalos actuales
     adicionales = db_query("""
         SELECT ia.*, r.nombre_parte, r.modelo_compatible 
         FROM items_adicionales_venta ia 
@@ -5195,8 +5155,9 @@ def editar_presupuesto_venta(venta_id):
     
     return render_template('ventas/nueva.html', venta=venta, celular=celular, clientes=clientes, 
                            adicionales=adicionales, regalos=regalos, is_edit=True)
-
-
+    
+    
+    
 @app.route('/presupuestos/ventas/cancelar/<int:venta_id>', methods=['POST'])
 @login_required
 def cancelar_presupuesto_venta(venta_id):
@@ -8624,6 +8585,9 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("ventas", "valor_celular_parte_pago_4_usd", "REAL") # Toma celulares   
         # Dentro de ejecutar_migraciones_y_configuracion()
         agregar_columna("ventas", "user_id", "INTEGER")
+        agregar_columna("ventas", "tipo_base_impuesto", "TEXT DEFAULT 'TOTAL'")
+        agregar_columna("ventas", "base_imponible_impuesto_usd", "REAL DEFAULT 0.0")
+        
         agregar_columna("servicios_reparacion", "tipo_servicio", "TEXT DEFAULT 'REPARACION'")
         
         agregar_columna("servicios_reparacion", "saldo_pendiente", "REAL DEFAULT 0.0")

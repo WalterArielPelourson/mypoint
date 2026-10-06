@@ -233,37 +233,42 @@
                 <div class="col-12 mt-3">
                     <div class="card p-3 bg-light border shadow-sm">
                         <label class="form-label fw-bold text-dark mb-2">
-                            <i class="bi bi-receipt me-1 text-primary"></i>Impuestos / Comisiones Globales:
+                            <i class="bi bi-receipt me-1 text-primary"></i>Impuestos / Recargo Parcial:
                         </label>
                         <div class="row g-2 align-items-center">
                             <div class="col-md-3">
                                 <label class="form-label small text-muted mb-1">Porcentaje (%):</label>
                                 <div class="input-group">
-                                    <input type="number" step="0.01" min="0" class="form-control" id="impuestos_pct" name="impuestos_pct" 
-                                           value="{{ venta.impuestos_pct if is_edit else '0.00' }}" placeholder="0.00">
+                                    <input type="number" step="0.01" min="0" class="form-control fw-bold" id="impuestos_pct" name="impuestos_pct" 
+                                           value="{{ venta.impuestos_pct if is_edit and venta.impuestos_pct else '0.00' }}" placeholder="0.00">
                                     <span class="input-group-text">%</span>
                                 </div>
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label small text-muted mb-1">Base de Aplicación:</label>
-                                <select name="tipo_base_impuesto" id="tipo_base_impuesto" class="form-select" onchange="toggleBaseImpuesto()">
-                                    <option value="TOTAL" selected>Aplicar sobre Total del Presupuesto</option>
-                                    <option value="PARCIAL">Aplicar sobre Monto Específico (USD)</option>
+                                <select name="tipo_base_impuesto" id="tipo_base_impuesto" class="form-select fw-bold" onchange="toggleBaseImpuesto()">
+                                    <option value="TOTAL" {% if not is_edit or (is_edit and venta.tipo_base_impuesto != 'PARCIAL') %}selected{% endif %}>
+                                        Total del Presupuesto (100% USD)
+                                    </option>
+                                    <option value="PARCIAL" {% if is_edit and venta.tipo_base_impuesto == 'PARCIAL' %}selected{% endif %}>
+                                        Parte del Total (Monto Específico USD)
+                                    </option>
                                 </select>
                             </div>
-                            <div class="col-md-5" id="grupo_base_especifica" style="display: none;">
+                            <div class="col-md-5" id="grupo_base_especifica" style="{% if is_edit and venta.tipo_base_impuesto == 'PARCIAL' %}{% else %}display: none;{% endif %}">
                                 <label class="form-label small text-muted mb-1">Monto Base Imponible (USD):</label>
                                 <div class="input-group">
-                                    <span class="input-group-text bg-warning text-dark fw-bold">USD</span>
-                                    <input type="number" step="0.01" min="0" class="form-control border-warning fw-bold" 
-                                           name="base_imponible_impuesto_usd" id="base_imponible_impuesto_usd" placeholder="Ej: 400000.00">
+                                    <span class="input-group-text bg-success text-white fw-bold">u$d</span>
+                                    <input type="number" step="0.01" min="0" class="form-control border-success fw-bold" 
+                                           name="base_imponible_impuesto_usd" id="base_imponible_impuesto_usd" 
+                                           value="{{ venta.base_imponible_impuesto_usd if is_edit and venta.base_imponible_impuesto_usd else '' }}" 
+                                           placeholder="Ej: 400.00">
                                 </div>
                                 <small class="text-muted d-block" style="font-size: 0.75rem;">El % se calculará únicamente sobre este importe en USD.</small>
                             </div>
                         </div>
                     </div>
                 </div>
-
                 <div class="col-md-12 mt-3">
                     <label class="form-label fw-bold">Observaciones:</label>
                     <textarea class="form-control" name="observaciones" rows="2">{{ venta.observaciones if is_edit else '' }}</textarea>
