@@ -82,34 +82,34 @@
                             {% endif %}
                         </td>
                         
-                        {# COLUMNA USD (EQUIPOS) #}
+                        {# COLUMNA USD (EQUIPOS) USANDO estado.saldo_equipos #}
                         <td class="text-end">
-                            {% if estado.saldo_usd > 0.01 %}
+                            {% if estado.saldo_equipos is defined and estado.saldo_equipos > 0.01 %}
                                 <div class="badge-deuda bg-equipos rounded p-2 text-end">
                                     <small class="d-block text-uppercase fw-bold" style="font-size: 0.6rem;">Deuda Hardware</small>
-                                    <span class="fw-bold">u$d {{ "{:,.2f}".format(estado.saldo_usd) }}</span>
+                                    <span class="fw-bold">u$d {{ "{:,.2f}".format(estado.saldo_equipos|default(0)) }}</span>
                                 </div>
-                            {% elif estado.saldo_usd < -0.01 %}
+                            {% elif estado.saldo_equipos is defined and estado.saldo_equipos < -0.01 %}
                                 <div class="badge-deuda bg-success-subtle text-success border border-success-subtle rounded p-2 text-end">
                                     <small class="d-block text-uppercase fw-bold" style="font-size: 0.6rem;">Saldo a Favor</small>
-                                    <span class="fw-bold">u$d {{ "{:,.2f}".format(estado.saldo_usd|abs) }}</span>
+                                    <span class="fw-bold">u$d {{ "{:,.2f}".format((estado.saldo_equipos|default(0))|abs) }}</span>
                                 </div>
                             {% else %}
                                 <span class="text-muted small">Al día</span>
                             {% endif %}
                         </td>
 
-                        {# COLUMNA ARS (SERVICIOS) #}
+                        {# COLUMNA ARS (SERVICIOS) USANDO estado.saldo_servicios #}
                         <td class="text-end">
-                            {% if estado.saldo_ars > 0.01 %}
+                            {% if estado.saldo_servicios is defined and estado.saldo_servicios > 0.01 %}
                                 <div class="badge-deuda bg-servicios rounded p-2 text-end">
                                     <small class="d-block text-uppercase fw-bold" style="font-size: 0.6rem;">Deuda Reparación</small>
-                                    <span class="fw-bold">$ {{ "{:,.2f}".format(estado.saldo_ars) }}</span>
+                                    <span class="fw-bold">$ {{ "{:,.2f}".format(estado.saldo_servicios|default(0)) }}</span>
                                 </div>
-                            {% elif estado.saldo_ars < -0.01 %}
+                            {% elif estado.saldo_servicios is defined and estado.saldo_servicios < -0.01 %}
                                 <div class="badge-deuda bg-success-subtle text-success border border-success-subtle rounded p-2 text-end">
                                     <small class="d-block text-uppercase fw-bold" style="font-size: 0.6rem;">Saldo a Favor</small>
-                                    <span class="fw-bold">$ {{ "{:,.2f}".format(estado.saldo_ars|abs) }}</span>
+                                    <span class="fw-bold">$ {{ "{:,.2f}".format((estado.saldo_servicios|default(0))|abs) }}</span>
                                 </div>
                             {% else %}
                                 <span class="text-muted small">Al día</span>
