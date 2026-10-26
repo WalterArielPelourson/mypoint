@@ -2255,7 +2255,7 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
         })
 
     # ---------------------------------------------------------------------
-    # 3. HABER: COBROS + CONTRAPARTIDA EN DEBE (DETECCIÓN TRIPLE DE RECARGO)
+    # 3. HABER: COBROS (DESCONTANDO EL RECARGO DE TARJETA PARA LA CTA CTE)
     # ---------------------------------------------------------------------
     cobros = db_query("""
         SELECT * 
@@ -2279,15 +2279,11 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                 dolar_hist = venta_cercana[0]['valor_dolar_momento'] if (venta_cercana and venta_cercana[0]['valor_dolar_momento']) else cotiz_actual
                 monto_val = abs(p['monto_ars'] or 0) / (dolar_hist or 1.0)
 
-            # Detección del recargo USD
+            # Detección del recargo USD desde columnas de BD
             recargo_u = 0.0
-            if 'monto_recargo_usd' in p.keys() and p['monto_recargo_usd']:
+            p_keys = p.keys() if hasattr(p, 'keys') else []
+            if 'monto_recargo_usd' in p_keys and p['monto_recargo_usd']:
                 recargo_u = float(p['monto_recargo_usd'])
-            elif p['referencia'] and 'Recargo: u$d ' in p['referencia']:
-                try:
-                    recargo_u = float(p['referencia'].split('Recargo: u$d ')[1].split(' |')[0].split(')')[0].replace(',', '').strip())
-                except Exception:
-                    recargo_u = 0.0
 
             es_devolucion = (p['estado_anticipo'] == 'DEVUELTO' or monto_val < 0 or 'DEVOLUCIÓN' in (p['referencia'] or '').upper())
 
@@ -2306,12 +2302,17 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
             else:
                 desc_pago = f"💳 {p['referencia']}" if p['metodo_pago'] == 'TARJETA_CREDITO' else (f"💵/💳 {p['referencia']}" if p['metodo_pago'] == 'PAGO_MULTIPLE' else f"Cobro ({p['metodo_pago'] or 'Efectivo'})")
                 
-                # 1. Pago en HABER por el total
+                # Se descuenta el recargo financiero del pago para no alterar la Cta Cte
+                monto_neto_usd = max(0.0, monto_val - recargo_u) if recargo_u > 0.001 else monto_val
+                if recargo_u > 0.001:
+                    desc_pago += f" (Total cupón: u$d {monto_val:,.2f} | Recargo tarjeta: u$d {recargo_u:,.2f} descontado)"
+
+                # Ingresa al HABER únicamente el importe neto base que cancela deuda
                 movimientos.append({
                     'id': p['id'],
                     'fecha': p['fecha_cobro'],
                     'tipo': 'HABER',
-                    'monto_reg': monto_val,
+                    'monto_reg': monto_neto_usd,
                     'moneda_display': 'USD',
                     'descripcion': desc_pago,
                     'rubro': 'EQUIPOS',
@@ -2319,34 +2320,21 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                     'ref': p['id']
                 })
 
-                # 2. CONTRAPARTIDA EN DEBE si tiene recargo
-                if recargo_u > 0.001:
-                    movimientos.append({
-                        'id': p['id'],
-                        'fecha': p['fecha_cobro'],
-                        'tipo': 'DEBE',
-                        'monto_reg': recargo_u,
-                        'moneda_display': 'USD',
-                        'descripcion': f"⚡ Contrapartida Recargo Tarjeta - Ref: {p['referencia'] or 'Cupón'}",
-                        'rubro': 'EQUIPOS',
-                        'es_cuota': False,
-                        'ref': p['id']
-                    })
-
         else:
             # SERVICIOS / REPARACIONES (ARS)
             monto_val_ars = abs(p['monto_ars'] or 0.0)
             if monto_val_ars <= 0.001:
                 continue
 
-            # DETECTOR TRIPLE DE RECARGO ARS:
+            # DETECCIÓN DE RECARGO ARS:
+            # Se lee de las columnas reales de DB o de pagos_tarjetas (sin buscar texto para no tocar marzo)
             recargo_a = 0.0
-            if 'monto_recargo_ars' in p.keys() and p['monto_recargo_ars']:
-                recargo_a = float(p['monto_recargo_ars'])
-            elif 'monto_recargo_tarjeta_ars' in p.keys() and p['monto_recargo_tarjeta_ars']:
+            p_keys = p.keys() if hasattr(p, 'keys') else []
+            if 'monto_recargo_tarjeta_ars' in p_keys and p['monto_recargo_tarjeta_ars']:
                 recargo_a = float(p['monto_recargo_tarjeta_ars'])
+            elif 'monto_recargo_ars' in p_keys and p['monto_recargo_ars']:
+                recargo_a = float(p['monto_recargo_ars'])
             
-            # Si no estaba en la columna, busca en pagos_tarjetas vinculados a este cobro
             if recargo_a <= 0.001:
                 try:
                     pt = db_query("SELECT monto_recargo_ars FROM pagos_tarjetas WHERE origen_id = ? LIMIT 1", (p['id'],))
@@ -2354,18 +2342,6 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                         recargo_a = float(pt[0]['monto_recargo_ars'])
                 except Exception:
                     pass
-
-            # Si tampoco estaba, busca en la referencia del texto
-            if recargo_a <= 0.001 and p['referencia']:
-                for txt_tag in ['Recargo: $', 'Recargo financ: $', 'Recargo tarjeta: $', 'Recargo: ']:
-                    if txt_tag in p['referencia']:
-                        try:
-                            num_str = p['referencia'].split(txt_tag)[1].split('|')[0].split(')')[0].split(']')[0].replace('$', '').replace(',', '').strip()
-                            recargo_a = float(num_str)
-                            if recargo_a > 0:
-                                break
-                        except Exception:
-                            pass
 
             es_devolucion = (p['estado_anticipo'] == 'DEVUELTO' or (p['monto_ars'] or 0) < 0 or 'DEVOLUCIÓN' in (p['referencia'] or '').upper())
 
@@ -2384,32 +2360,24 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
             else:
                 desc_pago = f"💳 {p['referencia']}" if p['metodo_pago'] == 'TARJETA_CREDITO' else (f"💵/💳 {p['referencia']}" if p['metodo_pago'] == 'PAGO_MULTIPLE' else f"Cobro ({p['metodo_pago'] or 'Efectivo'})")
 
-                # 1. Pago en HABER por el total cobrado
+                # Se descuenta el recargo del monto cobrado para que a la Cta Cte
+                # solo ingrese el importe neto que cancela la deuda
+                monto_neto_ars = max(0.0, monto_val_ars - recargo_a) if recargo_a > 0.001 else monto_val_ars
+                if recargo_a > 0.001:
+                    desc_pago += f" (Total cupón: ${monto_val_ars:,.2f} | Recargo tarjeta: ${recargo_a:,.2f} descontado)"
+
+                # Ingresa al HABER únicamente el importe neto base que cancela deuda (sin contrapartida en el DEBE)
                 movimientos.append({
                     'id': p['id'],
                     'fecha': p['fecha_cobro'],
                     'tipo': 'HABER',
-                    'monto_reg': monto_val_ars,
+                    'monto_reg': monto_neto_ars,
                     'moneda_display': 'ARS',
                     'descripcion': desc_pago,
                     'rubro': 'SERVICIOS',
                     'es_cuota': False,
                     'ref': p['id']
                 })
-
-                # 2. CONTRAPARTIDA EN EL DEBE: Para compensar exactamente el recargo cobrado en el HABER
-                if recargo_a > 0.001:
-                    movimientos.append({
-                        'id': p['id'],
-                        'fecha': p['fecha_cobro'],
-                        'tipo': 'DEBE',
-                        'monto_reg': recargo_a,
-                        'moneda_display': 'ARS',
-                        'descripcion': f"⚡ Contrapartida Recargo Tarjeta - Ref: {p['referencia'] or 'Cupón'}",
-                        'rubro': 'SERVICIOS',
-                        'es_cuota': False,
-                        'ref': p['id']
-                    })
 
     # ---------------------------------------------------------------------
     # 4. ORDENAMIENTO Y ACUMULADOR (DEBE Y HABER MACHIAN 100%)
@@ -2433,6 +2401,8 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
     if abs(saldo_servicios_ars_acum) < 1.0: saldo_servicios_ars_acum = 0.0
 
     return movimientos, round(saldo_equipos_usd_acum, 2), round(saldo_servicios_ars_acum, 2)
+
+
 # =========================================================================
 # 3. RUTA: VISTA GENERAL DE CLIENTES Y TOTALIZADORES
 # =========================================================================
