@@ -2104,7 +2104,7 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                v.cantidad_cuotas, v.monto_cobrado_ars, v.monto_cobrado_usd, 
                v.monto_transferencia_ars, v.monto_mp_ars, v.monto_debito_ars, 
                v.monto_credito_ars, v.monto_virtual_usd, v.valor_celular_parte_pago,
-               c.marca, c.modelo, c.imei
+               v.saldo_pendiente, c.marca, c.modelo, c.imei
         FROM ventas v 
         JOIN celulares c ON v.celular_id = c.id
         WHERE v.cliente_id = ? AND v.status = 'COMPLETADA'
@@ -2124,7 +2124,7 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
             FROM cobros_clientes 
             WHERE estado_anticipo = 'APLICADO' AND monto_usd > 0 AND referencia LIKE ?
         """, (f'%Venta #{v["id"]}%',))
-        señas_pos_venta = res_pos[0]['total'] or 0.0
+        señas_pos = res_pos[0]['total'] or 0.0
 
         res_neg = db_query("""
             SELECT COALESCE(SUM(ABS(monto_usd)), 0) as total 
@@ -2133,7 +2133,7 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
         """, (f'%Venta #{v["id"]}%',))
         cancelaciones_comp_venta = res_neg[0]['total'] or 0.0
 
-        monto_anticipos_aplicados = max(0.0, señas_pos_venta - cancelaciones_comp_venta)
+        monto_anticipos_aplicados = max(0.0, señas_pos - cancelaciones_comp_venta)
         
         # A. Compromiso inicial de la venta (DEBE)
         total_pago_hoy_ars = (
@@ -2162,9 +2162,11 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                 'ref': v['id']
             })
 
-        # B. Cuotas pactadas (DEBE)
+        # B. Cuotas pactadas
         if v['cantidad_cuotas'] >= 1:
             cuotas = db_query("SELECT * FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
+            saldo_financiado_real_usd = max(0.0, (v['precio_final_usd'] or 0) - total_debe_inicial_usd)
+
             for c in cuotas:
                 try:
                     fecha_venc = datetime.strptime(c['fecha_vencimiento'][:10], '%Y-%m-%d').date()
@@ -2172,20 +2174,26 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                     fecha_venc = hoy
                 es_vencida = (fecha_venc < hoy and c['estado'] == 'PENDIENTE')
                 
-                monto_cuota_ars = c['monto_original_ars'] if (c['monto_original_ars'] and c['monto_original_ars'] > 0) else c['monto_ars']
+                if c['monto_original_ars'] and c['monto_original_ars'] > 0:
+                    cuota_usd_valor = c['monto_original_ars'] / cotiz_v
+                elif c['monto_ars'] and c['monto_ars'] > 0:
+                    cuota_usd_valor = c['monto_ars'] / cotiz_v
+                else:
+                    cuota_usd_valor = saldo_financiado_real_usd / max(1, v['cantidad_cuotas'])
 
-                movimientos.append({
-                    'id': c['id'],
-                    'fecha': c['fecha_vencimiento'] + " 09:00:00",
-                    'tipo': 'DEBE', 
-                    'monto_reg': monto_cuota_ars / cotiz_v,
-                    'moneda_display': 'USD',
-                    'descripcion': f"Venta #{v['id']} - {info_equipo} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
-                    'rubro': 'EQUIPOS',
-                    'vencida': es_vencida,
-                    'es_cuota': True,
-                    'ref': v['id']
-                })
+                if cuota_usd_valor > 0.01:
+                    movimientos.append({
+                        'id': c['id'],
+                        'fecha': c['fecha_vencimiento'] + " 09:00:00",
+                        'tipo': 'DEBE', 
+                        'monto_reg': cuota_usd_valor,
+                        'moneda_display': 'USD',
+                        'descripcion': f"Venta #{v['id']} - {info_equipo} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
+                        'rubro': 'EQUIPOS',
+                        'vencida': es_vencida,
+                        'es_cuota': True,
+                        'ref': v['id']
+                    })
 
         # C. Pago entregado el día de la venta (HABER)
         total_ars_entregado_hoy = (
@@ -2213,14 +2221,26 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                 'ref': v['id']
             })
 
-    # 2. SERVICIOS Y REPARACIONES (DEBE - ARS)
-    servicios = db_query("SELECT id, fecha_servicio, precio_final_ars, falla_reportada FROM servicios_reparacion WHERE cliente_id = ? AND status = 'COMPLETADO'", (cliente_id,))
+    # 2. SERVICIOS Y REPARACIONES REALES (DEBE - ARS)
+    # Sin duplicaciones ni pagos ficticios que dupliquen saldos
+    servicios = db_query("""
+        SELECT id, fecha_servicio, precio_final_ars, falla_reportada, saldo_pendiente 
+        FROM servicios_reparacion 
+        WHERE cliente_id = ? AND status = 'COMPLETADO'
+    """, (cliente_id,))
+    
     for s in servicios:
         movimientos.append({
             'id': s['id'],
-            'fecha': s['fecha_servicio'], 'tipo': 'DEBE', 'monto_reg': s['precio_final_ars'], 
-            'moneda_display': 'ARS', 'descripcion': f"Servicio #{s['id']} - {s['falla_reportada']}", 
-            'rubro': 'SERVICIOS', 'vencida': False, 'es_cuota': False, 'ref': s['id']
+            'fecha': s['fecha_servicio'], 
+            'tipo': 'DEBE', 
+            'monto_reg': s['precio_final_ars'], 
+            'moneda_display': 'ARS', 
+            'descripcion': f"Servicio #{s['id']} - {s['falla_reportada']}", 
+            'rubro': 'SERVICIOS', 
+            'vencida': False, 
+            'es_cuota': False, 
+            'ref': s['id']
         })
 
     # 3. COBROS, SEÑAS, DEVOLUCIONES Y RECARGOS
@@ -2245,17 +2265,18 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
         es_rubro_equipos = (p['imputacion'] == 'EQUIPOS')
 
         if es_rubro_equipos:
-            monto_val = p['monto_usd'] if (p['monto_usd'] is not None and abs(p['monto_usd']) > 0) else ((p['monto_ars'] or 0) / cotiz_actual)
-            recargo_usd = p['monto_recargo_usd'] if ('monto_recargo_usd' in p.keys() and p['monto_recargo_usd']) else 0.0
+            if p['monto_usd'] is not None and abs(p['monto_usd']) > 0:
+                monto_val = p['monto_usd']
+            else:
+                venta_cercana = db_query("""
+                    SELECT valor_dolar_momento FROM ventas 
+                    WHERE cliente_id = ? AND status = 'COMPLETADA' 
+                    ORDER BY ABS(julianday(fecha_venta) - julianday(?)) ASC LIMIT 1
+                """, (cliente_id, p['fecha_cobro']))
+                dolar_hist = venta_cercana[0]['valor_dolar_momento'] if (venta_cercana and venta_cercana[0]['valor_dolar_momento']) else cotiz_actual
+                monto_val = (p['monto_ars'] or 0) / dolar_hist
 
-            if recargo_usd == 0 and p['referencia']:
-                try:
-                    if 'Recargo: u$d ' in p['referencia']:
-                        recargo_usd = float(p['referencia'].split('Recargo: u$d ')[1].split(' |')[0].replace(',', ''))
-                    elif 'Recargo: $' in p['referencia']:
-                        recargo_usd = float(p['referencia'].split('Recargo: $')[1].split(' |')[0].replace(',', '')) / cotiz_actual
-                except Exception:
-                    pass
+            recargo_usd = p['monto_recargo_usd'] if ('monto_recargo_usd' in p.keys() and p['monto_recargo_usd']) else 0.0
 
             es_devolucion = (p['estado_anticipo'] == 'DEVUELTO' or monto_val < 0 or 'DEVOLUCIÓN' in (p['referencia'] or '').upper())
 
@@ -2289,15 +2310,9 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                 })
 
         else:
+            # SERVICIOS / REPARACIONES (ARS)
             monto_val_ars = p['monto_ars'] or 0
             recargo_ars = p['monto_recargo_ars'] if ('monto_recargo_ars' in p.keys() and p['monto_recargo_ars']) else 0.0
-
-            if recargo_ars == 0 and p['referencia']:
-                try:
-                    if 'Recargo: $' in p['referencia']:
-                        recargo_ars = float(p['referencia'].split('Recargo: $')[1].split(' |')[0].replace(',', ''))
-                except Exception:
-                    pass
 
             es_devolucion = (p['estado_anticipo'] == 'DEVUELTO' or monto_val_ars < 0 or 'DEVOLUCIÓN' in (p['referencia'] or '').upper())
 
@@ -2330,12 +2345,13 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                     'ref': p['id']
                 })
 
-    # ORDENAMIENTO CRONOLÓGICO Y CÁLCULO DEL ACUMULADO REAL
+    # ORDENAMIENTO CRONOLÓGICO POR FECHA E ID
     movimientos.sort(key=lambda x: (x['fecha'], x.get('id', 0)))
     
     saldo_equipos_usd_acum = 0.0
     saldo_servicios_ars_acum = 0.0
 
+    # ACUMULADOR LIMPIO: Si hay recargo financiero de tarjeta, solo amortiza de la deuda su base neta
     for mov in movimientos:
         monto_impacto = mov['monto_reg']
         if mov['tipo'] == 'HABER' and mov.get('recargo', 0) > 0:
@@ -2350,36 +2366,201 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
             saldo_servicios_ars_acum += imp_reg
             mov['saldo_rubro_acum'] = saldo_servicios_ars_acum
 
+    # Tolerancia a decimales viejos
+    if abs(saldo_equipos_usd_acum) < 0.05: saldo_equipos_usd_acum = 0.0
+    if abs(saldo_servicios_ars_acum) < 1.0: saldo_servicios_ars_acum = 0.0
+
     return movimientos, round(saldo_equipos_usd_acum, 2), round(saldo_servicios_ars_acum, 2)
 
+
 # =========================================================================
-# VISTA GENERAL: LISTADO DE CLIENTES (USA LA FUNCIÓN DE ARRIBA)
+# VISTA GENERAL: LISTADO DE CLIENTES (USA LA FUNCIÓN CORREGIDA)
 # =========================================================================
 @app.route('/cuentas_corrientes/clientes')
 @login_required
 @tecnico_required
 def listar_clientes_cc():
+    # 1. Obtener todos los clientes
     clientes = db_query("SELECT id, nombre, apellido, razon_social, telefono FROM personas WHERE es_cliente = 1 ORDER BY apellido, nombre, razon_social")
     dolar_info = obtener_cotizacion_dolar()
     cotiz_actual = float(dolar_info['compra_blue'] or 1.0)
     
     estados_cuenta = []
+    hoy = datetime.now().date()
     
     for cli in clientes:
         cliente_id = cli['id']
         
-        # LLAMADA DIRECTA AL MOTOR DEL DETALLE
-        _, saldo_equipos, saldo_servicios = calcular_detalle_y_saldo_real(cliente_id, cotiz_actual)
+        debe_equipos = 0.0
+        haber_equipos = 0.0
+        debe_servicios = 0.0
+        haber_servicios = 0.0
 
-        if abs(saldo_equipos) > 0.01 or abs(saldo_servicios) > 0.01:
+        # --- A. VENTAS Y CUOTAS (EQUIPOS - USD) ---
+        ventas = db_query("""
+            SELECT v.id, v.fecha_venta, v.precio_final_ars, v.precio_final_usd, v.valor_dolar_momento, 
+                   v.cantidad_cuotas, v.monto_cobrado_ars, v.monto_cobrado_usd, 
+                   v.monto_transferencia_ars, v.monto_mp_ars, v.monto_debito_ars, 
+                   v.monto_credito_ars, v.monto_virtual_usd, v.valor_celular_parte_pago,
+                   v.saldo_pendiente, c.marca, c.modelo, c.imei
+            FROM ventas v 
+            JOIN celulares c ON v.celular_id = c.id
+            WHERE v.cliente_id = ? AND v.status = 'COMPLETADA'
+        """, (cliente_id,))
+
+        for v in ventas:
+            cotiz_v = v['valor_dolar_momento'] or 1.0
+            
+            # 1. Anticipos netos aplicados
+            res_pos = db_query("""
+                SELECT COALESCE(SUM(ABS(monto_usd)), 0) as total 
+                FROM cobros_clientes 
+                WHERE estado_anticipo = 'APLICADO' AND monto_usd > 0 AND referencia LIKE ?
+            """, (f'%Venta #{v["id"]}%',))
+            señas_pos = res_pos[0]['total'] or 0.0
+
+            res_neg = db_query("""
+                SELECT COALESCE(SUM(ABS(monto_usd)), 0) as total 
+                FROM cobros_clientes 
+                WHERE estado_anticipo = 'APLICADO' AND (monto_usd < 0 OR referencia LIKE '%Compensado%') AND referencia LIKE ?
+            """, (f'%Venta #{v["id"]}%',))
+            canc_neg = res_neg[0]['total'] or 0.0
+
+            monto_anticipos_aplicados = max(0.0, señas_pos - canc_neg)
+
+            total_pago_hoy_ars = (
+                (v['monto_cobrado_ars'] or 0) + (v['monto_transferencia_ars'] or 0) + 
+                (v['monto_mp_ars'] or 0) + (v['monto_debito_ars'] or 0) + 
+                (v['monto_credito_ars'] or 0)
+            )
+            
+            total_debe_inicial_v = (
+                (v['monto_cobrado_usd'] or 0) + 
+                (v['monto_virtual_usd'] or 0) + 
+                ((v['valor_celular_parte_pago'] or 0) / cotiz_v) + 
+                (total_pago_hoy_ars / cotiz_v) + 
+                monto_anticipos_aplicados 
+            )
+            if total_debe_inicial_v > 0.01:
+                debe_equipos += total_debe_inicial_v
+
+            # Cuotas históricas de equipos (con la misma lógica de respaldo que el detalle)
+            if v['cantidad_cuotas'] >= 1:
+                cuotas = db_query("SELECT * FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
+                saldo_financiado_real_usd = max(0.0, (v['precio_final_usd'] or 0) - total_debe_inicial_v)
+
+                for c in cuotas:
+                    if c['monto_original_ars'] and c['monto_original_ars'] > 0:
+                        cuota_usd_valor = c['monto_original_ars'] / cotiz_v
+                    elif c['monto_ars'] and c['monto_ars'] > 0:
+                        cuota_usd_valor = c['monto_ars'] / cotiz_v
+                    else:
+                        cuota_usd_valor = saldo_financiado_real_usd / max(1, v['cantidad_cuotas'])
+
+                    if cuota_usd_valor > 0.01:
+                        debe_equipos += cuota_usd_valor
+
+            total_entregado_hoy_ars = total_pago_hoy_ars + (v['valor_celular_parte_pago'] or 0)
+            pago_inicial_haber_v = (v['monto_cobrado_usd'] or 0) + (v['monto_virtual_usd'] or 0) + (total_entregado_hoy_ars / cotiz_v)
+            if pago_inicial_haber_v > 0.01:
+                haber_equipos += pago_inicial_haber_v
+
+        # --- B. COBROS Y COMPENSACIÓN DE EQUIPOS (IDÉNTICO AL DETALLE) ---
+        try:
+            cobros = db_query("""
+                SELECT id, fecha_cobro, monto_ars, monto_usd, imputacion, estado_anticipo, referencia, metodo_pago,
+                       COALESCE(monto_recargo_ars, 0) as monto_recargo_ars,
+                       COALESCE(monto_recargo_usd, 0) as monto_recargo_usd
+                FROM cobros_clientes WHERE cliente_id = ?
+                ORDER BY fecha_cobro ASC, id ASC
+            """, (cliente_id,))
+        except Exception:
+            cobros = db_query("""
+                SELECT id, fecha_cobro, monto_ars, monto_usd, imputacion, estado_anticipo, referencia, metodo_pago
+                FROM cobros_clientes WHERE cliente_id = ?
+                ORDER BY fecha_cobro ASC, id ASC
+            """, (cliente_id,))
+
+        for p in cobros:
+            es_equipos = (p['imputacion'] == 'EQUIPOS')
+
+            if es_equipos:
+                # Si no tiene monto_usd guardado (cobros viejos de marzo), busca el dólar de su venta histórica
+                if p['monto_usd'] is not None and abs(p['monto_usd']) > 0:
+                    monto_val = p['monto_usd']
+                else:
+                    venta_cercana = db_query("""
+                        SELECT valor_dolar_momento FROM ventas 
+                        WHERE cliente_id = ? AND status = 'COMPLETADA' 
+                        ORDER BY ABS(julianday(fecha_venta) - julianday(?)) ASC LIMIT 1
+                    """, (cliente_id, p['fecha_cobro']))
+                    dolar_hist = venta_cercana[0]['valor_dolar_momento'] if (venta_cercana and venta_cercana[0]['valor_dolar_momento']) else cotiz_actual
+                    monto_val = (p['monto_ars'] or 0) / dolar_hist
+
+                recargo_u = p['monto_recargo_usd'] if ('monto_recargo_usd' in p.keys() and p['monto_recargo_usd']) else 0.0
+                if recargo_u == 0 and p['referencia']:
+                    try:
+                        if 'Recargo: u$d ' in p['referencia']:
+                            recargo_u = float(p['referencia'].split('Recargo: u$d ')[1].split(' |')[0].replace(',', ''))
+                        elif 'Recargo: $' in p['referencia']:
+                            recargo_u = float(p['referencia'].split('Recargo: $')[1].split(' |')[0].replace(',', '')) / cotiz_actual
+                    except Exception:
+                        pass
+
+                es_devolucion = (p['estado_anticipo'] == 'DEVUELTO' or monto_val < 0 or 'DEVOLUCIÓN' in (p['referencia'] or '').upper())
+
+                if es_devolucion:
+                    debe_equipos += abs(monto_val)
+                else:
+                    # Descuenta la base neta de la deuda amortizada
+                    base_u = max(0.0, abs(monto_val) - recargo_u)
+                    haber_equipos += base_u
+
+        saldo_usd = debe_equipos - haber_equipos
+
+        # --- C. SERVICIOS Y REPARACIONES REALES (ARS) ---
+        res_serv = db_query("""
+            SELECT COALESCE(SUM(precio_final_ars), 0.0) as total_serv 
+            FROM servicios_reparacion 
+            WHERE cliente_id = ? AND status = 'COMPLETADO'
+        """, (cliente_id,))
+        debe_servicios = res_serv[0]['total_serv'] or 0.0
+
+        for p in cobros:
+            if p['imputacion'] != 'EQUIPOS':
+                monto_a = p['monto_ars'] or 0.0
+                recargo_a = p['monto_recargo_ars'] if ('monto_recargo_ars' in p.keys() and p['monto_recargo_ars']) else 0.0
+                if recargo_a == 0 and p['referencia']:
+                    try:
+                        if 'Recargo: $' in p['referencia']:
+                            recargo_a = float(p['referencia'].split('Recargo: $')[1].split(' |')[0].replace(',', ''))
+                    except Exception:
+                        pass
+
+                es_devolucion = (p['estado_anticipo'] == 'DEVUELTO' or monto_a < 0 or 'DEVOLUCIÓN' in (p['referencia'] or '').upper())
+
+                if es_devolucion:
+                    debe_servicios += abs(monto_a)
+                else:
+                    base_a = max(0.0, abs(monto_a) - recargo_a)
+                    haber_servicios += base_a
+
+        saldo_ars = debe_servicios - haber_servicios
+
+        # Tolerancias a decimales para evitar centavos residuales
+        if abs(saldo_usd) < 0.05: saldo_usd = 0.0
+        if abs(saldo_ars) < 1.0: saldo_ars = 0.0
+
+        # Solo listamos clientes que realmente tengan saldo pendiente
+        if abs(saldo_usd) > 0.01 or abs(saldo_ars) > 0.01:
             estados_cuenta.append({
                 'id': cli['id'],
                 'nombre': cli['razon_social'] or f"{cli['nombre']} {cli['apellido']}",
                 'telefono': cli['telefono'],
-                'saldo_equipos': saldo_equipos,
-                'saldo_servicios': saldo_servicios,
-                'saldo_usd': saldo_equipos,
-                'saldo_ars': saldo_servicios
+                'saldo_equipos': round(saldo_usd, 2),
+                'saldo_servicios': round(saldo_ars, 2),
+                'saldo_usd': round(saldo_usd, 2),
+                'saldo_ars': round(saldo_ars, 2)
             })
 
     total_eq = sum(e['saldo_equipos'] for e in estados_cuenta if e['saldo_equipos'] > 0)
@@ -2388,9 +2569,10 @@ def listar_clientes_cc():
     return render_template('cuentas_corrientes/listar_clientes_cc.html', 
                            estados_cuenta=estados_cuenta,
                            saldo_equipos=round(total_eq, 2),
-                           saldo_servicios=round(total_serv, 2))
-
-
+                           saldo_servicios=round(total_serv, 2),
+                           valor_dolar_compra=cotiz_actual)
+    
+    
 # =========================================================================
 # VISTA DEL DETALLE INDIVIDUAL DE CLIENTE (USA LA MISMA FUNCIÓN)
 # =========================================================================
@@ -3188,6 +3370,7 @@ def registrar_pago_proveedor(proveedor_id):
 # --- RUTA ACTUALIZADA: Detalle de Movimientos Cta. Cte. Cliente ---
 # --- RUTA ACTUALIZADA: Detalle de Movimientos Cta. Cte. Cliente ---
 
+
 @app.route('/cuentas_corrientes/cliente/detalle/<int:cliente_id>')
 @login_required
 def ver_detalle_cc_cliente(cliente_id):
@@ -3262,9 +3445,11 @@ def ver_detalle_cc_cliente(cliente_id):
                 'ref': v['id']
             })
 
-        # B. Cuotas (DEBE)
+        # B. Cuotas (DEBE) - Protegido contra cuotas viejas de marzo
         if v['cantidad_cuotas'] >= 1:
             cuotas = db_query("SELECT * FROM ventas_cuotas WHERE venta_id = ?", (v['id'],))
+            saldo_financiado_real_usd = max(0.0, (v['precio_final_usd'] or 0) - total_debe_inicial_usd)
+
             for c in cuotas:
                 try:
                     fecha_venc = datetime.strptime(c['fecha_vencimiento'][:10], '%Y-%m-%d').date()
@@ -3272,20 +3457,27 @@ def ver_detalle_cc_cliente(cliente_id):
                     fecha_venc = hoy
                 es_vencida = (fecha_venc < hoy and c['estado'] == 'PENDIENTE')
                 
-                monto_cuota_ars = c['monto_original_ars'] if (c['monto_original_ars'] and c['monto_original_ars'] > 0) else c['monto_ars']
+                # Si es cuota vieja de marzo con monto_original_ars nulo y pagada (monto_ars=0), toma el valor financiado real
+                if c['monto_original_ars'] and c['monto_original_ars'] > 0:
+                    cuota_usd_valor = c['monto_original_ars'] / cotiz_v
+                elif c['monto_ars'] and c['monto_ars'] > 0:
+                    cuota_usd_valor = c['monto_ars'] / cotiz_v
+                else:
+                    cuota_usd_valor = saldo_financiado_real_usd / max(1, v['cantidad_cuotas'])
 
-                movimientos.append({
-                    'id': c['id'],
-                    'fecha': c['fecha_vencimiento'] + " 09:00:00",
-                    'tipo': 'DEBE', 
-                    'monto_reg': monto_cuota_ars / cotiz_v,
-                    'moneda_display': 'USD',
-                    'descripcion': f"Venta #{v['id']} - {info_equipo} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
-                    'rubro': 'EQUIPOS',
-                    'vencida': es_vencida,
-                    'es_cuota': True,
-                    'ref': v['id']
-                })
+                if cuota_usd_valor > 0.01:
+                    movimientos.append({
+                        'id': c['id'],
+                        'fecha': c['fecha_vencimiento'] + " 09:00:00",
+                        'tipo': 'DEBE', 
+                        'monto_reg': cuota_usd_valor,
+                        'moneda_display': 'USD',
+                        'descripcion': f"Venta #{v['id']} - {info_equipo} - Cuota {c['numero_cuota']}/{v['cantidad_cuotas']}", 
+                        'rubro': 'EQUIPOS',
+                        'vencida': es_vencida,
+                        'es_cuota': True,
+                        'ref': v['id']
+                    })
 
         # C. HABER: Pago inicial entregado hoy
         total_ars_entregado_hoy = (
@@ -3318,8 +3510,8 @@ def ver_detalle_cc_cliente(cliente_id):
     for s in servicios:
         movimientos.append({
             'id': s['id'],
-            'fecha': s['fecha_servicio'], 'tipo': 'DEBE', 'monto_reg': s['precio_final_ars'], 
-            'moneda_display': 'ARS', 'descripcion': f"Servicio #{s['id']} - {s['falla_reportada']}", 
+            'fecha': s['fecha_servicio'], 'tipo': 'DEBE', 'monto_reg': s['precio_final_ars'] or 0.0, 
+            'moneda_display': 'ARS', 'descripcion': f"Servicio #{s['id']} - {s['falla_reportada'] or 'Reparación'}", 
             'rubro': 'SERVICIOS', 'vencida': False, 'es_cuota': False, 'ref': s['id']
         })
 
@@ -3345,9 +3537,18 @@ def ver_detalle_cc_cliente(cliente_id):
         es_rubro_equipos = (p['imputacion'] == 'EQUIPOS')
 
         if es_rubro_equipos:
-            monto_val = p['monto_usd'] if (p['monto_usd'] is not None and abs(p['monto_usd']) > 0) else ((p['monto_ars'] or 0) / cotiz_actual)
-            
-            # Recargo en USD
+            # Corrección de cobros viejos de marzo en pesos: se convierten con el dólar de la venta más cercana en fecha
+            if p['monto_usd'] is not None and abs(p['monto_usd']) > 0:
+                monto_val = p['monto_usd']
+            else:
+                venta_cercana = db_query("""
+                    SELECT valor_dolar_momento FROM ventas 
+                    WHERE cliente_id = ? AND status = 'COMPLETADA' 
+                    ORDER BY ABS(julianday(fecha_venta) - julianday(?)) ASC LIMIT 1
+                """, (cliente_id, p['fecha_cobro']))
+                dolar_hist = venta_cercana[0]['valor_dolar_momento'] if (venta_cercana and venta_cercana[0]['valor_dolar_momento']) else cotiz_actual
+                monto_val = (p['monto_ars'] or 0) / dolar_hist
+
             recargo_usd = p['monto_recargo_usd'] if ('monto_recargo_usd' in p.keys() and p['monto_recargo_usd']) else 0.0
             if recargo_usd == 0 and p['referencia']:
                 try:
@@ -3376,7 +3577,6 @@ def ver_detalle_cc_cliente(cliente_id):
             else:
                 desc_pago = f"💳 {p['referencia']}" if p['metodo_pago'] == 'TARJETA_CREDITO' else (f"💵/💳 {p['referencia']}" if p['metodo_pago'] == 'PAGO_MULTIPLE' else f"Cobro ({p['metodo_pago']})")
 
-                # Guardamos el movimiento con su recargo adjunto
                 movimientos.append({
                     'id': p['id'],
                     'fecha': p['fecha_cobro'],
@@ -3420,7 +3620,6 @@ def ver_detalle_cc_cliente(cliente_id):
             else:
                 desc_pago = f"💳 {p['referencia']}" if p['metodo_pago'] == 'TARJETA_CREDITO' else (f"💵/💳 {p['referencia']}" if p['metodo_pago'] == 'PAGO_MULTIPLE' else f"Cobro ({p['metodo_pago']})")
 
-                # Guardamos el movimiento con su recargo adjunto
                 movimientos.append({
                     'id': p['id'],
                     'fecha': p['fecha_cobro'],
@@ -3440,10 +3639,7 @@ def ver_detalle_cc_cliente(cliente_id):
     saldo_equipos_usd_acum = 0.0
     saldo_servicios_ars_acum = 0.0
 
-    # =========================================================================
-    # LA SOLUCIÓN CLAVE EN EL ACUMULADOR:
-    # Si un cobro tiene recargo de tarjeta, solo descuenta de la deuda su BASE neta
-    # =========================================================================
+    # ACUMULADOR: Descuenta la base neta de la deuda si hubo recargo financiero
     for mov in movimientos:
         monto_impacto = mov['monto_reg']
         if mov['tipo'] == 'HABER' and mov.get('recargo', 0) > 0:
@@ -3453,16 +3649,20 @@ def ver_detalle_cc_cliente(cliente_id):
 
         if mov['rubro'] == 'EQUIPOS':
             saldo_equipos_usd_acum += imp_reg
-            mov['saldo_rubro_acum'] = saldo_equipos_usd_acum
+            mov['saldo_rubro_acum'] = round(saldo_equipos_usd_acum, 2)
         else:
             saldo_servicios_ars_acum += imp_reg
-            mov['saldo_rubro_acum'] = saldo_servicios_ars_acum
+            mov['saldo_rubro_acum'] = round(saldo_servicios_ars_acum, 2)
+
+    # Tolerancia a centavos viejos de redondeo
+    if abs(saldo_equipos_usd_acum) < 0.05: saldo_equipos_usd_acum = 0.0
+    if abs(saldo_servicios_ars_acum) < 1.0: saldo_servicios_ars_acum = 0.0
 
     return render_template('cuentas_corrientes/detalle_cliente.html', 
-                           cliente=cliente, movimientos=movimientos, 
-                           saldo_equipos=saldo_equipos_usd_acum,
-                           saldo_servicios=saldo_servicios_ars_acum)
-    
+                           cliente=cliente, 
+                           movimientos=movimientos, 
+                           saldo_equipos=round(saldo_equipos_usd_acum, 2), 
+                           saldo_servicios=round(saldo_servicios_ars_acum, 2))
  
       
 @app.route('/ventas/plan_cuotas/<int:venta_id>')
