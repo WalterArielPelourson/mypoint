@@ -2911,6 +2911,12 @@ def ajuste_cc_proveedor():
     
     return redirect(url_for('menu_ajuste_cc'))
 
+import csv
+from datetime import datetime
+import io
+from flask import Response, render_template, request
+
+
 # =================================================================
 # === REPORTE DE STOCK / INVENTARIO A FECHA DETERMINADA ============
 # =================================================================
@@ -2919,19 +2925,25 @@ def ajuste_cc_proveedor():
 def reporte_stock_a_fecha():
     hoy_str = datetime.now().strftime('%Y-%m-%d')
     fecha_corte = request.args.get('fecha_corte', hoy_str).strip() or hoy_str
-    rubro = request.args.get('rubro', 'TODOS').strip().upper()  # 'TODOS', 'CELULARES', 'REPUESTOS', 'ACCESORIOS'
-    filtro_stock = request.args.get('filtro_stock', 'con_stock').strip()  # 'con_stock', 'sin_stock', 'todos'
+    rubro = (
+        request.args.get('rubro', 'TODOS').strip().upper()
+    )  # 'TODOS', 'CELULARES', 'REPUESTOS', 'ACCESORIOS'
+    filtro_stock = (
+        request.args.get('filtro_stock', 'con_stock').strip()
+    )  # 'con_stock', 'sin_stock', 'todos'
     q = request.args.get('q', '').strip()
     exportar = request.args.get('exportar', '').strip()  # 'csv'
-    
-    fecha_corte_limite = f"{fecha_corte} 23:59:59"
-    
+
+    fecha_corte_limite = f'{fecha_corte} 23:59:59'
+
     # Obtener cotización del dólar para valorización
     dolar_info = obtener_cotizacion_dolar()
-    cotiz = float(dolar_info.get('compra_blue') or dolar_info.get('venta_blue') or 1.0)
-    
+    cotiz = float(
+        dolar_info.get('compra_blue') or dolar_info.get('venta_blue') or 1.0
+    )
+
     items = []
-    
+
     # --- 1. PROCESAR CELULARES (EQUIPOS) ---
     if rubro in ('TODOS', 'CELULARES'):
         celulares_raw = db_query("""
@@ -2945,53 +2957,72 @@ def reporte_stock_a_fecha():
             FROM celulares c
             ORDER BY c.marca, c.modelo, c.imei
         """)
-        
+
         for row in celulares_raw:
             c = dict(row)
-            
+
             # Verificar ingreso: si fue comprado posteriormente a la fecha de corte, no existía en stock
             fecha_ingreso = c.get('fecha_ingreso_compra')
-            if fecha_ingreso and fecha_ingreso > fecha_corte_limite:
+            if fecha_ingreso and str(fecha_ingreso) > fecha_corte_limite:
                 continue
-            
+
             # Verificar venta a la fecha de corte
             fecha_venta = c.get('fecha_venta_completada')
-            vendido_antes_o_en_corte = bool(fecha_venta and fecha_venta <= fecha_corte_limite)
-            vendido_posterior = bool(fecha_venta and fecha_venta > fecha_corte_limite)
-            
+            vendido_antes_o_en_corte = bool(
+                fecha_venta and str(fecha_venta) <= fecha_corte_limite
+            )
+            vendido_posterior = bool(
+                fecha_venta and str(fecha_venta) > fecha_corte_limite
+            )
+
             # Si se vendió antes del corte => 0 en stock
             # Si nunca se vendió o se vendió DESPUÉS del corte => 1 en stock
             stock_a_fecha = 0 if vendido_antes_o_en_corte else 1
             stock_actual = int(c.get('stock') or 0)
-            
+
             # Filtro por estado de stock
             if filtro_stock == 'con_stock' and stock_a_fecha <= 0:
                 continue
             elif filtro_stock == 'sin_stock' and stock_a_fecha > 0:
                 continue
-            
+
             # Filtro por búsqueda
             if q:
                 term = q.lower()
-                descripcion_txt = f"{c.get('marca') or ''} {c.get('modelo') or ''} {c.get('imei') or ''} {c.get('color') or ''}".lower()
+                descripcion_txt = (
+                    f"{c.get('marca') or ''} {c.get('modelo') or ''}"
+                    f" {c.get('imei') or ''} {c.get('color') or ''}".lower()
+                )
                 if term not in descripcion_txt:
                     continue
-            
+
             costo_usd = float(c.get('costo_usd') or 0.0)
             val_usd = stock_a_fecha * costo_usd
             val_ars = val_usd * cotiz
-            
+
             if stock_a_fecha > 0:
-                estado_desc = "En Stock (Vendido posteriormente)" if vendido_posterior else "En Stock"
+                estado_desc = (
+                    'En Stock (Vendido posteriormente)'
+                    if vendido_posterior
+                    else 'En Stock'
+                )
             else:
-                estado_desc = "Vendido antes del corte"
-            
+                estado_desc = 'Vendido antes del corte'
+
+            # Formateo limpio a YYYY-MM-DD
+            f_compra_str = str(fecha_ingreso)[:10] if fecha_ingreso else 'S/D'
+            f_venta_str = str(fecha_venta)[:10] if fecha_venta else 'No vendido'
+
             items.append({
                 'tipo': 'CELULAR',
                 'tipo_badge': 'Equipo',
                 'id': c['id'],
                 'codigo': c.get('imei') or f"CEL-{c['id']}",
-                'descripcion': f"{c.get('marca') or ''} {c.get('modelo') or ''} ({c.get('almacenamiento_gb') or ''}GB - {c.get('color') or ''})".strip(),
+                'descripcion': (
+                    f"{c.get('marca') or ''} {c.get('modelo') or ''}"
+                    f" ({c.get('almacenamiento_gb') or ''}GB -"
+                    f" {c.get('color') or ''})".strip()
+                ),
                 'identificador': f"IMEI: {c.get('imei') or 'S/D'}",
                 'subcategoria': c.get('condicion') or 'General',
                 'stock_a_fecha': stock_a_fecha,
@@ -3001,102 +3032,140 @@ def reporte_stock_a_fecha():
                 'valor_total_usd': val_usd,
                 'valor_total_ars': val_ars,
                 'estado_a_fecha': estado_desc,
-                'fecha_ingreso': fecha_ingreso or 'S/D',
-                'fecha_salida': fecha_venta or 'No vendido'
+                'fecha_compra': f_compra_str,
+                'fecha_venta': f_venta_str,
+                'fecha_ingreso': f_compra_str,
+                'fecha_salida': f_venta_str,
             })
-    
+
     # --- 2. PROCESAR REPUESTOS Y ACCESORIOS ---
     if rubro in ('TODOS', 'REPUESTOS', 'ACCESORIOS'):
-        query_rep = "SELECT * FROM repuestos WHERE 1=1"
+        query_rep = 'SELECT * FROM repuestos WHERE 1=1'
         params_rep = []
         if rubro == 'REPUESTOS':
-            query_rep += " AND (categoria = 'REPUESTO' OR categoria IS NULL OR categoria = '')"
+            query_rep += (
+                " AND (categoria = 'REPUESTO' OR categoria IS NULL OR categoria"
+                " = '')"
+            )
         elif rubro == 'ACCESORIOS':
             query_rep += " AND categoria = 'ACCESORIO'"
-        query_rep += " ORDER BY nombre_parte"
-        
+        query_rep += ' ORDER BY nombre_parte'
+
         repuestos_raw = db_query(query_rep, tuple(params_rep))
-        
+
         for row in repuestos_raw:
             r = dict(row)
             r_id = r['id']
             stock_actual = int(r.get('stock') or 0)
-            
+
             # Salidas posteriores al corte:
-            # a) Usados en reparaciones completadas después de la fecha de corte
-            usados_post = db_query("""
+            # a) Usados en reparaciones
+            usados_post = db_query(
+                """
                 SELECT COALESCE(SUM(ru.cantidad), 0) as total_usado
                 FROM repuestos_usados ru
                 JOIN servicios_reparacion sr ON ru.servicio_id = sr.id
                 WHERE ru.repuesto_id = ? 
                   AND sr.status = 'COMPLETADO' 
                   AND sr.fecha_servicio > ?
-            """, (r_id, fecha_corte_limite))
-            cant_usada_post = int(usados_post[0]['total_usado']) if usados_post else 0
-            
-            # b) Promos y adicionales en ventas completadas después de la fecha de corte
-            promos_post = db_query("""
+            """,
+                (r_id, fecha_corte_limite),
+            )
+            cant_usada_post = (
+                int(usados_post[0]['total_usado']) if usados_post else 0
+            )
+
+            # b) Promos y adicionales en ventas
+            promos_post = db_query(
+                """
                 SELECT COALESCE(SUM(ipv.cantidad), 0) as total_promo
                 FROM items_promocionales_venta ipv
                 JOIN ventas v ON ipv.venta_id = v.id
                 WHERE ipv.repuesto_id = ? 
                   AND v.status = 'COMPLETADA' 
                   AND v.fecha_venta > ?
-            """, (r_id, fecha_corte_limite))
-            cant_promos_post = int(promos_post[0]['total_promo']) if promos_post else 0
-            
-            adic_post = db_query("""
+            """,
+                (r_id, fecha_corte_limite),
+            )
+            cant_promos_post = (
+                int(promos_post[0]['total_promo']) if promos_post else 0
+            )
+
+            adic_post = db_query(
+                """
                 SELECT COALESCE(SUM(iav.cantidad), 0) as total_adic
                 FROM items_adicionales_venta iav
                 JOIN ventas v ON iav.venta_id = v.id
                 WHERE iav.repuesto_id = ? 
                   AND v.status = 'COMPLETADA' 
                   AND v.fecha_venta > ?
-            """, (r_id, fecha_corte_limite))
-            cant_adic_post = int(adic_post[0]['total_adic']) if adic_post else 0
-            
-            total_salidas_post = cant_usada_post + cant_promos_post + cant_adic_post
-            
+            """,
+                (r_id, fecha_corte_limite),
+            )
+            cant_adic_post = (
+                int(adic_post[0]['total_adic']) if adic_post else 0
+            )
+
+            total_salidas_post = (
+                cant_usada_post + cant_promos_post + cant_adic_post
+            )
+
             # Entradas posteriores al corte (compras):
-            compras_post = db_query("""
+            compras_post = db_query(
+                """
                 SELECT COALESCE(SUM(c.cantidad), 0) as total_comprado
                 FROM compras c
                 WHERE c.item_id = ? 
                   AND c.tipo_item IN ('REPUESTO', 'ACCESORIO', 'INSUMO', 'PRODUCTO')
                   AND c.fecha_compra > ?
-            """, (r_id, fecha_corte_limite))
-            cant_compras_post = int(compras_post[0]['total_comprado']) if compras_post else 0
-            
-            # Reconstrucción del stock al corte: Stock_actual + Salidas_post - Compras_post
-            stock_a_fecha = max(0, stock_actual + total_salidas_post - cant_compras_post)
-            
+            """,
+                (r_id, fecha_corte_limite),
+            )
+            cant_compras_post = (
+                int(compras_post[0]['total_comprado']) if compras_post else 0
+            )
+
+            # Reconstrucción del stock al corte
+            stock_a_fecha = max(
+                0, stock_actual + total_salidas_post - cant_compras_post
+            )
+
             # Filtro por estado de stock
             if filtro_stock == 'con_stock' and stock_a_fecha <= 0:
                 continue
             elif filtro_stock == 'sin_stock' and stock_a_fecha > 0:
                 continue
-            
+
             # Filtro por búsqueda
             if q:
                 term = q.lower()
-                desc_rep = f"{r.get('nombre_parte') or ''} {r.get('modelo_compatible') or ''}".lower()
+                desc_rep = (
+                    f"{r.get('nombre_parte') or ''}"
+                    f" {r.get('modelo_compatible') or ''}".lower()
+                )
                 if term not in desc_rep:
                     continue
-            
+
             costo_usd = float(r.get('costo_usd') or 0.0)
             val_usd = stock_a_fecha * costo_usd
             val_ars = val_usd * cotiz
-            
+
             cat_nombre = (r.get('categoria') or 'REPUESTO').upper()
-            badge_label = 'Accesorio' if cat_nombre == 'ACCESORIO' else ('Insumo' if cat_nombre == 'INSUMO' else 'Repuesto')
-            
+            badge_label = (
+                'Accesorio'
+                if cat_nombre == 'ACCESORIO'
+                else ('Insumo' if cat_nombre == 'INSUMO' else 'Repuesto')
+            )
+
             items.append({
                 'tipo': cat_nombre,
                 'tipo_badge': badge_label,
                 'id': r['id'],
                 'codigo': f"ART-{r['id']}",
                 'descripcion': r.get('nombre_parte') or '',
-                'identificador': f"Comp: {r.get('modelo_compatible') or 'Universal'}",
+                'identificador': (
+                    f"Comp: {r.get('modelo_compatible') or 'Universal'}"
+                ),
                 'subcategoria': r.get('categoria') or 'Repuesto',
                 'stock_a_fecha': stock_a_fecha,
                 'stock_actual': stock_actual,
@@ -3104,27 +3173,48 @@ def reporte_stock_a_fecha():
                 'costo_unitario_usd': costo_usd,
                 'valor_total_usd': val_usd,
                 'valor_total_ars': val_ars,
-                'estado_a_fecha': 'En Stock' if stock_a_fecha > 0 else 'Sin Stock al corte',
+                'estado_a_fecha': (
+                    'En Stock' if stock_a_fecha > 0 else 'Sin Stock al corte'
+                ),
+                'fecha_compra': '-',
+                'fecha_venta': '-',
                 'fecha_ingreso': '-',
-                'fecha_salida': '-'
+                'fecha_salida': '-',
             })
-    
+
     # Calcular totales y métricas
     total_unidades = sum(i['stock_a_fecha'] for i in items)
-    total_equipos = sum(i['stock_a_fecha'] for i in items if i['tipo'] == 'CELULAR')
-    total_repuestos = sum(i['stock_a_fecha'] for i in items if i['tipo'] != 'CELULAR')
+    total_equipos = sum(
+        i['stock_a_fecha'] for i in items if i['tipo'] == 'CELULAR'
+    )
+    total_repuestos = sum(
+        i['stock_a_fecha'] for i in items if i['tipo'] != 'CELULAR'
+    )
     total_usd = sum(i['valor_total_usd'] for i in items)
     total_ars = sum(i['valor_total_ars'] for i in items)
     cant_con_stock = sum(1 for i in items if i['stock_a_fecha'] > 0)
     cant_sin_stock = sum(1 for i in items if i['stock_a_fecha'] == 0)
-    
-    # Exportación a CSV si se solicita
+
+    # Exportación a CSV
     if exportar == 'csv':
         output = io.StringIO()
         writer = csv.writer(output, delimiter=';')
-        writer.writerow(['Tipo', 'Codigo/IMEI', 'Descripcion', 'Detalle/Compatibilidad', 'Subcategoria',
-                         f'Stock al {fecha_corte}', 'Stock Actual', 'Diferencia', 
-                         'Costo Unit USD', 'Total USD', 'Total ARS', 'Estado'])
+        writer.writerow([
+            'Tipo',
+            'Codigo/IMEI',
+            'Descripcion',
+            'Detalle/Compatibilidad',
+            'Subcategoria',
+            'Fecha Compra',
+            'Fecha Venta',
+            f'Stock al {fecha_corte}',
+            'Stock Actual',
+            'Diferencia',
+            'Costo Unit USD',
+            'Total USD',
+            'Total ARS',
+            'Estado',
+        ])
         for it in items:
             writer.writerow([
                 it['tipo_badge'],
@@ -3132,37 +3222,47 @@ def reporte_stock_a_fecha():
                 it['descripcion'],
                 it['identificador'],
                 it['subcategoria'],
+                it['fecha_compra'],
+                it['fecha_venta'],
                 it['stock_a_fecha'],
                 it['stock_actual'],
                 it['variacion'],
                 f"{it['costo_unitario_usd']:.2f}",
                 f"{it['valor_total_usd']:.2f}",
                 f"{it['valor_total_ars']:.2f}",
-                it['estado_a_fecha']
+                it['estado_a_fecha'],
             ])
         output.seek(0)
         return Response(
             output.getvalue(),
-            mimetype="text/csv",
-            headers={"Content-disposition": f"attachment; filename=reporte_stock_al_{fecha_corte}.csv"}
+            mimetype='text/csv',
+            headers={
+                'Content-disposition': (
+                    f'attachment; filename=reporte_stock_al_{fecha_corte}.csv'
+                )
+            },
         )
-    
-    return render_template('reportes/stock_a_fecha.html',
-                           items=items,
-                           fecha_corte=fecha_corte,
-                           rubro=rubro,
-                           filtro_stock=filtro_stock,
-                           q=q,
-                           total_unidades=total_unidades,
-                           total_equipos=total_equipos,
-                           total_repuestos=total_repuestos,
-                           total_usd=round(total_usd, 2),
-                           total_ars=round(total_ars, 2),
-                           cant_con_stock=cant_con_stock,
-                           cant_sin_stock=cant_sin_stock,
-                           cotiz_dolar=cotiz,
-                           hoy=hoy_str)
 
+    return render_template(
+        'reportes/stock_a_fecha.html',
+        items=items,
+        fecha_corte=fecha_corte,
+        rubro=rubro,
+        filtro_stock=filtro_stock,
+        q=q,
+        total_unidades=total_unidades,
+        total_equipos=total_equipos,
+        total_repuestos=total_repuestos,
+        total_usd=round(total_usd, 2),
+        total_ars=round(total_ars, 2),
+        cant_con_stock=cant_con_stock,
+        cant_sin_stock=cant_sin_stock,
+        cotiz_dolar=cotiz,
+        hoy=hoy_str,
+    )
+    
+    
+    
 ##Reporte de cumpleaños
 @app.route('/reportes/cumpleanos')
 @login_required

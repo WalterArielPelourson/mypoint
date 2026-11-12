@@ -66,8 +66,7 @@
                     <button type="submit" class="btn btn-primary btn-sm flex-fill">
                         <i class="fas fa-check me-1"></i>Consultar
                     </button>
-                    <a href="{{ url_for('reporte_stock_a_fecha') }}" class="btn btn-outline-secondary btn-sm" title="Limpiar">
-                        <i class="fas fa-check me-1"></i>Limpiar
+                    <a href="{{ url_for('reporte_stock_a_fecha') }}" class="btn btn-outline-secondary btn-sm" title="Limpiar">Limpiar
                         <i class="fas fa-undo"></i>
                     </a>
                 </div>
@@ -150,6 +149,8 @@
                         <th>Descripción</th>
                         <th>Detalle / Compatibilidad</th>
                         <th>Subcategoría</th>
+                        <th class="text-center">F. Compra</th>
+                        <th class="text-center">F. Venta</th>
                         <th class="text-center">Stock al Corte</th>
                         <th class="text-center">Stock Actual</th>
                         <th class="text-center">Variación</th>
@@ -190,6 +191,29 @@
                             <td>
                                 <span class="badge bg-light text-dark border">{{ it.subcategoria }}</span>
                             </td>
+                            
+                            <!-- COLUMNA: FECHA DE COMPRA -->
+                            <td class="text-center">
+                                {% if it.fecha_compra and it.fecha_compra not in ['-', 'S/D'] %}
+                                    <span class="font-monospace small text-dark"><i class="far fa-calendar-alt text-muted me-1"></i>{{ it.fecha_compra }}</span>
+                                {% else %}
+                                    <span class="text-muted small">{{ it.fecha_compra }}</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- COLUMNA: FECHA DE VENTA -->
+                            <td class="text-center">
+                                {% if it.fecha_venta and it.fecha_venta not in ['-', 'No vendido'] %}
+                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle font-monospace">
+                                        <i class="fas fa-tag me-1"></i>{{ it.fecha_venta }}
+                                    </span>
+                                {% elif it.fecha_venta == 'No vendido' %}
+                                    <span class="badge bg-light text-secondary border small">No vendido</span>
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
+                            </td>
+
                             <td class="text-center">
                                 {% if it.stock_a_fecha > 0 %}
                                     <span class="badge bg-success px-2 py-1 fs-6 fw-bold">{{ it.stock_a_fecha }}</span>
@@ -233,7 +257,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="12" class="text-center py-5 text-muted">
+                            <td colspan="14" class="text-center py-5 text-muted">
                                 <i class="fas fa-inbox fa-3x mb-3 text-secondary opacity-50"></i>
                                 <h6 class="fw-bold">No se encontraron artículos para los filtros seleccionados</h6>
                                 <p class="small mb-0">Modifica la fecha de corte o amplía el criterio de búsqueda.</p>
@@ -244,7 +268,7 @@
                 {% if items %}
                 <tfoot class="table-light fw-bold">
                     <tr>
-                        <td colspan="5" class="ps-3 text-uppercase">Totales al {{ fecha_corte }}:</td>
+                        <td colspan="7" class="ps-3 text-uppercase">Totales al {{ fecha_corte }}:</td>
                         <td class="text-center text-primary fs-6">{{ total_unidades }}</td>
                         <td colspan="3"></td>
                         <td class="text-end font-monospace text-success fs-6">u$d {{ "{:,.2f}".format(total_usd) }}</td>
