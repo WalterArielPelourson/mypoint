@@ -18,10 +18,10 @@
         </thead>
         <tbody>
             {% for mov in lista %}
-            {# Moneda según rubro: Equipos en USD, Servicios en ARS #}
+            {# Moneda según rubro: Equipos en USD, Servicios/Reparaciones en ARS #}
             {% set simbolo = 'u$d' if mov.rubro == 'EQUIPOS' else '$' %}
             
-            <tr class="mov-fila {% if mov.vencida %}table-danger{% endif %}">
+            <tr class="mov-fila {% if mov.vencida %}table-danger{% elif mov.monto_reg == 0 and mov.tipo == 'HABER' %}table-light opacity-75{% endif %}">
                 <td class="ps-4 small {% if mov.vencida %}fw-bold text-danger{% else %}text-muted{% endif %}">
                     {{ mov.fecha|datetimeformat('%d/%m/%Y') }}
                     {% if mov.vencida %}
@@ -30,7 +30,7 @@
                 </td>
 
                 <td>
-                    <div class="fw-bold {% if mov.vencida %}text-danger{% endif %}">
+                    <div class="fw-bold {% if mov.vencida %}text-danger{% elif mov.monto_reg == 0 and mov.tipo == 'HABER' %}text-secondary{% endif %}">
                         {{ mov.descripcion }}
                     </div>
                     
@@ -45,7 +45,6 @@
                 </td>
 
                 <td class="text-center">
-                    {# Info sobre la moneda original si fuera necesaria #}
                     {% if mov.rubro == 'EQUIPOS' %}
                         <span class="badge badge-soft-primary">Crédito USD</span>
                     {% else %}
@@ -60,10 +59,16 @@
                     {% else %}-{% endif %}
                 </td>
 
-                {# COLUMNA HABER #}
-                <td class="text-end text-success fw-semibold">
+                {# COLUMNA HABER (Muestra 0.00 con badge neutral si fue aplicado) #}
+                <td class="text-end fw-semibold">
                     {% if mov.tipo == 'HABER' %}
-                        {{ simbolo }} {{ "{:,.2f}".format(mov.monto_reg) }}
+                        {% if mov.monto_reg == 0 %}
+                            <span class="badge bg-light text-secondary border px-2 py-1" title="Anticipo ya imputado - Sin saldo remanente">
+                                {{ simbolo }} 0.00
+                            </span>
+                        {% else %}
+                            <span class="text-success">{{ simbolo }} {{ "{:,.2f}".format(mov.monto_reg) }}</span>
+                        {% endif %}
                     {% else %}-{% endif %}
                 </td>
 
@@ -174,12 +179,12 @@
                 {{ render_tabla_cliente(movs_equipos) }}
             </div>
 
-            <!-- PANEL SERVICIOS -->
+            <!-- PANEL SERVICIOS (Acepta REPARACIONES y SERVICIOS) -->
             <div class="tab-pane fade" id="pills-servicios" role="tabpanel">
                 <div class="p-3 bg-light border-bottom d-none d-print-block">
                     <h5 class="mb-0">Historial Detallado de Servicios (ARS)</h5>
                 </div>
-                {% set movs_servicios = movimientos | selectattr('rubro', 'equalto', 'SERVICIOS') | list %}
+                {% set movs_servicios = movimientos | rejectattr('rubro', 'equalto', 'EQUIPOS') | list %}
                 {{ render_tabla_cliente(movs_servicios) }}
             </div>
 

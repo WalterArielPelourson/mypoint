@@ -82,6 +82,26 @@
             </div>
         </div>
 
+        <!-- REPORTE DE INVENTARIO por fecha -->
+          <!-- ========================================================================= -->
+        <!-- >>> LO QUE SE AGREGÓ: REPORTE DE STOCK E INVENTARIO POR FECHA <<< -->
+        <!-- ========================================================================= -->
+        <div class="col">
+            <div class="card h-100 shadow-sm text-center border-primary">
+                <div class="card-body d-flex flex-column justify-content-between">
+                    <div>
+                        <i class="bi bi-calendar2-range display-4 text-primary mb-3"></i>
+                        <h5 class="card-title fw-bold text-primary">Stock a Fecha Determinada</h5>
+                        <p class="card-text text-muted">Auditoría y existencias históricas reconstruidas con valorización en USD y ARS al corte.</p>
+                    </div>
+                    <a href="{{ url_for('reporte_stock_a_fecha') }}" class="btn btn-primary mt-3 shadow-sm">
+                        <i class="bi bi-eye me-2"></i>Ver Reporte
+                    </a>
+                </div>
+            </div>
+        </div>
+        <!-- ========================================================================= --> 
+
         <!-- REPORTE DE INVENTARIO -->
         <div class="col">
             <div class="card h-100 shadow-sm text-center">

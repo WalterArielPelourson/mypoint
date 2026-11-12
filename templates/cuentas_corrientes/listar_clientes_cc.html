@@ -50,6 +50,23 @@
     </div>
 </div>
 
+<!-- Filtro de Estado de Saldo -->
+<div class="btn-group me-2" role="group">
+    <a href="{{ url_for('listar_clientes_cc', filtro_saldo='con_deuda', q=filtro_q) }}" 
+       class="btn btn-sm {% if filtro_saldo == 'con_deuda' %}btn-danger{% else %}btn-outline-secondary{% endif %}">
+        Solo con Saldo <span class="badge bg-light text-dark ms-1">{{ cant_con_deuda }}</span>
+    </a>
+    <a href="{{ url_for('listar_clientes_cc', filtro_saldo='todos', q=filtro_q) }}" 
+       class="btn btn-sm {% if filtro_saldo == 'todos' %}btn-dark{% else %}btn-outline-secondary{% endif %}">
+        Todos <span class="badge bg-secondary ms-1">{{ cant_total }}</span>
+    </a>
+    <a href="{{ url_for('listar_clientes_cc', filtro_saldo='al_dia', q=filtro_q) }}" 
+       class="btn btn-sm {% if filtro_saldo == 'al_dia' %}btn-success{% else %}btn-outline-secondary{% endif %}">
+        Al día ($0) <span class="badge bg-light text-dark ms-1">{{ cant_al_dia }}</span>
+    </a>
+</div>
+
+
 <!-- TABLA DE CLIENTES -->
 <div class="card shadow-sm border-0 overflow-hidden">
     <div class="card-body p-0">

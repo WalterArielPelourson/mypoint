@@ -39,6 +39,8 @@
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                     {% if current_user.is_authenticated %}
+
+                    
                     
                     {# --- INVENTARIO --- #}
                     <li class="nav-item dropdown">
@@ -170,6 +172,8 @@
                             <li><a class="dropdown-item" href="{{ url_for('gestionar_cuentas_virtuales') }}"><i class="bi bi-bank2 me-2"></i>Entidades de Pago (Cuentas)</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-danger" href="{{ url_for('backup_database') }}"><i class="bi bi-cloud-download-fill me-2"></i>Descargar Backup DB</a></li>
+                            
+                        
                         </ul>
                     </li>
                     {% endif %}
