@@ -18,7 +18,41 @@
     </div>
 </div>
 
-<div class="table-responsive mt-4">
+{# --- 1. CÁLCULO DE CONTADORES Y PARÁMETROS EN JINJA --- #}
+{% set filtro_saldo = request.args.get('filtro_saldo', 'todos') %}
+{% set filtro_q = request.args.get('q', '') %}
+
+{% set ns = namespace(con_deuda=0, al_dia=0) %}
+{% for prov in estados_cuenta %}
+    {# Mismo criterio que en tus columnas: > 0.005 en USD o > 0.05 en ARS #}
+    {% if prov.saldo_pendiente_usd|abs > 0.005 or prov.saldo_pendiente_ars|abs > 0.05 %}
+        {% set ns.con_deuda = ns.con_deuda + 1 %}
+    {% else %}
+        {% set ns.al_dia = ns.al_dia + 1 %}
+    {% endif %}
+{% endfor %}
+
+{% set cant_con_deuda = ns.con_deuda %}
+{% set cant_al_dia = ns.al_dia %}
+{% set cant_total = estados_cuenta|length %}
+
+{# --- 2. BOTONES DE FILTRO ADAPTADOS --- #}
+<div class="btn-group me-2 mb-3" role="group">
+    <a href="{{ url_for('listar_proveedores_cc', filtro_saldo='con_deuda', q=filtro_q) }}" 
+       class="btn btn-sm {% if filtro_saldo == 'con_deuda' %}btn-danger{% else %}btn-outline-secondary{% endif %}">
+        Solo con Saldo <span class="badge bg-light text-dark ms-1">{{ cant_con_deuda }}</span>
+    </a>
+    <a href="{{ url_for('listar_proveedores_cc', filtro_saldo='todos', q=filtro_q) }}" 
+       class="btn btn-sm {% if filtro_saldo == 'todos' %}btn-dark{% else %}btn-outline-secondary{% endif %}">
+        Todos <span class="badge bg-secondary ms-1">{{ cant_total }}</span>
+    </a>
+    <a href="{{ url_for('listar_proveedores_cc', filtro_saldo='al_dia', q=filtro_q) }}" 
+       class="btn btn-sm {% if filtro_saldo == 'al_dia' %}btn-success{% else %}btn-outline-secondary{% endif %}">
+        Al día ($0) <span class="badge bg-light text-dark ms-1">{{ cant_al_dia }}</span>
+    </a>
+</div>
+
+<div class="table-responsive">
     <table class="table table-striped table-hover align-middle shadow-sm">
         <thead class="table-dark">
             <tr>
@@ -29,65 +63,76 @@
             </tr>
         </thead>
         <tbody>
+            {% set filas_visibles = namespace(count=0) %}
             {% if estados_cuenta %}
                 {% for estado in estados_cuenta %}
-                <tr>
-                    <td>
-                        <div class="fw-bold text-uppercase">{{ estado.nombre }}</div>
-                        <small class="text-muted">ID Proveedor: #{{ estado.id }}</small>
-                    </td>
+                    {% set tiene_saldo = (estado.saldo_pendiente_usd|abs > 0.005 or estado.saldo_pendiente_ars|abs > 0.05) %}
                     
-                    {# COLUMNA USD (CELULARES, TABLETS, SMARTWATCHES) #}
-                    <td class="text-end">
-                        {% if estado.saldo_pendiente_usd > 0.005 %}
-                            <div class="text-danger fw-bold" style="font-size: 1.1rem;">
-                                USD {{ "{:,.2f}".format(estado.saldo_pendiente_usd) }}
-                            </div>
-                            <small class="text-muted" style="font-size: 0.75rem;">
-                                Equiv: ARS {{ "{:,.2f}".format(estado.saldo_pendiente_usd * (valor_dolar_compra or 1)) }}
-                            </small>
-                        {% elif estado.saldo_pendiente_usd < -0.005 %}
-                            <span class="text-success fw-bold">USD {{ "{:,.2f}".format(estado.saldo_pendiente_usd|abs) }}</span>
-                            <span class="badge bg-success" style="font-size: 0.7em;">A FAVOR</span>
-                        {% else %}
-                            <span class="text-muted">USD 0.00</span>
-                        {% endif %}
-                    </td>
+                    {# FILTRADO DE FILAS SEGÚN BOTÓN SELECCIONADO #}
+                    {% if filtro_saldo == 'todos' 
+                          or (filtro_saldo == 'con_deuda' and tiene_saldo) 
+                          or (filtro_saldo == 'al_dia' and not tiene_saldo) %}
+                        {% set filas_visibles.count = filas_visibles.count + 1 %}
+                        <tr>
+                            <td>
+                                <div class="fw-bold text-uppercase">{{ estado.nombre }}</div>
+                                <small class="text-muted">ID Proveedor: #{{ estado.id }}</small>
+                            </td>
+                            
+                            {# COLUMNA USD (CELULARES, TABLETS, SMARTWATCHES) #}
+                            <td class="text-end">
+                                {% if estado.saldo_pendiente_usd > 0.005 %}
+                                    <div class="text-danger fw-bold" style="font-size: 1.1rem;">
+                                        USD {{ "{:,.2f}".format(estado.saldo_pendiente_usd) }}
+                                    </div>
+                                    <small class="text-muted" style="font-size: 0.75rem;">
+                                        Equiv: ARS {{ "{:,.2f}".format(estado.saldo_pendiente_usd * (valor_dolar_compra or 1)) }}
+                                    </small>
+                                {% elif estado.saldo_pendiente_usd < -0.005 %}
+                                    <span class="text-success fw-bold">USD {{ "{:,.2f}".format(estado.saldo_pendiente_usd|abs) }}</span>
+                                    <span class="badge bg-success" style="font-size: 0.7em;">A FAVOR</span>
+                                {% else %}
+                                    <span class="text-muted">USD 0.00</span>
+                                {% endif %}
+                            </td>
 
+                            {# COLUMNA ARS (REPUESTOS, PANTALLAS, ACCESORIOS) #}
+                            <td class="text-end">
+                                {% if estado.saldo_pendiente_ars > 0.05 %}
+                                    <div class="text-danger fw-bold" style="font-size: 1.1rem;">
+                                        ARS {{ "{:,.2f}".format(estado.saldo_pendiente_ars) }}
+                                    </div>
+                                {% elif estado.saldo_pendiente_ars < -0.05 %}
+                                    <span class="text-success fw-bold">ARS {{ "{:,.2f}".format(estado.saldo_pendiente_ars|abs) }}</span>
+                                    <span class="badge bg-success" style="font-size: 0.7em;">A FAVOR</span>
+                                {% else %}
+                                    <span class="text-muted">ARS 0.00</span>
+                                {% endif %}
+                            </td>
 
-                    {# COLUMNA ARS (REPUESTOS, PANTALLAS, ACCESORIOS) #}
-                    <td class="text-end">
-                        {% if estado.saldo_pendiente_ars > 0.05 %}
-                            <div class="text-danger fw-bold" style="font-size: 1.1rem;">
-                                ARS {{ "{:,.2f}".format(estado.saldo_pendiente_ars) }}
-                            </div>
-                        {% elif estado.saldo_pendiente_ars < -0.05 %}
-                            <span class="text-success fw-bold">ARS {{ "{:,.2f}".format(estado.saldo_pendiente_ars|abs) }}</span>
-                            <span class="badge bg-success" style="font-size: 0.7em;">A FAVOR</span>
-                        {% else %}
-                            <span class="text-muted">ARS 0.00</span>
-                        {% endif %}
-                    </td>
-
-                    <td class="text-center">
-                        <div class="btn-group shadow-sm" role="group">
-                            <!-- Botón Pagar: Redirige al formulario de pago -->
-                            <a href="{{ url_for('registrar_pago_proveedor', proveedor_id=estado.id) }}" class="btn btn-sm btn-warning fw-bold" title="Registrar Pago">
-                                <i class="bi bi-cash-stack"></i> PAGAR
-                            </a>
-                            <!-- Botón Ver: Redirige al historial detallado -->
-                            <a href="{{ url_for('ver_detalle_cc_proveedor', proveedor_id=estado.id) }}" class="btn btn-sm btn-info text-white" title="Ver Historial y Detalle">
-                                <i class="bi bi-eye-fill"></i> VER
-                            </a>
-                        </div>
-                    </td>
-                </tr>
+                            <td class="text-center">
+                                <div class="btn-group shadow-sm" role="group">
+                                    <!-- Botón Pagar: Redirige al formulario de pago -->
+                                    <a href="{{ url_for('registrar_pago_proveedor', proveedor_id=estado.id) }}" class="btn btn-sm btn-warning fw-bold" title="Registrar Pago">
+                                        <i class="bi bi-cash-stack"></i> PAGAR
+                                    </a>
+                                    <!-- Botón Ver: Redirige al historial detallado -->
+                                    <a href="{{ url_for('ver_detalle_cc_proveedor', proveedor_id=estado.id) }}" class="btn btn-sm btn-info text-white" title="Ver Historial y Detalle">
+                                        <i class="bi bi-eye-fill"></i> VER
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endif %}
                 {% endfor %}
-            {% else %}
+            {% endif %}
+
+            {# Mensaje en caso de que no haya registros que coincidan con el filtro #}
+            {% if filas_visibles.count == 0 %}
                 <tr>
                     <td colspan="4" class="text-center text-muted py-5">
                         <i class="bi bi-check-circle fs-1 d-block mb-3 text-success"></i>
-                        No se encontraron proveedores con deudas pendientes.
+                        No se encontraron proveedores para el filtro seleccionado.
                     </td>
                 </tr>
             {% endif %}

@@ -2041,7 +2041,7 @@ def listar_proveedores_cc():
         saldo_ars = compra_ars - pago_ars
 
         # Filtro de visibilidad: si debe más de 1 centavo en alguna moneda
-        if abs(saldo_usd) > 0.01 or abs(saldo_ars) > 0.1:
+        if abs(saldo_usd) > 0.01 or abs(saldo_usd) < 0.01 or abs(saldo_ars) < 0.1 or abs(saldo_ars) > 0.1:
             estados_cuenta.append({
                 'id': prov['id'],
                 'nombre': prov['razon_social'] or f"{prov['nombre']} {prov['apellido']}",
