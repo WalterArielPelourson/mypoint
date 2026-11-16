@@ -2134,10 +2134,8 @@ class ResultadoSaldo(tuple):
         return self._data.get(key, default)
 
 
-# =========================================================================
-# MOTOR CENTRAL DE CÁLCULO DE SALDOS REALES HISTÓRICOS
-# =========================================================================
 def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
+    import re
     movimientos = []
     hoy = datetime.now().date() 
 
@@ -2166,7 +2164,7 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
         cotiz_v = v['valor_dolar_momento'] or 1.0
         info_equipo = f"{v['marca'] or 'Equipo'} {v['modelo'] or ''} (IMEI: {v['imei'] or 'S/N'})"
 
-        # 0. Recargo financiero de tarjetas (SE EXCLUYE DE LA CTA CTE)
+        # 0. Recargo financiero de tarjetas asociado a la venta
         recargo_tarjeta_ars = 0.0
         try:
             res_recargo = db_query("""
@@ -2212,7 +2210,7 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
 
         monto_anticipos_aplicados = max(0.0, señas_pos_venta - cancelaciones_comp_venta)
 
-        # Descontar recargo de tarjeta para tomar solo el valor puro del cobro
+        # Descontar recargo de tarjeta para calcular la parte pura financiada en cuotas
         monto_credito_puro_ars = max(0.0, (v['monto_credito_ars'] or 0) - recargo_tarjeta_ars)
 
         total_pago_hoy_ars = (
@@ -2302,12 +2300,27 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                     'ref': v['id']
                 })
 
-        if pago_inicial_neto_usd > 0.01:
+        # Si en la venta inicial se cobró recargo de tarjeta, reflejarlo en DEBE y HABER
+        recargo_venta_usd = (recargo_tarjeta_ars / cotiz_v) if (recargo_tarjeta_ars > 0.01 and (v['monto_credito_ars'] or 0) > 0) else 0.0
+        if recargo_venta_usd > 0.01:
+            movimientos.append({
+                'id': v['id'],
+                'fecha': v['fecha_venta'],
+                'tipo': 'DEBE',
+                'monto_reg': recargo_venta_usd,
+                'moneda_display': 'USD',
+                'descripcion': f"Venta #{v['id']} - {info_equipo} - Recargo Tarjeta Crédito", 
+                'rubro': 'EQUIPOS',
+                'ref': v['id']
+            })
+
+        haber_inicial_con_recargo_usd = pago_inicial_neto_usd + recargo_venta_usd
+        if haber_inicial_con_recargo_usd > 0.01:
             movimientos.append({
                 'id': v['id'],
                 'fecha': v['fecha_venta'],
                 'tipo': 'HABER',
-                'monto_reg': pago_inicial_neto_usd,
+                'monto_reg': haber_inicial_con_recargo_usd,
                 'moneda_display': 'USD',
                 'descripcion': f"Venta #{v['id']} - {info_equipo} - Pago Inicial / Entrega", 
                 'rubro': 'EQUIPOS',
@@ -2332,20 +2345,24 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
     try:
         servicios_raw = db_query("""
             SELECT id, fecha_servicio, precio_final_ars, tipo_servicio, modelo_equipo, imei_equipo,
-                   COALESCE(seña_aplicada, 0) as seña_aplicada
+                   COALESCE(seña_aplicada, 0) as seña_aplicada,
+                   COALESCE(saldo_pendiente, 0) as saldo_pendiente
             FROM servicios_reparacion 
             WHERE cliente_id = ? AND status IN ('COMPLETADO', 'ENTREGADO', 'FINALIZADO')
         """, (cliente_id,))
     except Exception:
         servicios_raw = db_query("""
             SELECT id, fecha_servicio, precio_final_ars, tipo_servicio, modelo_equipo, imei_equipo,
-                   0 as seña_aplicada
+                   0 as seña_aplicada,
+                   COALESCE(saldo_pendiente, 0) as saldo_pendiente
             FROM servicios_reparacion 
             WHERE cliente_id = ? AND status IN ('COMPLETADO', 'ENTREGADO', 'FINALIZADO')
         """, (cliente_id,))
 
+    servicios_map = {}
     for row_s in servicios_raw:
         s = dict(row_s)
+        servicios_map[s['id']] = s
         desc_serv = f"Servicio #{s['id']} - {s.get('tipo_servicio') or 'Reparación'} ({s.get('modelo_equipo') or 'S/M'} ({s.get('imei_equipo') or 'S/M'}))"
         precio_final = float(s.get('precio_final_ars') or 0.0)
         
@@ -2374,25 +2391,47 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                 'ref': s['id']
             })
 
+    pts_servicios_cliente = []
+    if servicios_map:
+        ids_srv = list(servicios_map.keys())
+        placeholders_srv = ",".join("?" for _ in ids_srv)
+        try:
+            pts_srv_raw = db_query(f"""
+                SELECT * FROM pagos_tarjetas 
+                WHERE (UPPER(COALESCE(origen_tipo, '')) LIKE '%SERV%' 
+                       OR UPPER(COALESCE(origen_tipo, '')) LIKE '%REP%')
+                  AND origen_id IN ({placeholders_srv})
+            """, tuple(ids_srv))
+            pts_servicios_cliente = [dict(r) for r in pts_srv_raw]
+        except Exception:
+            pts_servicios_cliente = []
+
+        if not pts_servicios_cliente:
+            try:
+                srv_recs = db_query(f"""
+                    SELECT id, fecha_servicio,
+                           COALESCE(monto_tarjeta_recargo_ars, 0) as monto_recargo_ars,
+                           COALESCE(monto_tarjeta_base_ars, 0) as monto_base_ars,
+                           COALESCE(monto_tarjeta_total_ars, 0) as monto_total_ars
+                    FROM servicios_reparacion
+                    WHERE id IN ({placeholders_srv}) AND COALESCE(monto_tarjeta_recargo_ars, 0) > 0
+                """, tuple(ids_srv))
+                for sr in srv_recs:
+                    dsr = dict(sr)
+                    dsr['fecha'] = dsr.get('fecha_servicio')
+                    pts_servicios_cliente.append(dsr)
+            except Exception:
+                pass
+
     # ---------------------------------------------------------------------
     # 3. PAGOS, COBROS Y AJUSTES MANUALES (COBROS_CLIENTES)
     # ---------------------------------------------------------------------
-    try:
-        cobros_raw = db_query("""
-            SELECT id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, 
-                   imputacion, estado_anticipo, COALESCE(monto_recargo_tarjeta_ars, 0) as monto_recargo_tarjeta_ars
-            FROM cobros_clientes 
-            WHERE cliente_id = ?
-            ORDER BY fecha_cobro ASC
-        """, (cliente_id,))
-    except Exception:
-        cobros_raw = db_query("""
-            SELECT id, fecha_cobro, monto_ars, monto_usd, metodo_pago, referencia, observaciones, 
-                   imputacion, estado_anticipo, 0.0 as monto_recargo_tarjeta_ars
-            FROM cobros_clientes 
-            WHERE cliente_id = ?
-            ORDER BY fecha_cobro ASC
-        """, (cliente_id,))
+    cobros_raw = db_query("""
+        SELECT * 
+        FROM cobros_clientes 
+        WHERE cliente_id = ?
+        ORDER BY fecha_cobro ASC
+    """, (cliente_id,))
 
     for row_cobro in cobros_raw:
         cobro = dict(row_cobro)
@@ -2425,23 +2464,194 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
         raw_ars = float(cobro.get('monto_ars') or 0.0)
 
         # -----------------------------------------------------------------
-        # EXCLUSIÓN TOTAL DEL RECARGO DE TARJETA EN LA CTA CTE
+        # RECARGO DE TARJETA VISIBLE EN DEBE Y EN HABER DE LA CTA CTE
+        # (Mientras que en las cuentas virtuales solo entra el neto sin recargo)
         # -----------------------------------------------------------------
-        recargo_cobro_ars = float(cobro.get('monto_recargo_tarjeta_ars') or 0.0)
-        if recargo_cobro_ars <= 0:
+        def _parse_num_texto(txt):
+            s = (txt or '').strip()
+            if not s:
+                return 0.0
+            if ',' in s and '.' in s:
+                if s.rfind(',') > s.rfind('.'):
+                    s = s.replace('.', '').replace(',', '.')
+                else:
+                    s = s.replace(',', '')
+            elif ',' in s:
+                partes = s.split(',')
+                if len(partes[-1]) == 2:
+                    s = s.replace(',', '.')
+                else:
+                    s = s.replace(',', '')
             try:
-                res_rec_c = db_query("""
-                    SELECT COALESCE(SUM(monto_recargo_ars), 0) as total 
-                    FROM pagos_tarjetas 
-                    WHERE origen_tipo = 'COBRO' AND origen_id = ?
-                """, (cobro['id'],))
-                recargo_cobro_ars = float(res_rec_c[0]['total'] or 0.0) if res_rec_c else 0.0
+                return float(s)
+            except Exception:
+                return 0.0
+
+        recargo_cobro_ars = float(cobro.get('monto_recargo_ars') or cobro.get('monto_recargo_tarjeta_ars') or 0.0)
+        recargo_cobro_usd = float(cobro.get('monto_recargo_usd') or 0.0)
+
+        # Fallback por si el cobro guardó el recargo en la referencia ("| Base: $... | Recargo: $...")
+        ref_base_ars = None
+        ref_base_usd = None
+        m_ref_rec_usd = re.search(r'RECARGO\s*:\s*U\$D\s*([\d.,]+)', ref_upper)
+        m_ref_rec_ars = re.search(r'RECARGO\s*:\s*\$\s*([\d.,]+)', ref_upper)
+        m_ref_base_usd = re.search(r'BASE\s*:\s*U\$D\s*([\d.,]+)', ref_upper)
+        m_ref_base_ars = re.search(r'BASE\s*:\s*\$\s*([\d.,]+)', ref_upper)
+        if m_ref_base_usd:
+            ref_base_usd = _parse_num_texto(m_ref_base_usd.group(1))
+        if m_ref_base_ars:
+            ref_base_ars = _parse_num_texto(m_ref_base_ars.group(1))
+        if recargo_cobro_usd <= 0 and m_ref_rec_usd:
+            recargo_cobro_usd = _parse_num_texto(m_ref_rec_usd.group(1))
+        if recargo_cobro_ars <= 0 and m_ref_rec_ars:
+            recargo_cobro_ars = _parse_num_texto(m_ref_rec_ars.group(1))
+
+        pt_base_total = 0.0
+        pt_bruto_total = 0.0
+        m_serv_ref = re.search(r'(?:ENTREGA\s+|COBRO\s+)?(?:REPARACI[OÓ]N|REP\.?|SERVICIO|SERV\.?)\s*#(\d+)', f"{ref_upper} {obs_upper}")
+        es_pago_con_tarjeta = any(k in f"{metodo} {ref_upper} {obs_upper}" for k in ('TARJETA', 'CREDITO', 'CRÉDITO', 'VISA', 'MASTER', 'NARANJA', 'CABAL', 'AMEX', 'CUOTA'))
+
+        if m_serv_ref and recargo_cobro_ars <= 0 and recargo_cobro_usd <= 0:
+            try:
+                serv_id_ref = int(m_serv_ref.group(1))
+                pts_s = db_query("""
+                    SELECT * FROM pagos_tarjetas 
+                    WHERE (UPPER(COALESCE(origen_tipo, '')) LIKE '%SERV%' 
+                           OR UPPER(COALESCE(origen_tipo, '')) LIKE '%REP%')
+                      AND origen_id = ?
+                """, (serv_id_ref,))
+                if pts_s:
+                    rec_s = sum(float(dict(r).get('monto_recargo_ars') or 0.0) for r in pts_s)
+                    pt_base_total = sum(float(dict(r).get('monto_base_ars') or 0.0) for r in pts_s)
+                    pt_bruto_total = sum(float(dict(r).get('monto_total_ars') or 0.0) for r in pts_s)
+                    if recargo_cobro_ars <= 0:
+                        recargo_cobro_ars = rec_s
+                if recargo_cobro_ars <= 0:
+                    res_srv_rec = db_query("""
+                        SELECT COALESCE(monto_tarjeta_recargo_ars, 0) as total,
+                               COALESCE(monto_tarjeta_base_ars, 0) as base_ars,
+                               COALESCE(monto_tarjeta_total_ars, 0) as total_ars
+                        FROM servicios_reparacion 
+                        WHERE id = ?
+                    """, (serv_id_ref,))
+                    if res_srv_rec:
+                        recargo_cobro_ars = float(res_srv_rec[0]['total'] or 0.0)
+                        if pt_base_total <= 0: pt_base_total = float(res_srv_rec[0]['base_ars'] or 0.0)
+                        if pt_bruto_total <= 0: pt_bruto_total = float(res_srv_rec[0]['total_ars'] or 0.0)
             except Exception:
                 pass
 
-        # Descontar el recargo del monto bruto para que a la cta cte entre el valor PURO
-        if recargo_cobro_ars > 0 and raw_ars > 0:
-            raw_ars = max(0.0, raw_ars - recargo_cobro_ars)
+        if recargo_cobro_ars <= 0 and recargo_cobro_usd <= 0:
+            try:
+                pts_c = db_query("""
+                    SELECT * FROM pagos_tarjetas 
+                    WHERE (UPPER(COALESCE(origen_tipo, '')) LIKE '%COBRO%' 
+                           OR UPPER(COALESCE(origen_tipo, '')) LIKE '%PAGO%'
+                           OR UPPER(COALESCE(origen_tipo, '')) LIKE '%CTA%')
+                      AND origen_id = ?
+                """, (cobro['id'],))
+                if pts_c:
+                    recargo_cobro_ars = sum(float(dict(r).get('monto_recargo_ars') or 0.0) for r in pts_c)
+                    pt_base_total = sum(float(dict(r).get('monto_base_ars') or 0.0) for r in pts_c)
+                    pt_bruto_total = sum(float(dict(r).get('monto_total_ars') or 0.0) for r in pts_c)
+            except Exception:
+                pass
+
+        if recargo_cobro_ars <= 0 and recargo_cobro_usd <= 0:
+            try:
+                pts_cli = db_query("""
+                    SELECT * FROM pagos_tarjetas 
+                    WHERE (UPPER(COALESCE(origen_tipo, '')) LIKE '%COBRO%' 
+                           OR UPPER(COALESCE(origen_tipo, '')) LIKE '%PAGO%'
+                           OR UPPER(COALESCE(origen_tipo, '')) LIKE '%CLI%'
+                           OR UPPER(COALESCE(origen_tipo, '')) LIKE '%CTA%')
+                      AND origen_id = ?
+                """, (cliente_id,))
+                f_cobro_norm = str(fecha_cobro or '').replace('T', ' ')
+                coincidencias = []
+                coincidencias_dia = []
+                for r_pt in pts_cli:
+                    d_pt = dict(r_pt)
+                    f_pt = str(d_pt.get('fecha') or d_pt.get('fecha_pago') or d_pt.get('created_at') or '').replace('T', ' ')
+                    if f_cobro_norm and f_pt and f_pt[:16] == f_cobro_norm[:16]:
+                        coincidencias.append(d_pt)
+                    elif f_cobro_norm and f_pt and f_pt[:10] == f_cobro_norm[:10]:
+                        coincidencias_dia.append(d_pt)
+                elegidos = coincidencias
+                if not elegidos and coincidencias_dia and (es_pago_con_tarjeta or len(coincidencias_dia) == 1):
+                    match_monto = [
+                        d for d in coincidencias_dia
+                        if abs(raw_ars - float(d.get('monto_total_ars') or 0.0)) <= 1.5
+                        or abs(raw_ars - float(d.get('monto_base_ars') or 0.0)) <= 1.5
+                    ]
+                    elegidos = match_monto if match_monto else (coincidencias_dia if len(coincidencias_dia) == 1 else [])
+                if elegidos:
+                    recargo_cobro_ars = sum(float(d.get('monto_recargo_ars') or 0.0) for d in elegidos)
+                    pt_base_total = sum(float(d.get('monto_base_ars') or 0.0) for d in elegidos)
+                    pt_bruto_total = sum(float(d.get('monto_total_ars') or 0.0) for d in elegidos)
+            except Exception:
+                pass
+
+        if recargo_cobro_ars <= 0 and recargo_cobro_usd <= 0 and pts_servicios_cliente and (es_pago_con_tarjeta or imputacion in ('REPARACIONES', 'SERVICIOS', '')):
+            f_cobro_norm = str(fecha_cobro or '').replace('T', ' ')
+            coinc_s = [
+                d for d in pts_servicios_cliente
+                if f_cobro_norm and str(d.get('fecha') or d.get('fecha_pago') or d.get('created_at') or '').replace('T', ' ')[:10] == f_cobro_norm[:10]
+            ]
+            elegidos_s = [
+                d for d in (coinc_s or pts_servicios_cliente)
+                if abs(raw_ars - float(d.get('monto_total_ars') or 0.0)) <= 1.5
+                or abs(raw_ars - float(d.get('monto_base_ars') or 0.0)) <= 1.5
+            ]
+            if not elegidos_s and len(coinc_s) == 1 and es_pago_con_tarjeta:
+                elegidos_s = coinc_s
+            if elegidos_s:
+                recargo_cobro_ars = sum(float(d.get('monto_recargo_ars') or 0.0) for d in elegidos_s)
+                pt_base_total = sum(float(d.get('monto_base_ars') or 0.0) for d in elegidos_s)
+                pt_bruto_total = sum(float(d.get('monto_total_ars') or 0.0) for d in elegidos_s)
+
+        # Respaldo final si el servicio quedó saldado pero cobros_clientes guardó el total con recargo sin registro en pagos_tarjetas
+        base_estimada_serv = None
+        if m_serv_ref:
+            s_info = servicios_map.get(int(m_serv_ref.group(1)))
+            if s_info:
+                base_estimada_serv = max(0.0, float(s_info.get('precio_final_ars') or 0.0) - float(s_info.get('seña_aplicada') or 0.0) - float(s_info.get('saldo_pendiente') or 0.0))
+                if recargo_cobro_ars <= 0 and es_pago_con_tarjeta and float(s_info.get('saldo_pendiente') or 0.0) <= 0.01 and raw_ars > (base_estimada_serv + 1.0):
+                    recargo_cobro_ars = round(raw_ars - base_estimada_serv, 2)
+
+        recargo_incluido = int(cobro.get('recargo_incluido_en_monto') or 0) == 1
+        # En cobrar_cliente estándar, monto_recargo_ars / monto_recargo_usd / estado_anticipo == 'COBRADO' ya guardan monto_ars = base + recargo
+        if not recargo_incluido:
+            if float(cobro.get('monto_recargo_ars') or 0.0) > 0.01 or float(cobro.get('monto_recargo_usd') or 0.0) > 0.01:
+                recargo_incluido = True
+            elif ref_base_ars is not None and recargo_cobro_ars > 0.01 and raw_ars >= (ref_base_ars + recargo_cobro_ars - 1.0):
+                recargo_incluido = True
+            elif ref_base_usd is not None and recargo_cobro_usd > 0.01 and raw_usd >= (ref_base_usd + recargo_cobro_usd - 0.05):
+                recargo_incluido = True
+
+        # Determinar el monto bruto (base + recargo) para el HABER de la Cta. Cte.
+        ars_con_recargo = raw_ars
+        usd_con_recargo = raw_usd
+        if recargo_cobro_ars > 0.01 and raw_ars > 0:
+            ya_incluia_recargo = recargo_incluido
+            if not ya_incluia_recargo and base_estimada_serv is not None:
+                if raw_ars >= (base_estimada_serv + recargo_cobro_ars - 1.0):
+                    ya_incluia_recargo = True
+            if not ya_incluia_recargo and pt_bruto_total > 0 and pt_base_total > 0:
+                if abs(raw_ars - pt_bruto_total) <= 1.5:
+                    ya_incluia_recargo = True
+                elif abs(raw_ars - pt_base_total) <= 1.5:
+                    ya_incluia_recargo = False
+            if not ya_incluia_recargo:
+                ars_con_recargo = raw_ars + recargo_cobro_ars
+                cotiz_ref = (raw_ars / raw_usd) if (raw_ars > 0 and raw_usd > 0) else (cotiz_actual if cotiz_actual > 0 else 1.0)
+                if raw_usd > 0 and cotiz_ref > 0:
+                    usd_con_recargo = raw_usd + (recargo_cobro_ars / cotiz_ref)
+        elif recargo_cobro_usd > 0.001 and raw_usd > 0 and not recargo_incluido:
+            usd_con_recargo = raw_usd + recargo_cobro_usd
+            if raw_ars > 0 and raw_usd > 0:
+                cotiz_ref = raw_ars / raw_usd
+                ars_con_recargo = raw_ars + (recargo_cobro_usd * cotiz_ref)
 
         # =================================================================
         # DETECCIÓN Y UBICACIÓN EXACTA DE AJUSTES (EQUIPOS Y REPARACIONES)
@@ -2456,7 +2666,6 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
         )
 
         if es_ajuste:
-            # Rubro: Si es de Equipos va a USD, de lo contrario a Reparaciones ARS
             if imputacion == 'EQUIPOS' or abs(raw_usd) > 0.001 or 'EQUIPO' in ref_upper or 'USD' in ref_upper or 'CELULAR' in ref_upper:
                 rubro_aj = 'EQUIPOS'
                 monto_aj = abs(raw_usd) if abs(raw_usd) > 0.001 else (abs(raw_ars) / cotiz_actual if cotiz_actual > 0 else 0.0)
@@ -2466,9 +2675,6 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
                 monto_aj = abs(raw_ars) if abs(raw_ars) > 0.001 else (abs(raw_usd) * cotiz_actual)
                 moneda_aj = 'ARS'
 
-            # Débito vs Crédito:
-            # - DÉBITO (DEBE +): aumenta deuda
-            # - CRÉDITO (HABER -): disminuye deuda / saldo a favor
             es_debito = (
                 'DEBITO' in metodo or 'DÉBITO' in metodo or
                 'DEBITO' in ref_upper or 'DÉBITO' in ref_upper or
@@ -2498,30 +2704,57 @@ def calcular_detalle_y_saldo_real(cliente_id, cotiz_actual):
             continue
 
         # =================================================================
-        # COBROS NORMALES (PAGOS: SIEMPRE HABER QUE DESCUENTA DEUDA)
+        # COBROS NORMALES: CONTRAPARTIDA RECARGO EN DEBE + TOTAL EN HABER
         # =================================================================
+        recargo_debe_val = 0.0
         if imputacion == 'REPARACIONES' or imputacion == 'SERVICIOS':
             rubro = 'REPARACIONES'
-            monto_val = raw_ars
-            if abs(monto_val) < 0.001 and abs(raw_usd) > 0.001:
-                monto_val = raw_usd * cotiz_actual
+            monto_val = ars_con_recargo
+            if abs(monto_val) < 0.001 and abs(usd_con_recargo) > 0.001:
+                monto_val = usd_con_recargo * cotiz_actual
+            if recargo_cobro_ars > 0.01:
+                recargo_debe_val = recargo_cobro_ars
+            elif recargo_cobro_usd > 0.001 and cotiz_actual > 0:
+                recargo_debe_val = recargo_cobro_usd * cotiz_actual
         elif imputacion == 'EQUIPOS':
             rubro = 'EQUIPOS'
-            monto_val = raw_usd
-            if abs(monto_val) < 0.001 and abs(raw_ars) > 0.001:
-                monto_val = raw_ars / cotiz_actual if cotiz_actual > 0 else 0.0
+            cotiz_cobro = (raw_ars / raw_usd) if (raw_ars > 0 and raw_usd > 0) else (cotiz_actual if cotiz_actual > 0 else 1.0)
+            monto_val = usd_con_recargo
+            if abs(monto_val) < 0.001 and abs(ars_con_recargo) > 0.001:
+                monto_val = ars_con_recargo / cotiz_actual if cotiz_actual > 0 else 0.0
+            if recargo_cobro_usd > 0.001:
+                recargo_debe_val = recargo_cobro_usd
+            elif recargo_cobro_ars > 0.01 and cotiz_cobro > 0:
+                recargo_debe_val = recargo_cobro_ars / cotiz_cobro
         else:
-            if abs(raw_usd) > 0.001:
+            if abs(raw_usd) > 0.001 and recargo_cobro_ars <= 0.01:
                 rubro = 'EQUIPOS'
-                monto_val = raw_usd
+                monto_val = usd_con_recargo
+                if recargo_cobro_usd > 0.001:
+                    recargo_debe_val = recargo_cobro_usd
             else:
                 rubro = 'REPARACIONES'
-                monto_val = raw_ars
+                monto_val = ars_con_recargo
+                if recargo_cobro_ars > 0.01:
+                    recargo_debe_val = recargo_cobro_ars
 
         if abs(monto_val) < 0.001:
             continue
 
-        # Todo pago (efectivo, tarjeta de débito, transferencia, MP) es HABER y resta deuda
+        # 1) Asentar primero el recargo de tarjeta en el DEBE (contrapartida visible en Cta. Cte.)
+        if recargo_debe_val > 0.001:
+            movimientos.append({
+                'id': cobro['id'],
+                'fecha': cobro['fecha_cobro'],
+                'tipo': 'DEBE',
+                'monto_reg': abs(recargo_debe_val),
+                'moneda_display': 'USD' if rubro == 'EQUIPOS' else 'ARS',
+                'descripcion': f"Recargo Tarjeta Crédito - Pago #{cobro['id']}" + (f" ({ref})" if ref else ""),
+                'rubro': rubro,
+                'ref': cobro['id']
+            })
+
+        # 2) Asentar el pago total en el HABER (base + recargo)
         tipo_mov = 'HABER'
         tipo_label = f"Pago #{cobro['id']} - {metodo}"
 
@@ -4449,24 +4682,15 @@ def editar_presupuesto_reparacion(servicio_id):
    
 
 def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
-    """
-    Función auxiliar para manejar la lógica de creación y edición de presupuestos de reparación.
-    Ahora soporta elección de moneda (ARS/USD) y precios editables.
-    """
     dolar_info_from_context = inject_dolar_values()
-    # Fallback del dólar de venta general
     valor_dolar_venta_local = dolar_info_from_context['valor_dolar_venta'] or 1.0
     
-    # OBTENER NOMBRES DE TÉCNICOS USADOS ANTERIORMENTE PARA SUGERENCIAS (DATALIST)
     sugerencias_tecnicos = db_query("SELECT DISTINCT tecnico_nombre FROM servicios_reparacion WHERE tecnico_nombre IS NOT NULL ORDER BY tecnico_nombre ASC")
-
-    # La consulta a repuestos ahora debe traer precio_venta_usd y precio_venta_ars
     repuestos_raw = db_query("SELECT id, nombre_parte, modelo_compatible, stock, costo_usd, precio_venta_ars, precio_venta_usd FROM repuestos ORDER BY nombre_parte")
-    repuestos_for_json = [dict(r) for r in repuestos_raw] # Convertir a lista de dicts para JSON
+    repuestos_for_json = [dict(r) for r in repuestos_raw]
     
-    form_data = {} # Inicializar form_data para la plantilla
+    form_data = {}
 
-    # Lógica para GET request
     if request.method == 'GET':
         if is_edit:
             servicio_data = db_query("SELECT * FROM servicios_reparacion WHERE id = ? AND status = 'PRESUPUESTO'", (servicio_id,))
@@ -4474,20 +4698,26 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 flash("Presupuesto de servicio no encontrado o no editable.", "danger")
                 return redirect(url_for('listar_presupuestos_reparacion'))
             
-            servicio = servicio_data[0]
-            
-            # --- NUEVA LÓGICA PARA TRAER EL NOMBRE DEL REPARADOR EXTERNO ---
+            servicio = dict(servicio_data[0])
             externo_nombre = ""
             if servicio['externo_proveedor_id']:
                 res_p = db_query("SELECT nombre, apellido, razon_social FROM personas WHERE id = ?", (servicio['externo_proveedor_id'],))
                 if res_p:
                     p = res_p[0]
-                    # Priorizamos Razón Social, si no, Nombre y Apellido
                     externo_nombre = p['razon_social'] or f"{p['nombre']} {p['apellido']}"
             
-                
-            
-            
+            # Recuperar la cotización del dólar original del presupuesto (sin pisar con el dólar actual)
+            valor_dolar_origen = float(servicio.get('valor_dolar_momento') or 0.0)
+            if valor_dolar_origen <= 0:
+                if servicio.get('moneda_mano_obra') == 'USD' and float(servicio.get('m_o_valor_original') or 0) > 0 and float(servicio.get('precio_mano_obra_ars') or 0) > 0:
+                    valor_dolar_origen = round(float(servicio['precio_mano_obra_ars']) / float(servicio['m_o_valor_original']), 2)
+                elif float(servicio.get('costo_total_repuestos_usd') or 0) > 0:
+                    diff_ars = float(servicio.get('precio_final_ars') or 0) - float(servicio.get('precio_mano_obra_ars') or 0)
+                    if diff_ars > 0:
+                        valor_dolar_origen = round(diff_ars / float(servicio['costo_total_repuestos_usd']), 2)
+            if valor_dolar_origen <= 0:
+                valor_dolar_origen = float(valor_dolar_venta_local or 1.0)
+
             items_usados = db_query("""
                 SELECT ru.repuesto_id, ru.manual_item_nombre, ru.cantidad, ru.costo_usd_momento,
                        ru.moneda_item, ru.valor_original_item,
@@ -4497,7 +4727,6 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 WHERE ru.servicio_id = ?
             """, (servicio_id,))
             
-             # --- DICCIONARIO FORM_DATA COMPLETO SIN OMISIONES ---
             form_data = {
                 'servicio_id': servicio['id'], 
                 'cliente_id': servicio['cliente_id'],
@@ -4513,9 +4742,12 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 'moneda_presupuesto': servicio['moneda_presupuesto'] or 'ARS',
                 'precio_mano_obra_original': f"{servicio['m_o_valor_original']:.2f}" if servicio['m_o_valor_original'] is not None else "0.00",
                 'moneda_mano_obra': servicio['moneda_mano_obra'] or 'ARS',
+                'tipo_dolar': 'manual',
+                'valor_dolar_manual': f"{valor_dolar_origen:.2f}",
+                'valor_dolar_momento': f"{valor_dolar_origen:.2f}",
                 'es_terciarizada': servicio['es_terciarizada'],
                 'externo_proveedor_id': servicio['externo_proveedor_id'],
-                'externo_proveedor_nombre': externo_nombre, # <--- ENVIAMOS EL NOMBRE PARA EL SELECT2
+                'externo_proveedor_nombre': externo_nombre,
                 'externo_costo_ars': f"{servicio['externo_costo_ars']:.2f}" if servicio['externo_costo_ars'] else "0.00",
                 'repuesto_stock_id[]': [],
                 'repuesto_nombre_display[]': [],
@@ -4528,51 +4760,38 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             
             for item in items_usados:
                 if item['repuesto_id']:
-                    # Datos básicos del repuesto de stock
                     form_data['repuesto_stock_id[]'].append(item['repuesto_id'])
                     nombre_repuesto = f"{item['nombre_parte']} ({item['modelo_compatible'] or 'Genérico'})"
                     form_data['repuesto_nombre_display[]'].append(nombre_repuesto)
                     form_data['cantidad_stock[]'].append(item['cantidad'])
-                    
-                    # --- PUNTO 1: CARGAR VALOR ORIGINAL (STOCK) ---
-                    # Si existe valor_original_item (registro nuevo), lo usamos. 
-                    # Si es None (registro viejo), usamos costo_usd_momento como fallback.
                     valor_a_mostrar = item['valor_original_item'] if item['valor_original_item'] is not None else item['costo_usd_momento']
-                    
-                    # Agregamos UNA SOLA VEZ a la lista
                     form_data['precio_venta_usd_stock[]'].append(f"{valor_a_mostrar:.2f}") 
-
                 else:
-                    # Datos básicos del ítem manual
                     nombre_manual = item['manual_item_nombre'] if item['manual_item_nombre'] else "Ítem manual"
                     form_data['manual_item_nombre[]'].append(nombre_manual)
                     form_data['cantidad_manual[]'].append(item['cantidad'])
-                    
-                    # --- PUNTO 1: CARGAR VALOR ORIGINAL (MANUAL) ---
                     valor_a_mostrar_m = item['valor_original_item'] if item['valor_original_item'] is not None else item['costo_usd_momento']
-                    
-                    # Agregamos UNA SOLA VEZ a la lista
                     form_data['precio_venta_usd_manual[]'].append(f"{valor_a_mostrar_m:.2f}")
-                    
         else:
             form_data = {
                 'precio_mano_obra_ars': '0.00', 
                 'tipo_servicio': '', 
                 'tecnico_nombre': '',
+                'tipo_dolar': 'blue',
+                'valor_dolar_manual': f"{valor_dolar_venta_local:.2f}",
+                'valor_dolar_momento': f"{valor_dolar_venta_local:.2f}",
                 'manual_item_nombre[]': [],
                 'cantidad_manual[]': [],
                 'precio_venta_usd_manual[]': []
             }
             if request.args.get('cliente_id'):
                 form_data['cliente_id'] = int(request.args.get('cliente_id'))
-                
-   # Lógica para POST request
+
     elif request.method == 'POST':
         db_conn = get_db()
         try:
             form_data_raw = request.form.to_dict(flat=False) 
 
-            # --- SELECCIÓN DE DÓLAR ---
             tipo_dolar_elegido = request.form.get('tipo_dolar', 'blue')
             if tipo_dolar_elegido == 'oficial':
                 valor_dolar_servicio = float(dolar_info_from_context.get('valor_bcra_venta') or 1.0)
@@ -4581,45 +4800,26 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             else:
                 valor_dolar_servicio = float(dolar_info_from_context.get('valor_blue_venta') or 1.0)
 
-            # --- NUEVA LÓGICA: MONEDA DEL PRESUPUESTO ---
-            moneda_presupuesto = request.form.get('moneda_presupuesto', 'USD')
-
+            moneda_presupuesto = request.form.get('moneda_presupuesto', 'ARS')
             cliente_id = int(form_data_raw.get('cliente_id', [''])[0]) if form_data_raw.get('cliente_id', [''])[0] else None
             tecnico_nombre = form_data_raw.get('tecnico_nombre', [''])[0].strip()
             tipo_servicio = form_data_raw.get('tipo_servicio', [''])[0].strip()
             imei_equipo = form_data_raw.get('imei_equipo', [''])[0].strip() if form_data_raw.get('imei_equipo') else ''
-            
-            # --- NUEVOS CAMPOS: Pin y Modelo ---
             pin_code = form_data_raw.get('pin_code', [''])[0].strip() if form_data_raw.get('pin_code') else ''
             modelo_equipo = form_data_raw.get('modelo_equipo', [''])[0].strip() if form_data_raw.get('modelo_equipo') else ''
-            
-            
             falla_reportada = form_data_raw.get('falla_reportada', [''])[0].strip() if form_data_raw.get('falla_reportada') else ''
             observaciones = form_data_raw.get('observaciones', [''])[0].strip() if form_data_raw.get('observaciones') else ''
             
-            # --- Dentro del bloque if request.method == 'POST': ---
             es_terciarizada = 1 if form_data_raw.get('es_terciarizada') else 0
             externo_proveedor_id = form_data_raw.get('externo_proveedor_id', [''])[0]
             externo_proveedor_id = int(externo_proveedor_id) if externo_proveedor_id else None
             externo_costo_ars = float(form_data_raw.get('externo_costo_ars', ['0'])[0] or 0)
-                        
-            
             solucion_aplicada = form_data_raw.get('solucion_aplicada', [''])[0].strip() if form_data_raw.get('solucion_aplicada') else ''
-            # --- Busca este bloque en el POST ---
-            moneda_m_o = form_data_raw.get('moneda_mano_obra', ['ARS'])[0] # <--- Capturar
-            m_o_input = float(form_data_raw.get('precio_mano_obra', ['0'])[0] or 0)
-            # --- PUNTO A: Captura de la moneda del presupuesto ---
-            moneda_presupuesto = form_data_raw.get('moneda_presupuesto', ['ARS'])[0].strip()
             
-          
-                        
-            
-            # --- MODIFICACIÓN: MANO DE OBRA BIMONETARIA ---
+            moneda_m_o = form_data_raw.get('moneda_mano_obra', ['ARS'])[0]
             m_o_input_str = form_data_raw.get('precio_mano_obra', ['0.00'])[0]
             m_o_input = float(m_o_input_str) if m_o_input_str else 0.0
-            moneda_m_o = form_data_raw.get('moneda_mano_obra', ['ARS'])[0]
 
-            # Convertimos a ARS si la entrada fue en USD para mantener la consistencia en DB
             if moneda_m_o == 'USD':
                 precio_mano_obra_ars = m_o_input * valor_dolar_servicio
             else:
@@ -4631,11 +4831,9 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
 
             items_para_registrar = []
             total_precio_venta_items_usd = 0.0 
-            has_any_valid_item = False
             
             db_conn.execute("BEGIN TRANSACTION")
 
-            # --- Procesar ítems de STOCK ---
             repuesto_stock_ids = form_data_raw.get('repuesto_stock_id[]', [])
             cantidades_stock = form_data_raw.get('cantidad_stock[]', [])
             precios_venta_input_stock = form_data_raw.get('precio_venta_usd_stock[]', []) 
@@ -4644,19 +4842,13 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 r_id_str = repuesto_stock_ids[i]
                 r_id = int(r_id_str) if r_id_str and r_id_str.isdigit() else None
                 cant = int(cantidades_stock[i]) if i < len(cantidades_stock) and cantidades_stock[i].isdigit() else 0
-                
-                # El valor que viene del input (puede ser el de lista o el editado)
                 pv_input = float(precios_venta_input_stock[i]) if i < len(precios_venta_input_stock) and precios_venta_input_stock[i] else 0.0 
 
                 if r_id and cant > 0:
-                    # Si el presupuesto se hizo en ARS, convertimos el precio editado a USD para la DB
                     pv_usd_momento = pv_input / valor_dolar_servicio if moneda_presupuesto == 'ARS' else pv_input
-                    
                     items_para_registrar.append({'repuesto_id': r_id, 'manual_item_nombre': None, 'cantidad': cant, 'costo_usd_momento': pv_usd_momento, 'valor_original': pv_input})
                     total_precio_venta_items_usd += pv_usd_momento * cant
-                    has_any_valid_item = True
             
-            # --- Procesar ítems MANUALES ---
             manual_nombres = form_data_raw.get('manual_item_nombre[]', [])
             manual_cantidades = form_data_raw.get('cantidad_manual[]', [])
             manual_precios_input = form_data_raw.get('precio_venta_usd_manual[]', []) 
@@ -4667,37 +4859,25 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                 p_input = float(manual_precios_input[i]) if i < len(manual_precios_input) and manual_precios_input[i] else 0.0
                 
                 if n and c > 0:
-                    # Conversión si es necesario
                     p_usd_momento = p_input / valor_dolar_servicio if moneda_presupuesto == 'ARS' else p_input
-                    
                     items_para_registrar.append({'repuesto_id': None, 'manual_item_nombre': n, 'cantidad': c, 'costo_usd_momento': p_usd_momento, 'valor_original': p_input})
                     total_precio_venta_items_usd += p_usd_momento * c
-                    has_any_valid_item = True
 
-            #if not has_any_valid_item:
-            #    flash("Debe añadir al menos un ítem.", "danger")
-            #    db_conn.rollback()
-            #    return redirect(url_for('crear_presupuesto_reparacion'))
-
-            # --- CÁLCULO FINAL ARS ---
-            # Independientemente de la moneda del presupuesto, el final a cobrar se guarda en ARS calculando USD * Cotización + MO
             precio_final_ars = (total_precio_venta_items_usd * valor_dolar_servicio) + precio_mano_obra_ars
-            
             fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            #fecha_actual = obtener_fecha_hora().strftime("%Y-%m-%d %H:%M:%S")
-            moneda_presupuesto = form_data_raw.get('moneda_presupuesto', ['ARS'])[0]
             
             if is_edit:
                 db_execute_func(db_conn,
                     """UPDATE servicios_reparacion SET 
                         cliente_id = ?, tecnico_nombre = ?, imei_equipo = ?, modelo_equipo = ?, pin_code = ?, falla_reportada = ?, solucion_aplicada = ?, 
                         costo_total_repuestos_usd = ?, precio_mano_obra_ars = ?, precio_final_ars = ?, 
-                        fecha_servicio = ?,  tipo_servicio = ?, observaciones = ?, moneda_presupuesto = ?, moneda_mano_obra = ?, m_o_valor_original = ?, es_terciarizada = ?, externo_proveedor_id = ?, externo_costo_ars = ?
+                        fecha_servicio = ?, tipo_servicio = ?, observaciones = ?, moneda_presupuesto = ?, moneda_mano_obra = ?, m_o_valor_original = ?, es_terciarizada = ?, externo_proveedor_id = ?, externo_costo_ars = ?,
+                        valor_dolar_momento = ?, tipo_dolar = ?
                        WHERE id = ?""",
                     (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
                      total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, 
                      fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input, 
-                     es_terciarizada, externo_proveedor_id, externo_costo_ars, servicio_id)
+                     es_terciarizada, externo_proveedor_id, externo_costo_ars, valor_dolar_servicio, tipo_dolar_elegido, servicio_id)
                 )
                 db_execute_func(db_conn, "DELETE FROM repuestos_usados WHERE servicio_id = ?", (servicio_id,))
             else:
@@ -4705,14 +4885,12 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                     """INSERT INTO servicios_reparacion 
                        (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
                         costo_total_repuestos_usd, precio_mano_obra_ars, precio_final_ars, fecha_servicio, status, tipo_servicio, observaciones, moneda_presupuesto, moneda_mano_obra, m_o_valor_original,
-            es_terciarizada, externo_proveedor_id, externo_costo_ars) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PRESUPUESTO', ?, ?, ?, ?, ?, ?, ?, ? )""",
+                        es_terciarizada, externo_proveedor_id, externo_costo_ars, valor_dolar_momento, tipo_dolar) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PRESUPUESTO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (cliente_id, tecnico_nombre, imei_equipo, modelo_equipo, pin_code, falla_reportada, solucion_aplicada, 
-                     total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input, es_terciarizada, externo_proveedor_id, externo_costo_ars),
+                     total_precio_venta_items_usd, precio_mano_obra_ars, precio_final_ars, fecha_actual, tipo_servicio, observaciones, moneda_presupuesto, moneda_m_o, m_o_input, es_terciarizada, externo_proveedor_id, externo_costo_ars, valor_dolar_servicio, tipo_dolar_elegido),
                      return_id=True
                 )
-                
-            # --- INSERTAR REPUESTOS USADOS --
 
             for item in items_para_registrar:
                 db_execute_func(db_conn, "INSERT INTO repuestos_usados (servicio_id, repuesto_id, manual_item_nombre, cantidad, costo_usd_momento, moneda_item, valor_original_item) VALUES (?, ?, ?, ?, ?, ?, ?)", 
@@ -4727,13 +4905,10 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
             app.logger.error(f"Error presupuesto servicio: {e}", exc_info=True)
             flash(f'Ocurrió un error: {e}', 'danger')
             return redirect(url_for('crear_presupuesto_reparacion'))
-        
-     # --- ESTO ES LO QUE ESTABA FALLANDO: El retorno final para el GET ---
-    # Se debe ejecutar si no se entró al bloque POST o si el bloque POST falló antes de retornar.
+
     clientes = db_query("SELECT * FROM personas WHERE es_cliente = 1 ORDER BY apellido, nombre, razon_social")
     title = "Editar Presupuesto de Servicio" if is_edit else "Nuevo Presupuesto de Servicio"
     proveedores = db_query("SELECT id, nombre, apellido, razon_social FROM personas WHERE es_proveedor = 1 ORDER BY razon_social ASC")
-    
     
     return render_template('servicio_tecnico/form_reparacion.html', 
                            clientes=clientes, 
@@ -4743,9 +4918,8 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                            is_edit=is_edit,
                            servicio_id=servicio_id,
                            title=title,
-                           proveedores=proveedores )# <--- IMPORTANTE)    
-        
-        
+                           proveedores=proveedores)   
+            
     # ... (el resto de tu archivo app.py continúa aquí) ...
 #@app.route('/presupuestos/reparaciones') 
 #@login_required
@@ -8915,38 +9089,157 @@ def exportar_personas():
 @login_required
 @admin_required  # Primero verificamos que sea al menos admin o superadmin
 def gestion_cuentas_virtuales():
+    import re
     # 1. Obtener filtros de fecha y el filtro de cuenta
     start_date, end_date_display, end_date_query = get_date_filters()
     filtro_cuenta = request.args.get('cuenta_filter', 'TODAS') # 'TODAS', 'BANCO' o 'MERCADO_PAGO'
-    
-    # 2. Calcular Saldo Actual de Banco (ARS y USD)
-    # Calculamos ingresos y egresos en una sola pasada para mayor eficiencia
-    res_banco = db_query("""
-        SELECT 
-            SUM(CASE WHEN tipo LIKE 'INGRESO%' OR tipo LIKE 'APERTURA%' THEN monto_ars ELSE 0 END) AS ing_ars,
-            SUM(CASE WHEN tipo LIKE 'EGRESO%' OR tipo LIKE 'PAGO_PROVEEDOR%' OR tipo LIKE 'CIERRE%' THEN monto_ars ELSE 0 END) AS egr_ars,
-            SUM(CASE WHEN tipo LIKE 'INGRESO%' OR tipo LIKE 'APERTURA%' THEN monto_usd ELSE 0 END) AS ing_usd,
-            SUM(CASE WHEN tipo LIKE 'EGRESO%' OR tipo LIKE 'PAGO_PROVEEDOR%' OR tipo LIKE 'CIERRE%' THEN monto_usd ELSE 0 END) AS egr_usd
-        FROM caja_movimientos 
-        WHERE metodo_pago = 'BANCO'
-    """)[0]
-    
-    saldo_banco_ars = (res_banco['ing_ars'] or 0.0) - (res_banco['egr_ars'] or 0.0)
-    saldo_banco_usd = (res_banco['ing_usd'] or 0.0) - (res_banco['egr_usd'] or 0.0)
 
-    # 3. Calcular Saldo Actual de Mercado Pago (ARS y USD)
-    res_mp = db_query("""
-        SELECT 
-            SUM(CASE WHEN tipo LIKE 'INGRESO%' OR tipo LIKE 'APERTURA%' THEN monto_ars ELSE 0 END) AS ing_ars,
-            SUM(CASE WHEN tipo LIKE 'EGRESO%' OR tipo LIKE 'PAGO_PROVEEDOR%' OR tipo LIKE 'CIERRE%' THEN monto_ars ELSE 0 END) AS egr_ars,
-            SUM(CASE WHEN tipo LIKE 'INGRESO%' OR tipo LIKE 'APERTURA%' THEN monto_usd ELSE 0 END) AS ing_usd,
-            SUM(CASE WHEN tipo LIKE 'EGRESO%' OR tipo LIKE 'PAGO_PROVEEDOR%' OR tipo LIKE 'CIERRE%' THEN monto_usd ELSE 0 END) AS egr_usd
-        FROM caja_movimientos 
-        WHERE metodo_pago = 'MERCADO_PAGO'
-    """)[0]
-    
-    saldo_mp_ars = (res_mp['ing_ars'] or 0.0) - (res_mp['egr_ars'] or 0.0)
-    saldo_mp_usd = (res_mp['ing_usd'] or 0.0) - (res_mp['egr_usd'] or 0.0)
+    def _parse_num_virt(txt):
+        s = (txt or '').strip()
+        if not s:
+            return 0.0
+        if ',' in s and '.' in s:
+            if s.rfind(',') > s.rfind('.'):
+                s = s.replace('.', '').replace(',', '.')
+            else:
+                s = s.replace(',', '')
+        elif ',' in s:
+            partes = s.split(',')
+            s = s.replace(',', '.') if len(partes[-1]) <= 2 else s.replace(',', '')
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+
+    try:
+        pts_all = [dict(r) for r in db_query("SELECT * FROM pagos_tarjetas WHERE COALESCE(monto_recargo_ars, 0) > 0")]
+    except Exception:
+        pts_all = []
+
+    try:
+        cobros_rec_all = [dict(r) for r in db_query("SELECT * FROM cobros_clientes")]
+    except Exception:
+        cobros_rec_all = []
+
+    def _neto_movimiento_virtual(row_m):
+        d = dict(row_m)
+        tipo_u = (d.get('tipo') or '').upper()
+        desc_u = (d.get('descripcion') or '').upper()
+        m_ars = float(d.get('monto_ars') or 0.0)
+        m_usd = float(d.get('monto_usd') or 0.0)
+
+        # Solo aplica a ingresos que todavía no hayan sido guardados como neto sin recargo
+        if not (tipo_u.startswith('INGRESO') or tipo_u.startswith('APERTURA')):
+            return d
+        if 'NETO S/RECARGO' in desc_u or 'SIN RECARGO' in desc_u:
+            return d
+
+        f_m = str(d.get('fecha') or '').replace('T', ' ')
+        cta_m = (d.get('metodo_pago') or '').upper()
+        ref_id = d.get('referencia_id')
+
+        # 1) Asientos históricos guardados por cobrar_cliente con "(Inc. Recargo X%)"
+        m_inc_rec = re.search(r'\(\s*INC\.?\s*RECARGO\s*([\d.,]+)\s*%\s*\)', desc_u)
+        if m_inc_rec:
+            pct_hist = _parse_num_virt(m_inc_rec.group(1))
+            if pct_hist > 0:
+                if m_ars > 0:
+                    d['monto_ars'] = round(m_ars / (1.0 + pct_hist / 100.0), 2)
+                if m_usd > 0:
+                    d['monto_usd'] = round(m_usd / (1.0 + pct_hist / 100.0), 2)
+                return d
+
+        # 2) Si la descripción detalla "Base: $... | Recargo: $..." y el monto guardado equivale a base + recargo
+        m_b_ars = re.search(r'BASE\s*:\s*\$\s*([\d.,]+)', desc_u)
+        m_r_ars = re.search(r'RECARGO\s*:\s*\$\s*([\d.,]+)', desc_u)
+        if m_b_ars and m_r_ars:
+            b_v = _parse_num_virt(m_b_ars.group(1))
+            r_v = _parse_num_virt(m_r_ars.group(1))
+            if b_v > 0 and r_v > 0 and abs(m_ars - (b_v + r_v)) <= 1.5:
+                d['monto_ars'] = round(b_v, 2)
+                return d
+
+        # 3) Coincidencia con pagos_tarjetas
+        for pt in pts_all:
+            pt_total = float(pt.get('monto_total_ars') or 0.0)
+            pt_base = float(pt.get('monto_base_ars') or 0.0)
+            pt_rec = float(pt.get('monto_recargo_ars') or 0.0)
+            pt_cta = (pt.get('cuenta_destino') or '').upper()
+            f_pt = str(pt.get('fecha') or pt.get('fecha_pago') or pt.get('created_at') or '').replace('T', ' ')
+            if pt_base > 0 and pt_rec > 0 and abs(m_ars - pt_total) <= 1.5:
+                mismo_dia = (not f_m or not f_pt or f_m[:10] == f_pt[:10])
+                misma_cta = (not pt_cta or pt_cta == cta_m)
+                if mismo_dia and misma_cta:
+                    d['monto_ars'] = round(pt_base, 2)
+                    return d
+
+        # 4) Coincidencia con cobros_clientes (por cobro_id o cliente_id en referencia_id)
+        if ref_id is not None:
+            for c in cobros_rec_all:
+                if c.get('id') != ref_id and c.get('cliente_id') != ref_id:
+                    continue
+                f_c = str(c.get('fecha_cobro') or '').replace('T', ' ')
+                if f_m and f_c and f_m[:10] != f_c[:10]:
+                    continue
+
+                c_ref_u = (c.get('referencia') or '').upper()
+                rec_ars = float(c.get('monto_recargo_ars') or c.get('monto_recargo_tarjeta_ars') or 0.0)
+                rec_usd = float(c.get('monto_recargo_usd') or 0.0)
+                if rec_ars <= 0:
+                    mc_r = re.search(r'RECARGO\s*:\s*\$\s*([\d.,]+)', c_ref_u)
+                    if mc_r:
+                        rec_ars = _parse_num_virt(mc_r.group(1))
+                if rec_usd <= 0:
+                    mc_u = re.search(r'RECARGO\s*:\s*U\$D\s*([\d.,]+)', c_ref_u)
+                    if mc_u:
+                        rec_usd = _parse_num_virt(mc_u.group(1))
+
+                c_ars = float(c.get('monto_ars') or 0.0)
+                c_usd = float(c.get('monto_usd') or 0.0)
+                if rec_ars > 0.01 and abs(m_ars - c_ars) <= 1.5:
+                    d['monto_ars'] = round(max(0.0, m_ars - rec_ars), 2)
+                    return d
+                if rec_usd > 0.001 and abs(m_usd - c_usd) <= 0.05:
+                    d['monto_usd'] = round(max(0.0, m_usd - rec_usd), 2)
+                    return d
+
+        return d
+
+    # 2 y 3. Calcular Saldo Actual de Banco y Mercado Pago (ARS y USD) sin recargo
+    todos_virtuales = db_query("""
+        SELECT * FROM caja_movimientos
+        WHERE metodo_pago IN ('BANCO', 'MERCADO_PAGO')
+    """)
+
+    saldo_banco_ars = 0.0
+    saldo_banco_usd = 0.0
+    saldo_mp_ars = 0.0
+    saldo_mp_usd = 0.0
+
+    for row_v in todos_virtuales:
+        mv = _neto_movimiento_virtual(row_v)
+        tipo_u = (mv.get('tipo') or '').upper()
+        cta_u = (mv.get('metodo_pago') or '').upper()
+        v_ars = float(mv.get('monto_ars') or 0.0)
+        v_usd = float(mv.get('monto_usd') or 0.0)
+
+        es_ing = tipo_u.startswith('INGRESO') or tipo_u.startswith('APERTURA')
+        es_egr = tipo_u.startswith('EGRESO') or tipo_u.startswith('PAGO_PROVEEDOR') or tipo_u.startswith('CIERRE')
+
+        if cta_u == 'BANCO':
+            if es_ing:
+                saldo_banco_ars += v_ars
+                saldo_banco_usd += v_usd
+            elif es_egr:
+                saldo_banco_ars -= v_ars
+                saldo_banco_usd -= v_usd
+        elif cta_u == 'MERCADO_PAGO':
+            if es_ing:
+                saldo_mp_ars += v_ars
+                saldo_mp_usd += v_usd
+            elif es_egr:
+                saldo_mp_ars -= v_ars
+                saldo_mp_usd -= v_usd
 
     # 4. Procesar movimientos manuales (POST)
     if request.method == 'POST':
@@ -8970,7 +9263,7 @@ def gestion_cuentas_virtuales():
         else:
             flash("Debe ingresar un monto mayor a cero en ARS o USD.", "danger")
 
-    # 5. Listado de movimientos con filtros de FECHA y CUENTA aplicados
+    # 5. Listado de movimientos con filtros de FECHA y CUENTA aplicados (neto sin recargo)
     query = """
         SELECT cm.*, u.username FROM caja_movimientos cm 
         JOIN users u ON cm.user_id = u.id 
@@ -8986,7 +9279,8 @@ def gestion_cuentas_virtuales():
         params.append(filtro_cuenta)
 
     query += " ORDER BY cm.fecha DESC"
-    movimientos = db_query(query, tuple(params))
+    movimientos_raw = db_query(query, tuple(params))
+    movimientos = [_neto_movimiento_virtual(m) for m in movimientos_raw]
 
     return render_template('caja/cuentas_virtuales.html', 
                            movimientos=movimientos,
@@ -8995,11 +9289,9 @@ def gestion_cuentas_virtuales():
                            saldo_mp_ars=saldo_mp_ars,
                            saldo_mp_usd=saldo_mp_usd,
                            start_date=start_date,
-                           end_date=end_date_display,
+                           end_date_display=end_date_display,
                            filtro_cuenta=filtro_cuenta)
-
-
-
+      
 # =================================================================
 # === MÓDULO SUPERADMIN: AJUSTES E INVENTARIO INICIAL =============
 # =================================================================
@@ -9316,6 +9608,9 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("servicios_reparacion", "es_terciarizada", "INTEGER DEFAULT 0")
         agregar_columna("servicios_reparacion", "externo_proveedor_id", "INTEGER")
         agregar_columna("servicios_reparacion", "externo_costo_ars", "REAL DEFAULT 0.0")        
+        agregar_columna("servicios_reparacion", "valor_dolar_momento", "REAL DEFAULT 0.0")
+        agregar_columna("servicios_reparacion", "tipo_dolar", "TEXT DEFAULT 'blue'")
+        
                 
         # Dentro de ejecutar_migraciones_y_configuracion():
         agregar_columna("repuestos_usados", "moneda_item", "TEXT DEFAULT 'USD'")
@@ -9346,8 +9641,12 @@ def ejecutar_migraciones_y_configuracion():
         agregar_columna("repuestos", "mostrar_en_web", "INTEGER DEFAULT 0")
         agregar_columna("repuestos", "imagen_url", "TEXT")
                 
+        # Nuevas columnas en cobros_clientes
         
-        
+        agregar_columna("cobros_clientes", "monto_recargo_ars", "REAL DEFAULT 0.0")
+        agregar_columna("cobros_clientes", "monto_recargo_usd", "REAL DEFAULT 0.0")
+        agregar_columna("cobros_clientes", "monto_recargo_tarjeta_ars", "REAL DEFAULT 0.0")
+        agregar_columna("cobros_clientes", "recargo_incluido_en_monto", "INTEGER DEFAULT 0")
         
         
         # ==========================================

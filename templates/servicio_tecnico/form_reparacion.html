@@ -225,13 +225,20 @@
             </div>
 
             <!-- SECCIÓN COTIZACIÓN -->
+            {# <<< MODIFICADO: Conserva el dólar de origen al editar en lugar de forzar Blue de hoy >>> #}
+            {% set tipo_dolar_actual = form_data.get('tipo_dolar', 'manual' if is_edit else 'blue') %}
             <div class="card my-4 border-warning bg-light shadow-sm">
                 <div class="card-header bg-warning text-dark fw-bold py-2 d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-currency-exchange me-2"></i>Cotización y Moneda</span>
+                    <span>
+                        <i class="bi bi-currency-exchange me-2"></i>Cotización y Moneda
+                        {% if is_edit and form_data.get('valor_dolar_manual') %}
+                            <span class="badge bg-dark text-warning ms-2">Dólar de Origen Conservado: ${{ form_data.get('valor_dolar_manual') }}</span>
+                        {% endif %}
+                    </span>
                     <div class="d-flex align-items-center gap-2">
                         <label class="small mb-0">Moneda Insumos:</label>
                         <!-- CAMBIO: Mantiene la moneda guardada (USD o ARS) al editar -->
-                        <select name="moneda_presupuesto" id="moneda_presupuesto" class="form-select form-select-sm w-auto border-dark fw-bold" onchange="calcularTotalesServicio()">
+                        <select name="moneda_presupuesto" id="moneda_presupuesto" class="form-select form-select-sm w-auto border-dark fw-bold" onchange="sincronizarMonedaPresupuesto(this.value)">
                             <option value="USD" {% if form_data.moneda_presupuesto == 'USD' %}selected{% endif %}>USD (Dólares)</option>
                             <option value="ARS" {% if form_data.moneda_presupuesto == 'ARS' %}selected{% endif %}>ARS (Pesos)</option>
                         </select>
@@ -242,14 +249,19 @@
                         <div class="col-md-6">
                             <label class="form-label small fw-bold">Tipo de Dólar para Conversión:</label>
                             <select name="tipo_dolar" id="tipo_dolar" class="form-select border-primary" onchange="toggleManualDolar()">
-                                <option value="blue" data-val="{{ valor_blue_venta|default(1.0) }}" selected>Dólar Blue Venta: ${{ valor_blue_venta|round(2) }}</option>
-                                <option value="oficial" data-val="{{ valor_bcra_venta|default(1.0) }}">Dólar Oficial Venta: ${{ valor_bcra_venta|round(2) }}</option>
-                                <option value="manual">Ingresar Valor Manual</option>
+                                <option value="blue" data-val="{{ valor_blue_venta|default(1.0) }}" {% if tipo_dolar_actual == 'blue' %}selected{% endif %}>Dólar Blue Venta Hoy: ${{ valor_blue_venta|round(2) }}</option>
+                                <option value="oficial" data-val="{{ valor_bcra_venta|default(1.0) }}" {% if tipo_dolar_actual == 'oficial' %}selected{% endif %}>Dólar Oficial Venta Hoy: ${{ valor_bcra_venta|round(2) }}</option>
+                                <option value="manual" {% if tipo_dolar_actual == 'manual' %}selected{% endif %}>{{ 'Dólar Original / Valor Manual' if is_edit else 'Ingresar Valor Manual' }}</option>
                             </select>
                         </div>
-                        <div class="col-md-6" id="manual_group" style="display:none;">
-                            <label class="form-label small fw-bold text-danger">Cotización Manual (ARS):</label>
-                            <input type="number" step="0.01" name="valor_dolar_manual" id="valor_dolar_manual" class="form-control border-danger fw-bold" placeholder="Ej: 1250" oninput="calcularTotalesServicio()">
+                        <div class="col-md-6" id="manual_group" style="display: {% if tipo_dolar_actual == 'manual' %}block{% else %}none{% endif %};">
+                            <label class="form-label small fw-bold text-danger">
+                                {{ 'Cotización Original / Manual (ARS):' if is_edit else 'Cotización Manual (ARS):' }}
+                            </label>
+                            <input type="number" step="0.01" name="valor_dolar_manual" id="valor_dolar_manual"
+                                   class="form-control border-danger fw-bold"
+                                   value="{{ form_data.get('valor_dolar_manual', valor_blue_venta|default(1.0)) }}"
+                                   placeholder="Ej: 1250" oninput="calcularTotalesServicio()">
                         </div>
                     </div>
                 </div>
@@ -295,44 +307,6 @@
                     <li><a class="dropdown-item" href="#" id="add-manual-item-btn">Manualmente</a></li>
                 </ul>
             </div>
-            <!--<h4 class="mt-4 mb-3"><i class="bi bi-cash me-2"></i>Resumen de Costos y Precios</h4>
-            <div class="row g-3 bg-light p-3 rounded border shadow-sm">
-                <!-- CAMBIO APLICADO: MANO DE OBRA BIMONETARIA 
-                <div class="col-md-3" id="mano_obra_group">
-                    <label for="precio_mano_obra" class="form-label fw-bold">Mano de Obra <span class="text-danger">*</span>:</label>
-                    <div class="input-group">
-                        <select class="form-select border-primary fw-bold" name="moneda_mano_obra" id="moneda_mano_obra" style="max-width: 90px;" onchange="calcularTotalesServicio()">
-                            <option value="ARS" selected>ARS </option>
-                            <option value="USD">USD </option>
-                        </select>
-                        <input type="number" 
-                            step="0.01" 
-                            class="form-control border-primary fw-bold" 
-                            id="precio_mano_obra" 
-                            name="precio_mano_obra" 
-                            value="{{ form_data.get('precio_mano_obra_ars', '0.00') }}" 
-                            min="0" 
-                            required 
-                            oninput="calcularTotalesServicio()">
-                    </div>
-                    <div id="m_o_informativa" class="text-muted small mt-1" style="font-size: 0.75rem;"></div>
-                </div>
-
-                <div class="col-md-3">
-                    <label class="form-label fw-bold" id="label_subtotal_items">Subtotal Items (USD):</label>
-                    <input type="text" class="form-control bg-white" id="precio_venta_total_items_usd_display" readonly value="USD 0.00">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label fw-bold text-primary">COTIZACIÓN APLICADA:</label>
-                    <input type="text" class="form-control bg-white fw-bold text-primary border-primary" id="cotiz_aplicada_display" readonly value="$ 1.00">
-                </div>
-                
-                <div class="col-md-12 mt-3">
-                    <label class="form-label fw-bold fs-5">PRECIO FINAL A COBRAR (ARS):</label>
-                    <input type="text" class="form-control form-control-lg bg-success text-white fw-bold text-center shadow-sm" id="precio_final_ars_display" readonly value="ARS 0.00">
-                    <small class="text-muted d-block text-center mt-1">Cálculo: (Items Convertidos) + Mano Obra Convertida</small>
-                </div>
-            </div> -->
 
             <h4 class="mt-4 mb-3"><i class="bi bi-cash me-2"></i>Resumen de Costos y Precios</h4>
             <div class="row g-3 bg-light p-3 rounded border shadow-sm">
@@ -373,10 +347,10 @@
                     <input type="text" class="form-control bg-white fw-bold text-primary border-primary" id="cotiz_aplicada_display" readonly value="$ 1.00">
                 </div>
 
-                <!-- 4. NUEVO: MONEDA DEL PRESUPUESTO (Completa la fila) -->
+                <!-- 4. MONEDA DEL PRESUPUESTO (Sincronizado con el selector superior, sin id/name duplicado) -->
                 <div class="col-md-3">
-                    <label for="moneda_presupuesto" class="form-label fw-bold">Moneda del Presupuesto:</label>
-                    <select class="form-select border-primary fw-bold" name="moneda_presupuesto" id="moneda_presupuesto" onchange="calcularTotalesServicio()">
+                    <label for="moneda_presupuesto_resumen" class="form-label fw-bold">Moneda del Presupuesto:</label>
+                    <select class="form-select border-primary fw-bold" id="moneda_presupuesto_resumen" onchange="sincronizarMonedaPresupuesto(this.value)">
                         <option value="ARS" {% if form_data.moneda_presupuesto == 'ARS' %}selected{% endif %}>ARS ($)</option>
                         <option value="USD" {% if form_data.moneda_presupuesto == 'USD' %}selected{% endif %}>USD (u$d)</option>
                     </select>
@@ -414,7 +388,7 @@
 {% endblock %}
 
 {% block scripts_extra %}
-<script src="https://cdn.jsdelivr.net/npm/select2@4.10.0-rc.0/dist/js/select2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
     $(document).ready(function() {
         'use strict';
@@ -452,9 +426,35 @@
             const tipo = $('#tipo_dolar').val();
             if (tipo === 'manual') {
                 $('#manual_group').show();
+                if (!$('#valor_dolar_manual').val()) {
+                    const fallbackVal = $('#tipo_dolar option[value="blue"]').attr('data-val') || '1';
+                    $('#valor_dolar_manual').val(parseFloat(fallbackVal).toFixed(2));
+                }
             } else {
                 $('#manual_group').hide();
             }
+            calcularTotalesServicio();
+        };
+
+        window.sincronizarMonedaPresupuesto = function(nuevaMoneda) {
+            const monedaAnterior = $('#moneda_presupuesto').data('prev-moneda') || $('#moneda_presupuesto').val();
+            $('#moneda_presupuesto').val(nuevaMoneda);
+            $('#moneda_presupuesto_resumen').val(nuevaMoneda);
+
+            if (monedaAnterior !== nuevaMoneda) {
+                const cotizacion = getCotizacion();
+                $('.item-row').each(function() {
+                    const inputPrecio = $(this).find('.item-precio-venta-usd-stock, .item-precio-venta-usd-manual');
+                    let valorActual = parseFloat(inputPrecio.val()) || 0;
+                    if (nuevaMoneda === 'ARS') {
+                        inputPrecio.val((valorActual * cotizacion).toFixed(2));
+                    } else {
+                        inputPrecio.val((valorActual / cotizacion).toFixed(2));
+                    }
+                });
+            }
+            $('#moneda_presupuesto').data('prev-moneda', nuevaMoneda);
+            actualizarEtiquetasMoneda();
             calcularTotalesServicio();
         };
 
@@ -513,22 +513,9 @@
             actualizarEtiquetasMoneda();
         }
 
-        $('#moneda_presupuesto').on('change', function() {
-            const nuevaMoneda = $(this).val();
-            const cotizacion = getCotizacion();
-
-            $('.item-row').each(function() {
-                const inputPrecio = $(this).find('.item-precio-venta-usd-stock, .item-precio-venta-usd-manual');
-                let valorActual = parseFloat(inputPrecio.val()) || 0;
-                if (nuevaMoneda === 'ARS') {
-                    inputPrecio.val((valorActual * cotizacion).toFixed(2));
-                } else {
-                    inputPrecio.val((valorActual / cotizacion).toFixed(2));
-                }
-            });
-            actualizarEtiquetasMoneda();
-            calcularTotalesServicio();
-        });
+        // Guardar moneda inicial para evitar conversiones accidentales y sincronizar ambos selectores
+        $('#moneda_presupuesto').data('prev-moneda', $('#moneda_presupuesto').val());
+        $('#moneda_presupuesto_resumen').val($('#moneda_presupuesto').val());
 
         $('.select2-persona').select2({
             theme: 'bootstrap-5',
@@ -663,6 +650,8 @@
             }, false);
         });
 
+        // <<< MODIFICADO: Aplicar el tipo de dólar guardado (manual/original) al cargar >>>
+        toggleManualDolar();
         actualizarEtiquetasMoneda();
         calcularTotalesServicio();
     });

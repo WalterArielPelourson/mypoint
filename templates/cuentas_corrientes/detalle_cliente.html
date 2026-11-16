@@ -4,6 +4,7 @@
 
 {# MACRO: Renderiza la tabla con lógica bimonetaria y enlace a Plan de Cuotas #}
 {% macro render_tabla_cliente(lista) %}
+{% set ns = namespace(total_debe=0.0, total_haber=0.0, simbolo='$') %}
 <div class="table-responsive">
     <table class="table table-hover align-middle mb-0 table-v">
         <thead class="table-light">
@@ -20,9 +21,16 @@
             {% for mov in lista %}
             {# Moneda según rubro: Equipos en USD, Servicios/Reparaciones en ARS #}
             {% set simbolo = 'u$d' if mov.rubro == 'EQUIPOS' else '$' %}
+            {% set ns.simbolo = simbolo %}
+            {% set es_recargo = 'Recargo Tarjeta' in (mov.descripcion or '') %}
+            {% if mov.tipo == 'DEBE' %}
+                {% set ns.total_debe = ns.total_debe + (mov.monto_reg or 0) %}
+            {% else %}
+                {% set ns.total_haber = ns.total_haber + (mov.monto_reg or 0) %}
+            {% endif %}
             
-            <tr class="mov-fila {% if mov.vencida %}table-danger{% elif mov.monto_reg == 0 and mov.tipo == 'HABER' %}table-light opacity-75{% endif %}">
-                <td class="ps-4 small {% if mov.vencida %}fw-bold text-danger{% else %}text-muted{% endif %}">
+            <tr class="mov-fila {% if mov.vencida %}table-danger{% elif es_recargo %}table-warning{% elif mov.monto_reg == 0 and mov.tipo == 'HABER' %}table-light opacity-75{% endif %}">
+                <td class="ps-4 small {% if mov.vencida %}fw-bold text-danger{% elif es_recargo %}fw-semibold text-dark{% else %}text-muted{% endif %}">
                     {{ mov.fecha|datetimeformat('%d/%m/%Y') }}
                     {% if mov.vencida %}
                         <i class="bi bi-exclamation-triangle-fill ms-1" title="VENCIDA"></i>
@@ -30,8 +38,11 @@
                 </td>
 
                 <td>
-                    <div class="fw-bold {% if mov.vencida %}text-danger{% elif mov.monto_reg == 0 and mov.tipo == 'HABER' %}text-secondary{% endif %}">
+                    <div class="fw-bold {% if mov.vencida %}text-danger{% elif es_recargo %}text-dark{% elif mov.monto_reg == 0 and mov.tipo == 'HABER' %}text-secondary{% endif %}">
                         {{ mov.descripcion }}
+                        {% if es_recargo %}
+                            <span class="badge badge-soft-warning ms-1">Contrapartida Recargo Tarjeta</span>
+                        {% endif %}
                     </div>
                     
                     {# --- ACCESO AL PLAN DE CUOTAS --- #}
@@ -49,6 +60,9 @@
                         <span class="badge badge-soft-primary">Crédito USD</span>
                     {% else %}
                         <span class="badge badge-soft-info">Pesos ARS</span>
+                    {% endif %}
+                    {% if es_recargo %}
+                        <div><span class="badge badge-soft-warning mt-1">Recargo Tarjeta</span></div>
                     {% endif %}
                 </td>
 
@@ -83,6 +97,16 @@
             </tr>
             {% endfor %}
         </tbody>
+        {% if lista %}
+        <tfoot class="table-light border-top">
+            <tr class="fw-bold">
+                <td colspan="3" class="ps-4 text-end text-uppercase small text-muted">Totales del Rubro:</td>
+                <td class="text-end text-danger">{{ ns.simbolo }} {{ "{:,.2f}".format(ns.total_debe) }}</td>
+                <td class="text-end text-success">{{ ns.simbolo }} {{ "{:,.2f}".format(ns.total_haber) }}</td>
+                <td class="text-end pe-4 text-dark">{{ ns.simbolo }} {{ "{:,.2f}".format(ns.total_debe - ns.total_haber) }}</td>
+            </tr>
+        </tfoot>
+        {% endif %}
     </table>
 </div>
 {% endmacro %}
@@ -97,8 +121,10 @@
     .text-deuda { font-size: 2.5rem; font-weight: 800; }
     .table-v { vertical-align: middle; }
     .table-danger { --bs-table-bg: #fff5f5; }
+    .table-warning { --bs-table-bg: #fffbeb; }
     .badge-soft-primary { background-color: #e7f1ff; color: #0d6efd; border: 1px solid #0d6efd; }
     .badge-soft-info { background-color: #e0f7fa; color: #00838f; border: 1px solid #00838f; }
+    .badge-soft-warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffc107; }
 </style>
 {% endblock %}
 
