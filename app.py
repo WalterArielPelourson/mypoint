@@ -5562,7 +5562,7 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                     items_para_registrar.append({'repuesto_id': None, 'manual_item_nombre': n, 'cantidad': c, 'costo_usd_momento': p_usd_momento, 'valor_original': p_input})
                     total_precio_venta_items_usd += p_usd_momento * c
 
-            precio_final_ars = (total_precio_venta_items_usd * valor_dolar_servicio) + precio_mano_obra_ars 
+            precio_final_ars = (total_precio_venta_items_usd * valor_dolar_servicio) + precio_mano_obra_ars + externo_costo_ars
             fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             if is_edit:

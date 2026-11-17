@@ -163,9 +163,9 @@
                 </div>
 
                 <div class="col-md-4 section-externo" style="display: none;">
-                    <label class="form-label fw-bold">Costo del Reparador (ARS):</label>
-                    <input type="number" step="0.01" class="form-control border-danger" name="externo_costo_ars" 
-                        value="{{ form_data.externo_costo_ars or '0.00' }}">
+                    <label for="externo_costo_ars" class="form-label fw-bold">Costo del Reparador (ARS):</label>
+                    <input type="number" step="0.01" class="form-control border-danger" id="externo_costo_ars" name="externo_costo_ars" 
+                        value="{{ form_data.externo_costo_ars or '0.00' }}" oninput="calcularTotalesServicio()">
                 </div>
 
 
@@ -361,7 +361,7 @@
                 <div class="col-md-12 mt-3">
                     <label class="form-label fw-bold fs-5">PRECIO FINAL A COBRAR (ARS):</label>
                     <input type="text" class="form-control form-control-lg bg-success text-white fw-bold text-center shadow-sm" id="precio_final_ars_display" readonly value="ARS 0.00">
-                    <small class="text-muted d-block text-center mt-1">Cálculo: (Items Convertidos) + Mano Obra Convertida</small>
+                    <small class="text-muted d-block text-center mt-1" id="formula_calculo_info">Cálculo: (Items Convertidos) + Mano Obra Convertida (+ Costo Tercero si es terciarizada)</small>
                 </div>
             </div>
 
@@ -501,12 +501,21 @@
                 $('#m_o_informativa').text(`Equivale a: USD u$d ${(moEnArs / cotizacion).toFixed(2)}`);
             }
             
+            const esTerciarizada = $('#es_terciarizada').is(':checked');
+            const costoExternoArs = esTerciarizada ? (parseFloat($('#externo_costo_ars').val()) || 0) : 0;
+
             let precioTotalServicioArs = 0;
-            // Sumamos items + Mano de obra, todo llevado a ARS
+            // Sumamos items + Mano de obra + Costo Tercero (si es terciarizada), todo llevado a ARS
             if (monedaPresupuesto === 'USD') {
-                precioTotalServicioArs = (totalItemsEnMonedaElegida * cotizacion) + moEnArs;
+                precioTotalServicioArs = (totalItemsEnMonedaElegida * cotizacion) + moEnArs + costoExternoArs;
             } else {
-                precioTotalServicioArs = totalItemsEnMonedaElegida + moEnArs;
+                precioTotalServicioArs = totalItemsEnMonedaElegida + moEnArs + costoExternoArs;
+            }
+
+            if (esTerciarizada && costoExternoArs > 0) {
+                $('#formula_calculo_info').text(`Cálculo: Items + Mano de Obra + Costo Tercero ($${costoExternoArs.toLocaleString('es-AR', {minimumFractionDigits: 2})})`);
+            } else {
+                $('#formula_calculo_info').text('Cálculo: (Items Convertidos) + Mano Obra Convertida');
             }
 
             $('#precio_final_ars_display').val('ARS ' + precioTotalServicioArs.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
@@ -667,6 +676,9 @@
         document.querySelectorAll('.section-externo').forEach(el => {
             el.style.display = isChecked ? 'block' : 'none';
         });
+        if (typeof window.calcularTotalesServicio === 'function') {
+            window.calcularTotalesServicio();
+        }
     }
 
     $(document).ready(function() {
