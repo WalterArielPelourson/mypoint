@@ -3494,6 +3494,705 @@ def reporte_stock_a_fecha():
         hoy=hoy_str,
     )
     
+
+# =================================================================
+# === REPORTE INTEGRAL DE STOCK, COMPRAS Y VENTAS (INICIO -> CIERRE)
+# =================================================================
+@app.route('/reportes/stock_integral')
+@login_required
+def reporte_stock_integral():
+    hoy_dt = datetime.now()
+    hoy_str = hoy_dt.strftime('%Y-%m-%d')
+    hace_30_str = (hoy_dt - timedelta(days=30)).strftime('%Y-%m-%d')
+
+    fecha_inicio = request.args.get('fecha_inicio', hace_30_str).strip() or hace_30_str
+    fecha_cierre = request.args.get('fecha_cierre', hoy_str).strip() or hoy_str
+    if fecha_inicio > fecha_cierre:
+        fecha_inicio, fecha_cierre = fecha_cierre, fecha_inicio
+
+    rubro = request.args.get('rubro', 'TODOS').strip().upper()
+    marca_filtro = request.args.get('marca', 'TODAS').strip()
+    condicion_filtro = request.args.get('condicion', 'TODAS').strip()
+    proveedor_id_filtro = request.args.get('proveedor_id', 'TODOS').strip()
+    cliente_id_filtro = request.args.get('cliente_id', 'TODOS').strip()
+    estado_pago_filtro = request.args.get('estado_pago', 'TODOS').strip().upper()
+    movimiento_filtro = request.args.get('movimiento', 'todos').strip()
+    orden = request.args.get('orden', 'valor_cierre_desc').strip()
+    q = request.args.get('q', '').strip()
+    exportar = request.args.get('exportar', '').strip()
+
+    start_limit = f"{fecha_inicio} 00:00:00"
+    end_limit = f"{fecha_cierre} 23:59:59"
+
+    dolar_info = obtener_cotizacion_dolar()
+    cotiz = float(dolar_info.get('compra_blue') or dolar_info.get('venta_blue') or 1.0)
+
+    # Personas y Usuarios
+    personas_map = {}
+    proveedores_list = []
+    clientes_list = []
+    for row_p in db_query("SELECT * FROM personas ORDER BY razon_social, apellido, nombre"):
+        dp = dict(row_p)
+        nombre_p = (dp.get('razon_social') or '').strip() or f"{dp.get('nombre') or ''} {dp.get('apellido') or ''}".strip() or f"ID #{dp['id']}"
+        dp['nombre_mostrar'] = nombre_p
+        personas_map[dp['id']] = dp
+        if dp.get('es_proveedor'):
+            proveedores_list.append(dp)
+        if dp.get('es_cliente'):
+            clientes_list.append(dp)
+
+    users_map = {}
+    try:
+        for row_u in db_query("SELECT id, username FROM users"):
+            users_map[row_u['id']] = row_u['username']
+    except Exception:
+        pass
+
+    def _nombre_persona(pid):
+        if not pid:
+            return 'Sin asignar'
+        p = personas_map.get(pid)
+        return p['nombre_mostrar'] if p else f"ID #{pid}"
+
+    # Cargar tablas principales
+    celulares_raw = [dict(r) for r in db_query("SELECT * FROM celulares ORDER BY marca, modelo, imei")]
+    repuestos_raw = [dict(r) for r in db_query("SELECT * FROM repuestos ORDER BY nombre_parte")]
+    compras_all = [dict(r) for r in db_query("SELECT * FROM compras")]
+    ventas_all = [dict(r) for r in db_query("SELECT * FROM ventas WHERE status = 'COMPLETADA'")]
+    servicios_all = [dict(r) for r in db_query("SELECT * FROM servicios_reparacion WHERE status IN ('COMPLETADO', 'ENTREGADO', 'FINALIZADO')")]
+
+    try:
+        repuestos_usados_all = [dict(r) for r in db_query("SELECT * FROM repuestos_usados")]
+    except Exception:
+        repuestos_usados_all = []
+
+    try:
+        promos_all = [dict(r) for r in db_query("SELECT * FROM items_promocionales_venta")]
+    except Exception:
+        promos_all = []
+
+    try:
+        adicionales_all = [dict(r) for r in db_query("SELECT * FROM items_adicionales_venta")]
+    except Exception:
+        adicionales_all = []
+
+    cel_map = {c['id']: c for c in celulares_raw}
+    cel_imei_map = {c.get('imei'): c for c in celulares_raw if c.get('imei')}
+    rep_map = {r['id']: r for r in repuestos_raw}
+    ventas_map = {v['id']: v for v in ventas_all}
+    servicios_map = {s['id']: s for s in servicios_all}
+
+    marcas_set = set()
+    condiciones_set = set()
+    for c in celulares_raw:
+        if c.get('marca'): marcas_set.add(str(c['marca']).strip())
+        if c.get('condicion'): condiciones_set.add(str(c['condicion']).strip())
+    for r in repuestos_raw:
+        if r.get('modelo_compatible'): marcas_set.add(str(r['modelo_compatible']).strip())
+        if r.get('categoria'): condiciones_set.add(str(r['categoria']).strip())
+    marcas_disponibles = sorted(marcas_set)
+    condiciones_disponibles = sorted(condiciones_set)
+
+    matriz_raw = []
+    compras_periodo = []
+    salidas_periodo = []
+
+    # -----------------------------------------------------------------
+    # 1. DETALLE DE COMPRAS DEL PERÍODO
+    # -----------------------------------------------------------------
+    for cmp in compras_all:
+        tipo_i = (cmp.get('tipo_item') or '').upper()
+        if tipo_i == 'SERVICIO_EXTERNO':
+            continue
+        f_cmp = str(cmp.get('fecha_compra') or '')
+        if f_cmp < start_limit or f_cmp > end_limit:
+            continue
+
+        if tipo_i in ('CELULAR', 'EQUIPO', 'TABLET'):
+            rubro_cat = 'CELULARES'
+            cel = cel_map.get(cmp.get('item_id')) or cel_imei_map.get(cmp.get('imei_celular'))
+            desc_c = f"{cel.get('marca') or ''} {cel.get('modelo') or ''} ({cel.get('almacenamiento_gb') or ''}GB - {cel.get('color') or ''})".strip() if cel else f"Equipo IMEI {cmp.get('imei_celular') or cmp.get('item_id')}"
+            ident_c = (cel.get('imei') if cel else cmp.get('imei_celular')) or f"CEL-{cmp.get('item_id')}"
+            marca_c = (cel.get('marca') if cel else '') or ''
+            cond_c = (cel.get('condicion') if cel else 'Equipo') or 'Equipo'
+        else:
+            rep = rep_map.get(cmp.get('item_id'))
+            cat_u = ((rep.get('categoria') if rep else tipo_i) or 'REPUESTO').upper()
+            rubro_cat = 'ACCESORIOS' if cat_u == 'ACCESORIO' else ('INSUMOS' if cat_u in ('INSUMO', 'PRODUCTO') else 'REPUESTOS')
+            desc_c = rep.get('nombre_parte') if rep else f"Insumo #{cmp.get('item_id')}"
+            ident_c = (rep.get('modelo_compatible') if rep else '') or 'Universal'
+            marca_c = ident_c
+            cond_c = (rep.get('categoria') if rep else 'REPUESTO') or 'REPUESTO'
+
+        if rubro != 'TODOS' and rubro != rubro_cat:
+            continue
+        if marca_filtro != 'TODAS' and marca_c.lower() != marca_filtro.lower():
+            continue
+        if condicion_filtro != 'TODAS' and cond_c.lower() != condicion_filtro.lower():
+            continue
+        if proveedor_id_filtro != 'TODOS' and str(cmp.get('proveedor_id') or '') != proveedor_id_filtro:
+            continue
+        est_pago = (cmp.get('estado_pago') or 'PENDIENTE').upper()
+        if estado_pago_filtro != 'TODOS' and est_pago != estado_pago_filtro:
+            continue
+
+        prov_nom = _nombre_persona(cmp.get('proveedor_id'))
+        if q:
+            if q.lower() not in f"{desc_c} {ident_c} {prov_nom} {tipo_i}".lower():
+                continue
+
+        c_usd = float(cmp.get('costo_total_usd') or 0.0)
+        dolar_m = float(cmp.get('valor_dolar_momento') or cotiz)
+        c_ars = float(cmp.get('costo_total_ars') or (c_usd * dolar_m))
+
+        compras_periodo.append({
+            'id': cmp['id'],
+            'fecha': f_cmp,
+            'proveedor_id': cmp.get('proveedor_id'),
+            'proveedor_nombre': prov_nom,
+            'usuario': users_map.get(cmp.get('user_id'), 'Sistema'),
+            'tipo_item': tipo_i,
+            'rubro_cat': rubro_cat,
+            'descripcion': desc_c,
+            'identificador': ident_c,
+            'cantidad': int(cmp.get('cantidad') or 0),
+            'costo_unit_usd': float(cmp.get('costo_unitario_usd') or 0.0),
+            'costo_total_usd': c_usd,
+            'dolar_momento': dolar_m,
+            'costo_total_ars': c_ars,
+            'estado_pago': est_pago
+        })
+
+    # -----------------------------------------------------------------
+    # 2. MATRIZ DE CELULARES (EQUIPOS)
+    # -----------------------------------------------------------------
+    for cel in celulares_raw:
+        compras_cel = sorted(
+            [c for c in compras_all if (c.get('tipo_item') or '').upper() in ('CELULAR', 'EQUIPO')
+             and (c.get('item_id') == cel['id'] or (c.get('imei_celular') and c.get('imei_celular') == cel.get('imei')))],
+            key=lambda x: str(x.get('fecha_compra') or '')
+        )
+        compra_ppal = compras_cel[0] if compras_cel else None
+
+        venta_parte_pago = None
+        if cel.get('es_parte_pago'):
+            for v in ventas_all:
+                if cel['id'] in (v.get('celular_parte_pago_id'), v.get('celular_parte_pago_2_id'),
+                                 v.get('celular_parte_pago_3_id'), v.get('celular_parte_pago_4_id')):
+                    venta_parte_pago = v
+                    break
+
+        fecha_ingreso = (compra_ppal.get('fecha_compra') if compra_ppal else None) or (venta_parte_pago.get('fecha_venta') if venta_parte_pago else None)
+        venta_cel = next((v for v in ventas_all if v.get('celular_id') == cel['id']), None)
+        fecha_venta = venta_cel.get('fecha_venta') if venta_cel else None
+
+        existia_antes = (not fecha_ingreso) or (str(fecha_ingreso) < start_limit)
+        vendido_antes = bool(fecha_venta and str(fecha_venta) < start_limit)
+        stock_inicio = 1 if (existia_antes and not vendido_antes) else 0
+
+        comprado_periodo = 1 if (fecha_ingreso and start_limit <= str(fecha_ingreso) <= end_limit) else 0
+        vendido_periodo = 1 if (fecha_venta and start_limit <= str(fecha_venta) <= end_limit) else 0
+
+        existia_cierre = (not fecha_ingreso) or (str(fecha_ingreso) <= end_limit)
+        vendido_cierre = bool(fecha_venta and str(fecha_venta) <= end_limit)
+        stock_cierre = 1 if (existia_cierre and not vendido_cierre) else 0
+
+        costo_unit = float(cel.get('costo_usd') or 0.0)
+        cotiz_c = float(compra_ppal.get('valor_dolar_momento') or cotiz) if compra_ppal else cotiz
+        comp_usd = comprado_periodo * (float(compra_ppal.get('costo_total_usd') or costo_unit) if compra_ppal else costo_unit)
+        comp_ars = comprado_periodo * (float(compra_ppal.get('costo_total_ars') or (costo_unit * cotiz_c)) if compra_ppal else costo_unit * cotiz_c)
+
+        vta_ing_ars = 0.0
+        vta_ing_usd = 0.0
+        cmv_usd = 0.0
+        cmv_ars = 0.0
+        cli_ids = []
+        cli_nom = '-'
+
+        if vendido_periodo and venta_cel:
+            cotiz_v = float(venta_cel.get('valor_dolar_momento') or cotiz)
+            imp_pct = float(venta_cel.get('impuestos_pct') or 0.0)
+            vta_ing_ars = float(venta_cel.get('precio_final_ars') or 0.0) / (1.0 + imp_pct / 100.0)
+            vta_ing_usd = float(venta_cel.get('precio_final_usd') or 0.0) or (vta_ing_ars / cotiz_v if cotiz_v > 0 else 0.0)
+            cmv_usd = costo_unit
+            cmv_ars = costo_unit * cotiz_v
+            cli_ids.append(venta_cel.get('cliente_id'))
+            cli_nom = _nombre_persona(venta_cel.get('cliente_id'))
+
+            desc_cel = f"{cel.get('marca') or ''} {cel.get('modelo') or ''} ({cel.get('almacenamiento_gb') or ''}GB · {cel.get('color') or ''})".strip()
+            ok_sal = (
+                (rubro in ('TODOS', 'CELULARES')) and
+                (marca_filtro == 'TODAS' or (cel.get('marca') or '').lower() == marca_filtro.lower()) and
+                (condicion_filtro == 'TODAS' or (cel.get('condicion') or '').lower() == condicion_filtro.lower()) and
+                (proveedor_id_filtro == 'TODOS' or str((compra_ppal or {}).get('proveedor_id') or '') == proveedor_id_filtro) and
+                (cliente_id_filtro == 'TODOS' or str(venta_cel.get('cliente_id') or '') == cliente_id_filtro) and
+                (not q or q.lower() in f"{desc_cel} {cel.get('imei') or ''} {cli_nom}".lower())
+            )
+            if ok_sal:
+                salidas_periodo.append({
+                    'fecha': str(venta_cel.get('fecha_venta') or ''),
+                    'origen': 'VENTA_EQUIPO',
+                    'origen_label': f"Venta Equipo #{venta_cel['id']}",
+                    'cliente_nombre': cli_nom,
+                    'descripcion': desc_cel,
+                    'codigo': cel.get('imei') or f"CEL-{cel['id']}",
+                    'cantidad': 1,
+                    'cmv_usd': cmv_usd,
+                    'cmv_ars': cmv_ars,
+                    'venta_usd': vta_ing_usd,
+                    'venta_ars': vta_ing_ars,
+                    'ganancia_usd': vta_ing_usd - cmv_usd,
+                    'ganancia_ars': vta_ing_ars - cmv_ars
+                })
+
+        prov_nom = _nombre_persona(compra_ppal.get('proveedor_id')) if compra_ppal else ('Canje / Parte de Pago' if cel.get('es_parte_pago') else 'Carga Directa')
+        matriz_raw.append({
+            'tipo': 'CELULAR',
+            'tipo_label': 'Celular / Equipo',
+            'id': cel['id'],
+            'codigo': cel.get('imei') or f"CEL-{cel['id']}",
+            'descripcion': f"{cel.get('marca') or ''} {cel.get('modelo') or ''} ({cel.get('almacenamiento_gb') or ''}GB · {cel.get('color') or ''})".strip(),
+            'marca_compat': cel.get('marca') or 'Sin marca',
+            'subcategoria': cel.get('condicion') or 'General',
+            'proveedor_id': compra_ppal.get('proveedor_id') if compra_ppal else None,
+            'proveedor_nombre': prov_nom,
+            'cliente_ids': cli_ids,
+            'cliente_nombre': cli_nom,
+            'estado_compra': (compra_ppal.get('estado_pago') if compra_ppal else 'N/A') or 'N/A',
+            'costo_unit_usd': costo_unit,
+            'stock_inicio': stock_inicio,
+            'valor_inicio_usd': stock_inicio * costo_unit,
+            'valor_inicio_ars': stock_inicio * costo_unit * cotiz,
+            'compras_cant': comprado_periodo,
+            'compras_usd': comp_usd,
+            'compras_ars': comp_ars,
+            'salidas_cant': vendido_periodo,
+            'cmv_usd': cmv_usd,
+            'cmv_ars': cmv_ars,
+            'ventas_usd': vta_ing_usd,
+            'ventas_ars': vta_ing_ars,
+            'margen_usd': (vta_ing_usd - cmv_usd) if vendido_periodo else 0.0,
+            'margen_ars': (vta_ing_ars - cmv_ars) if vendido_periodo else 0.0,
+            'stock_cierre': stock_cierre,
+            'valor_cierre_usd': stock_cierre * costo_unit,
+            'valor_cierre_ars': stock_cierre * costo_unit * cotiz,
+            'stock_actual': int(cel.get('stock') or 0),
+            'inmovilizado': (stock_inicio > 0 and vendido_periodo == 0 and stock_cierre > 0)
+        })
+
+    # -----------------------------------------------------------------
+    # 3. MATRIZ REPUESTOS / ACCESORIOS / INSUMOS
+    # -----------------------------------------------------------------
+    for rep in repuestos_raw:
+        rid = rep['id']
+        cat_u = (rep.get('categoria') or 'REPUESTO').upper()
+        tipo_it = 'ACCESORIO' if cat_u == 'ACCESORIO' else ('INSUMO' if cat_u in ('INSUMO', 'PRODUCTO') else 'REPUESTO')
+        tipo_lbl = 'Accesorio' if tipo_it == 'ACCESORIO' else ('Insumo/Prod.' if tipo_it == 'INSUMO' else 'Repuesto')
+        stock_actual = int(rep.get('stock') or 0)
+
+        salidas_post = 0
+        for ru in repuestos_usados_all:
+            if ru.get('repuesto_id') == rid:
+                s = servicios_map.get(ru.get('servicio_id'))
+                if s and str(s.get('fecha_servicio') or '') > end_limit:
+                    salidas_post += int(ru.get('cantidad') or 0)
+        for ipv in promos_all:
+            if ipv.get('repuesto_id') == rid:
+                v = ventas_map.get(ipv.get('venta_id'))
+                if v and str(v.get('fecha_venta') or '') > end_limit:
+                    salidas_post += int(ipv.get('cantidad') or 0)
+        for iav in adicionales_all:
+            if iav.get('repuesto_id') == rid:
+                v = ventas_map.get(iav.get('venta_id'))
+                if v and str(v.get('fecha_venta') or '') > end_limit:
+                    salidas_post += int(iav.get('cantidad') or 0)
+
+        compras_rep = [c for c in compras_all if c.get('item_id') == rid and (c.get('tipo_item') or '').upper() not in ('CELULAR', 'EQUIPO', 'SERVICIO_EXTERNO')]
+        compras_post = sum(int(c.get('cantidad') or 0) for c in compras_rep if str(c.get('fecha_compra') or '') > end_limit)
+        stock_cierre = max(0, stock_actual + salidas_post - compras_post)
+
+        compras_rep_per = [c for c in compras_rep if start_limit <= str(c.get('fecha_compra') or '') <= end_limit]
+        compras_cant = sum(int(c.get('cantidad') or 0) for c in compras_rep_per)
+        comp_usd = sum(float(c.get('costo_total_usd') or 0.0) for c in compras_rep_per)
+        comp_ars = sum(float(c.get('costo_total_ars') or (float(c.get('costo_total_usd') or 0.0) * float(c.get('valor_dolar_momento') or cotiz))) for c in compras_rep_per)
+
+        ult_compra = max(compras_rep, key=lambda x: str(x.get('fecha_compra') or '')) if compras_rep else None
+        prov_id_rep = ult_compra.get('proveedor_id') if ult_compra else None
+        prov_nom = _nombre_persona(prov_id_rep) if ult_compra else 'Carga Directa'
+
+        salidas_cant = 0
+        cmv_usd = 0.0
+        cmv_ars = 0.0
+        vta_ing_usd = 0.0
+        vta_ing_ars = 0.0
+        cli_ids = []
+        cli_nom = '-'
+
+        rubro_ok = (
+            rubro == 'TODOS' or
+            (rubro == 'REPUESTOS' and tipo_it == 'REPUESTO') or
+            (rubro == 'ACCESORIOS' and tipo_it == 'ACCESORIO') or
+            (rubro == 'INSUMOS' and tipo_it == 'INSUMO')
+        )
+        marca_rep = rep.get('modelo_compatible') or 'Universal'
+        marca_ok = marca_filtro == 'TODAS' or marca_rep.lower() == marca_filtro.lower()
+        cond_ok = condicion_filtro == 'TODAS' or (rep.get('categoria') or '').lower() == condicion_filtro.lower()
+        prov_ok = proveedor_id_filtro == 'TODOS' or str(prov_id_rep or '') == proveedor_id_filtro
+
+        # a) Taller
+        for ru in repuestos_usados_all:
+            if ru.get('repuesto_id') != rid:
+                continue
+            s = servicios_map.get(ru.get('servicio_id'))
+            if not s or not (start_limit <= str(s.get('fecha_servicio') or '') <= end_limit):
+                continue
+            qty = int(ru.get('cantidad') or 0)
+            c_u = float(ru.get('costo_usd_momento') or rep.get('costo_usd') or 0.0) * qty
+            cot_s = float(s.get('valor_dolar_momento') or cotiz)
+            c_a = c_u * cot_s
+            if (ru.get('moneda_item') or '').upper() == 'ARS' and float(ru.get('valor_original_item') or 0.0) > 0:
+                ing_a = float(ru.get('valor_original_item') or 0.0) * qty
+            else:
+                ing_a = float(ru.get('valor_original_item') or rep.get('precio_venta_usd') or rep.get('costo_usd') or 0.0) * qty * cot_s
+            ing_u = ing_a / cot_s if cot_s > 0 else 0.0
+
+            salidas_cant += qty
+            cmv_usd += c_u
+            cmv_ars += c_a
+            vta_ing_ars += ing_a
+            vta_ing_usd += ing_u
+            cli_ids.append(s.get('cliente_id'))
+            cli_nom = _nombre_persona(s.get('cliente_id'))
+
+            if rubro_ok and marca_ok and cond_ok and prov_ok and (cliente_id_filtro == 'TODOS' or str(s.get('cliente_id') or '') == cliente_id_filtro):
+                if not q or q.lower() in f"{rep.get('nombre_parte') or ''} {marca_rep} {cli_nom}".lower():
+                    salidas_periodo.append({
+                        'fecha': str(s.get('fecha_servicio') or ''),
+                        'origen': 'TALLER_REPUESTO',
+                        'origen_label': f"Servicio #{s['id']}",
+                        'cliente_nombre': cli_nom,
+                        'descripcion': rep.get('nombre_parte') or '',
+                        'codigo': f"ART-{rid}",
+                        'cantidad': qty,
+                        'cmv_usd': c_u,
+                        'cmv_ars': c_a,
+                        'venta_usd': ing_u,
+                        'venta_ars': ing_a,
+                        'ganancia_usd': ing_u - c_u,
+                        'ganancia_ars': ing_a - c_a
+                    })
+
+        # b) Adicionales
+        for iav in adicionales_all:
+            if iav.get('repuesto_id') != rid:
+                continue
+            v = ventas_map.get(iav.get('venta_id'))
+            if not v or not (start_limit <= str(v.get('fecha_venta') or '') <= end_limit):
+                continue
+            qty = int(iav.get('cantidad') or 0)
+            cot_v = float(v.get('valor_dolar_momento') or cotiz)
+            c_u = float(iav.get('costo_usd_momento') or rep.get('costo_usd') or 0.0) * qty
+            c_a = c_u * cot_v
+            ing_u = float(iav.get('precio_vendido_usd') or rep.get('precio_venta_usd') or 0.0) * qty
+            ing_a = ing_u * cot_v
+
+            salidas_cant += qty
+            cmv_usd += c_u
+            cmv_ars += c_a
+            vta_ing_usd += ing_u
+            vta_ing_ars += ing_a
+            cli_ids.append(v.get('cliente_id'))
+            cli_nom = _nombre_persona(v.get('cliente_id'))
+
+            if rubro_ok and marca_ok and cond_ok and prov_ok and (cliente_id_filtro == 'TODOS' or str(v.get('cliente_id') or '') == cliente_id_filtro):
+                if not q or q.lower() in f"{rep.get('nombre_parte') or ''} {marca_rep} {cli_nom}".lower():
+                    salidas_periodo.append({
+                        'fecha': str(v.get('fecha_venta') or ''),
+                        'origen': 'VENTA_ADICIONAL',
+                        'origen_label': f"Adicional Venta #{v['id']}",
+                        'cliente_nombre': cli_nom,
+                        'descripcion': rep.get('nombre_parte') or '',
+                        'codigo': f"ART-{rid}",
+                        'cantidad': qty,
+                        'cmv_usd': c_u,
+                        'cmv_ars': c_a,
+                        'venta_usd': ing_u,
+                        'venta_ars': ing_a,
+                        'ganancia_usd': ing_u - c_u,
+                        'ganancia_ars': ing_a - c_a
+                    })
+
+        # c) Cortesías / Promociones
+        for ipv in promos_all:
+            if ipv.get('repuesto_id') != rid:
+                continue
+            v = ventas_map.get(ipv.get('venta_id'))
+            if not v or not (start_limit <= str(v.get('fecha_venta') or '') <= end_limit):
+                continue
+            qty = int(ipv.get('cantidad') or 0)
+            cot_v = float(v.get('valor_dolar_momento') or cotiz)
+            c_u = float(ipv.get('costo_usd_momento') or rep.get('costo_usd') or 0.0) * qty
+            c_a = c_u * cot_v
+
+            salidas_cant += qty
+            cmv_usd += c_u
+            cmv_ars += c_a
+            cli_ids.append(v.get('cliente_id'))
+            cli_nom = _nombre_persona(v.get('cliente_id'))
+
+            if rubro_ok and marca_ok and cond_ok and prov_ok and (cliente_id_filtro == 'TODOS' or str(v.get('cliente_id') or '') == cliente_id_filtro):
+                if not q or q.lower() in f"{rep.get('nombre_parte') or ''} {marca_rep} {cli_nom}".lower():
+                    salidas_periodo.append({
+                        'fecha': str(v.get('fecha_venta') or ''),
+                        'origen': 'VENTA_PROMO',
+                        'origen_label': f"Cortesía Venta #{v['id']}",
+                        'cliente_nombre': cli_nom,
+                        'descripcion': rep.get('nombre_parte') or '',
+                        'codigo': f"ART-{rid}",
+                        'cantidad': qty,
+                        'cmv_usd': c_u,
+                        'cmv_ars': c_a,
+                        'venta_usd': 0.0,
+                        'venta_ars': 0.0,
+                        'ganancia_usd': -c_u,
+                        'ganancia_ars': -c_a
+                    })
+
+        stock_inicio = max(0, stock_cierre + salidas_cant - compras_cant)
+        costo_unit = float(rep.get('costo_usd') or 0.0)
+
+        matriz_raw.append({
+            'tipo': tipo_it,
+            'tipo_label': tipo_lbl,
+            'id': rid,
+            'codigo': f"ART-{rid}",
+            'descripcion': rep.get('nombre_parte') or '',
+            'marca_compat': marca_rep,
+            'subcategoria': rep.get('categoria') or 'REPUESTO',
+            'proveedor_id': prov_id_rep,
+            'proveedor_nombre': prov_nom,
+            'cliente_ids': cli_ids,
+            'cliente_nombre': cli_nom,
+            'estado_compra': (ult_compra.get('estado_pago') if ult_compra else 'N/A') or 'N/A',
+            'costo_unit_usd': costo_unit,
+            'stock_inicio': stock_inicio,
+            'valor_inicio_usd': stock_inicio * costo_unit,
+            'valor_inicio_ars': stock_inicio * costo_unit * cotiz,
+            'compras_cant': compras_cant,
+            'compras_usd': comp_usd,
+            'compras_ars': comp_ars,
+            'salidas_cant': salidas_cant,
+            'cmv_usd': cmv_usd,
+            'cmv_ars': cmv_ars,
+            'ventas_usd': vta_ing_usd,
+            'ventas_ars': vta_ing_ars,
+            'margen_usd': vta_ing_usd - cmv_usd,
+            'margen_ars': vta_ing_ars - cmv_ars,
+            'stock_cierre': stock_cierre,
+            'valor_cierre_usd': stock_cierre * costo_unit,
+            'valor_cierre_ars': stock_cierre * costo_unit * cotiz,
+            'stock_actual': stock_actual,
+            'inmovilizado': (stock_inicio > 0 and salidas_cant == 0 and stock_cierre > 0)
+        })
+
+    # -----------------------------------------------------------------
+    # 4. FILTRADO Y ORDENAMIENTO DE MATRIZ
+    # -----------------------------------------------------------------
+    items_matriz = []
+    for it in matriz_raw:
+        if rubro == 'CELULARES' and it['tipo'] != 'CELULAR': continue
+        if rubro == 'REPUESTOS' and it['tipo'] != 'REPUESTO': continue
+        if rubro == 'ACCESORIOS' and it['tipo'] != 'ACCESORIO': continue
+        if rubro == 'INSUMOS' and it['tipo'] != 'INSUMO': continue
+
+        if marca_filtro != 'TODAS' and it['marca_compat'].lower() != marca_filtro.lower(): continue
+        if condicion_filtro != 'TODAS' and it['subcategoria'].lower() != condicion_filtro.lower(): continue
+        if proveedor_id_filtro != 'TODOS' and str(it['proveedor_id'] or '') != proveedor_id_filtro: continue
+        if cliente_id_filtro != 'TODOS' and int(cliente_id_filtro) not in it['cliente_ids']: continue
+        if estado_pago_filtro != 'TODOS' and it['estado_compra'].upper() != estado_pago_filtro: continue
+
+        if movimiento_filtro == 'con_movimiento' and it['compras_cant'] == 0 and it['salidas_cant'] == 0: continue
+        if movimiento_filtro == 'solo_compras' and it['compras_cant'] == 0: continue
+        if movimiento_filtro == 'solo_ventas' and it['salidas_cant'] == 0: continue
+        if movimiento_filtro == 'inmovilizados' and not it['inmovilizado']: continue
+        if movimiento_filtro == 'con_stock_cierre' and it['stock_cierre'] <= 0: continue
+        if movimiento_filtro == 'sin_stock_cierre' and it['stock_cierre'] > 0: continue
+
+        if q:
+            txt = f"{it['codigo']} {it['descripcion']} {it['marca_compat']} {it['subcategoria']} {it['proveedor_nombre']} {it['cliente_nombre']}".lower()
+            if q.lower() not in txt:
+                continue
+
+        if movimiento_filtro == 'todos' and it['stock_inicio'] == 0 and it['compras_cant'] == 0 and it['salidas_cant'] == 0 and it['stock_cierre'] == 0:
+            continue
+
+        items_matriz.append(it)
+
+    if orden == 'valor_inicio_desc':
+        items_matriz.sort(key=lambda x: x['valor_inicio_usd'], reverse=True)
+    elif orden == 'compras_desc':
+        items_matriz.sort(key=lambda x: (x['compras_usd'], x['compras_cant']), reverse=True)
+    elif orden == 'ventas_desc':
+        items_matriz.sort(key=lambda x: (x['ventas_usd'], x['salidas_cant']), reverse=True)
+    elif orden == 'margen_desc':
+        items_matriz.sort(key=lambda x: x['margen_usd'], reverse=True)
+    elif orden == 'nombre_asc':
+        items_matriz.sort(key=lambda x: x['descripcion'].lower())
+    else:
+        items_matriz.sort(key=lambda x: (x['valor_cierre_usd'], x['stock_cierre']), reverse=True)
+
+    compras_periodo.sort(key=lambda x: x['fecha'], reverse=True)
+    salidas_periodo.sort(key=lambda x: x['fecha'], reverse=True)
+
+    # -----------------------------------------------------------------
+    # 5. KPIs Y DATOS PARA GRÁFICAS
+    # -----------------------------------------------------------------
+    kpi = {
+        'unid_inicio': sum(i['stock_inicio'] for i in items_matriz),
+        'val_inicio_usd': round(sum(i['valor_inicio_usd'] for i in items_matriz), 2),
+        'val_inicio_ars': round(sum(i['valor_inicio_ars'] for i in items_matriz), 2),
+        'unid_compras': sum(i['compras_cant'] for i in items_matriz),
+        'val_compras_usd': round(sum(i['compras_usd'] for i in items_matriz), 2),
+        'val_compras_ars': round(sum(i['compras_ars'] for i in items_matriz), 2),
+        'unid_salidas': sum(i['salidas_cant'] for i in items_matriz),
+        'cmv_usd': round(sum(i['cmv_usd'] for i in items_matriz), 2),
+        'cmv_ars': round(sum(i['cmv_ars'] for i in items_matriz), 2),
+        'ventas_usd': round(sum(i['ventas_usd'] for i in items_matriz), 2),
+        'ventas_ars': round(sum(i['ventas_ars'] for i in items_matriz), 2),
+        'margen_usd': round(sum(i['margen_usd'] for i in items_matriz), 2),
+        'margen_ars': round(sum(i['margen_ars'] for i in items_matriz), 2),
+        'unid_cierre': sum(i['stock_cierre'] for i in items_matriz),
+        'val_cierre_usd': round(sum(i['valor_cierre_usd'] for i in items_matriz), 2),
+        'val_cierre_ars': round(sum(i['valor_cierre_ars'] for i in items_matriz), 2),
+        'inmovilizados_cant': sum(i['stock_cierre'] for i in items_matriz if i['inmovilizado']),
+        'inmovilizados_usd': round(sum(i['valor_cierre_usd'] for i in items_matriz if i['inmovilizado']), 2)
+    }
+
+    # Agrupación por marca
+    marcas_agg = {}
+    for it in items_matriz:
+        mk = it['marca_compat'] or 'General'
+        cur = marcas_agg.setdefault(mk, {'nombre': mk, 'inicio': 0, 'compras': 0, 'salidas': 0, 'cierre': 0, 'cierre_usd': 0.0, 'margen_usd': 0.0})
+        cur['inicio'] += it['stock_inicio']
+        cur['compras'] += it['compras_cant']
+        cur['salidas'] += it['salidas_cant']
+        cur['cierre'] += it['stock_cierre']
+        cur['cierre_usd'] += it['valor_cierre_usd']
+        cur['margen_usd'] += it['margen_usd']
+    resumen_marcas = sorted(marcas_agg.values(), key=lambda x: x['cierre_usd'], reverse=True)
+
+    # Exportación CSV
+    if exportar == 'csv':
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=';')
+        writer.writerow([
+            'Tipo', 'Codigo/IMEI', 'Descripcion', 'Marca/Modelo', 'Condicion/Subcat', 'Proveedor',
+            'Costo Unit USD', f'Stock Inicio ({fecha_inicio})', 'Valor Inicio USD',
+            'Compras Unid', 'Compras USD', 'Salidas/Ventas Unid', 'CMV USD',
+            'Facturacion Ventas USD', 'Margen USD', f'Stock Cierre ({fecha_cierre})',
+            'Valor Cierre USD', 'Valor Cierre ARS', 'Stock Actual'
+        ])
+        for it in items_matriz:
+            writer.writerow([
+                it['tipo_label'], it['codigo'], it['descripcion'], it['marca_compat'],
+                it['subcategoria'], it['proveedor_nombre'], f"{it['costo_unit_usd']:.2f}",
+                it['stock_inicio'], f"{it['valor_inicio_usd']:.2f}",
+                it['compras_cant'], f"{it['compras_usd']:.2f}",
+                it['salidas_cant'], f"{it['cmv_usd']:.2f}",
+                f"{it['ventas_usd']:.2f}", f"{it['margen_usd']:.2f}",
+                it['stock_cierre'], f"{it['valor_cierre_usd']:.2f}", f"{it['valor_cierre_ars']:.2f}",
+                it['stock_actual']
+            ])
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-disposition": f"attachment; filename=stock_compras_ventas_{fecha_inicio}_a_{fecha_cierre}.csv"}
+        )
+
+    # Series diarias para Chart.js
+    daily_map = {}
+    for c in compras_periodo:
+        f_d = c['fecha'][:10]
+        cur = daily_map.setdefault(f_d, {'compras': 0.0, 'ventas': 0.0})
+        cur['compras'] += c['costo_total_usd']
+    for s in salidas_periodo:
+        f_d = s['fecha'][:10]
+        cur = daily_map.setdefault(f_d, {'compras': 0.0, 'ventas': 0.0})
+        cur['ventas'] += s['venta_usd']
+    fechas_ordenadas = sorted(daily_map.keys())
+
+    # Composición por rubro
+    rubro_agg = {}
+    for it in items_matriz:
+        rubro_agg[it['tipo_label']] = rubro_agg.get(it['tipo_label'], 0.0) + it['valor_cierre_usd']
+
+    # Canales de salida (CMV)
+    canal_agg = {'Venta Equipos': 0.0, 'Adicionales Venta': 0.0, 'Repuestos Taller': 0.0, 'Cortesías / Promos': 0.0}
+    for s in salidas_periodo:
+        if s['origen'] == 'VENTA_EQUIPO': canal_agg['Venta Equipos'] += s['cmv_usd']
+        elif s['origen'] == 'VENTA_ADICIONAL': canal_agg['Adicionales Venta'] += s['cmv_usd']
+        elif s['origen'] == 'TALLER_REPUESTO': canal_agg['Repuestos Taller'] += s['cmv_usd']
+        elif s['origen'] == 'VENTA_PROMO': canal_agg['Cortesías / Promos'] += s['cmv_usd']
+
+    # Top proveedores
+    prov_agg = {}
+    for c in compras_periodo:
+        pn = c['proveedor_nombre']
+        cur = prov_agg.setdefault(pn, {'pagado': 0.0, 'pendiente': 0.0, 'total': 0.0})
+        cur['total'] += c['costo_total_usd']
+        if c['estado_pago'] == 'PAGADO_TOTAL': cur['pagado'] += c['costo_total_usd']
+        else: cur['pendiente'] += c['costo_total_usd']
+    top_prov = sorted(prov_agg.items(), key=lambda x: x[1]['total'], reverse=True)[:8]
+
+    top_marcas_chart = resumen_marcas[:8]
+
+    charts_data = {
+        'ecuacion_labels': [f'Inicio ({fecha_inicio})', '(+) Compras', '(-) Salidas CMV', f'(=) Cierre ({fecha_cierre})'],
+        'ecuacion_usd': [kpi['val_inicio_usd'], kpi['val_compras_usd'], kpi['cmv_usd'], kpi['val_cierre_usd']],
+        'ecuacion_unid': [kpi['unid_inicio'], kpi['unid_compras'], kpi['unid_salidas'], kpi['unid_cierre']],
+        'diario_labels': fechas_ordenadas,
+        'diario_compras': [round(daily_map[f]['compras'], 2) for f in fechas_ordenadas],
+        'diario_ventas': [round(daily_map[f]['ventas'], 2) for f in fechas_ordenadas],
+        'rubro_labels': list(rubro_agg.keys()),
+        'rubro_valores': [round(v, 2) for v in rubro_agg.values()],
+        'canal_labels': [k for k, v in canal_agg.items() if v > 0],
+        'canal_valores': [round(v, 2) for v in canal_agg.values() if v > 0],
+        'prov_labels': [p[0] for p in top_prov],
+        'prov_pagado': [round(p[1]['pagado'], 2) for p in top_prov],
+        'prov_pendiente': [round(p[1]['pendiente'], 2) for p in top_prov],
+        'marca_labels': [m['nombre'] for m in top_marcas_chart],
+        'marca_cierre_usd': [round(m['cierre_usd'], 2) for m in top_marcas_chart],
+        'marca_margen_usd': [round(m['margen_usd'], 2) for m in top_marcas_chart]
+    }
+
+    return render_template(
+        'reportes/stock_integral.html',
+        items_matriz=items_matriz,
+        compras_periodo=compras_periodo,
+        salidas_periodo=salidas_periodo,
+        resumen_marcas=resumen_marcas,
+        kpi=kpi,
+        charts_json=json.dumps(charts_data),
+        fecha_inicio=fecha_inicio,
+        fecha_cierre=fecha_cierre,
+        rubro=rubro,
+        marca_filtro=marca_filtro,
+        condicion_filtro=condicion_filtro,
+        proveedor_id_filtro=proveedor_id_filtro,
+        cliente_id_filtro=cliente_id_filtro,
+        estado_pago_filtro=estado_pago_filtro,
+        movimiento_filtro=movimiento_filtro,
+        orden=orden,
+        q=q,
+        marcas_disponibles=marcas_disponibles,
+        condiciones_disponibles=condiciones_disponibles,
+        proveedores_list=proveedores_list,
+        clientes_list=clientes_list,
+        cotiz_dolar=cotiz,
+        hoy=hoy_str
+    )
+
     
     
 ##Reporte de cumpleaños
@@ -4863,7 +5562,7 @@ def _handle_presupuesto_reparacion_form(servicio_id=None, is_edit=False):
                     items_para_registrar.append({'repuesto_id': None, 'manual_item_nombre': n, 'cantidad': c, 'costo_usd_momento': p_usd_momento, 'valor_original': p_input})
                     total_precio_venta_items_usd += p_usd_momento * c
 
-            precio_final_ars = (total_precio_venta_items_usd * valor_dolar_servicio) + precio_mano_obra_ars
+            precio_final_ars = (total_precio_venta_items_usd * valor_dolar_servicio) + precio_mano_obra_ars 
             fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             if is_edit:

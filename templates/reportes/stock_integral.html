@@ -1,0 +1,700 @@
+{% extends 'layout.html' %}
+
+{% block title %}Reporte Integral de Stock, Compras y Ventas - {{ super() }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    .tabular-nums { font-variant-numeric: tabular-nums; }
+    .kpi-card { border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+    .chart-card { border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+    .chart-box { position: relative; height: 260px; width: 100%; }
+    .table-report th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; white-space: nowrap; }
+    .table-report td { font-size: 0.84rem; vertical-align: middle; }
+    @media print {
+        .no-print { display: none !important; }
+        .card, .kpi-card, .chart-card { box-shadow: none !important; border: 1px solid #cbd5e1 !important; }
+        .tab-pane { display: block !important; opacity: 1 !important; margin-bottom: 1.5rem; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-2">
+    <!-- Encabezado -->
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+        <div>
+            <h2 class="fw-bold text-dark mb-1">
+                <i class="bi bi-boxes text-primary me-2"></i>Reporte Integral de Stock, Compras y Ventas
+            </h2>
+            <p class="text-muted small mb-0">
+                Conciliación contable exacta desde <strong>Stock al Inicio ({{ fecha_inicio }})</strong> + Compras - Salidas/Ventas hasta <strong>Stock al Cierre ({{ fecha_cierre }})</strong> · Dólar ref.: <strong class="tabular-nums">${{ "{:,.2f}".format(cotiz_dolar) }}</strong>
+            </p>
+        </div>
+        <div class="d-flex flex-wrap align-items-center gap-2 no-print">
+            <a href="{{ url_for('reporte_stock_integral', fecha_inicio=fecha_inicio, fecha_cierre=fecha_cierre, rubro=rubro, marca=marca_filtro, condicion=condicion_filtro, proveedor_id=proveedor_id_filtro, cliente_id=cliente_id_filtro, estado_pago=estado_pago_filtro, movimiento=movimiento_filtro, orden=orden, q=q, exportar='csv') }}"
+               class="btn btn-outline-success btn-sm">
+                <i class="bi bi-file-earmark-spreadsheet me-1"></i>Exportar CSV
+            </a>
+            <button type="button" onclick="window.print()" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-printer me-1"></i>Imprimir / PDF
+            </button>
+            <a href="{{ url_for('reportes_menu') }}" class="btn btn-light btn-sm border">
+                <i class="bi bi-arrow-left me-1"></i>Menú Reportes
+            </a>
+        </div>
+    </div>
+
+    <!-- Panel Completo de Filtros -->
+    <div class="card border shadow-sm mb-4 no-print">
+        <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+            <span class="fw-semibold small text-dark"><i class="bi bi-sliders me-1 text-primary"></i>Filtros del Período e Inventario</span>
+            <span class="text-muted small">Ajustá fechas de Inicio / Cierre y cruzá por rubro, proveedor, cliente o estado de pago</span>
+        </div>
+        <div class="card-body bg-light p-3">
+            <form method="GET" action="{{ url_for('reporte_stock_integral') }}" class="row g-2 align-items-end">
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Fecha Inicio (Stock Inicial)</label>
+                    <input type="date" name="fecha_inicio" value="{{ fecha_inicio }}" max="{{ hoy }}" class="form-control form-control-sm bg-white" required>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Fecha Cierre (Stock Final)</label>
+                    <input type="date" name="fecha_cierre" value="{{ fecha_cierre }}" max="{{ hoy }}" class="form-control form-control-sm bg-white" required>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Rubro / Categoría</label>
+                    <select name="rubro" class="form-select form-select-sm bg-white">
+                        <option value="TODOS" {% if rubro == 'TODOS' %}selected{% endif %}>Todos los Rubros</option>
+                        <option value="CELULARES" {% if rubro == 'CELULARES' %}selected{% endif %}>Celulares / Equipos</option>
+                        <option value="REPUESTOS" {% if rubro == 'REPUESTOS' %}selected{% endif %}>Repuestos Taller</option>
+                        <option value="ACCESORIOS" {% if rubro == 'ACCESORIOS' %}selected{% endif %}>Accesorios</option>
+                        <option value="INSUMOS" {% if rubro == 'INSUMOS' %}selected{% endif %}>Insumos / Productos</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Marca / Compatibilidad</label>
+                    <select name="marca" class="form-select form-select-sm bg-white">
+                        <option value="TODAS" {% if marca_filtro == 'TODAS' %}selected{% endif %}>Todas las Marcas</option>
+                        {% for m in marcas_disponibles %}
+                        <option value="{{ m }}" {% if marca_filtro == m %}selected{% endif %}>{{ m }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Condición / Subcat.</label>
+                    <select name="condicion" class="form-select form-select-sm bg-white">
+                        <option value="TODAS" {% if condicion_filtro == 'TODAS' %}selected{% endif %}>Todas</option>
+                        {% for cond in condiciones_disponibles %}
+                        <option value="{{ cond }}" {% if condicion_filtro == cond %}selected{% endif %}>{{ cond }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Proveedor</label>
+                    <select name="proveedor_id" class="form-select form-select-sm bg-white">
+                        <option value="TODOS" {% if proveedor_id_filtro == 'TODOS' %}selected{% endif %}>Todos los Proveedores</option>
+                        {% for p in proveedores_list %}
+                        <option value="{{ p.id }}" {% if proveedor_id_filtro == (p.id|string) %}selected{% endif %}>{{ p.nombre_mostrar }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Cliente (Salidas)</label>
+                    <select name="cliente_id" class="form-select form-select-sm bg-white">
+                        <option value="TODOS" {% if cliente_id_filtro == 'TODOS' %}selected{% endif %}>Todos los Clientes</option>
+                        {% for c in clientes_list %}
+                        <option value="{{ c.id }}" {% if cliente_id_filtro == (c.id|string) %}selected{% endif %}>{{ c.nombre_mostrar }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Estado Pago Compra</label>
+                    <select name="estado_pago" class="form-select form-select-sm bg-white">
+                        <option value="TODOS" {% if estado_pago_filtro == 'TODOS' %}selected{% endif %}>Todos</option>
+                        <option value="PAGADO_TOTAL" {% if estado_pago_filtro == 'PAGADO_TOTAL' %}selected{% endif %}>Pagado Total</option>
+                        <option value="PAGADO_PARCIAL" {% if estado_pago_filtro == 'PAGADO_PARCIAL' %}selected{% endif %}>Pagado Parcial</option>
+                        <option value="PENDIENTE" {% if estado_pago_filtro == 'PENDIENTE' %}selected{% endif %}>Pendiente</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Rotación / Stock</label>
+                    <select name="movimiento" class="form-select form-select-sm bg-white">
+                        <option value="todos" {% if movimiento_filtro == 'todos' %}selected{% endif %}>Con existencias o mov.</option>
+                        <option value="con_movimiento" {% if movimiento_filtro == 'con_movimiento' %}selected{% endif %}>Solo con compras o ventas</option>
+                        <option value="solo_compras" {% if movimiento_filtro == 'solo_compras' %}selected{% endif %}>Solo comprados en período</option>
+                        <option value="solo_ventas" {% if movimiento_filtro == 'solo_ventas' %}selected{% endif %}>Solo vendidos / usados</option>
+                        <option value="inmovilizados" {% if movimiento_filtro == 'inmovilizados' %}selected{% endif %}>Inmovilizados (sin salidas)</option>
+                        <option value="con_stock_cierre" {% if movimiento_filtro == 'con_stock_cierre' %}selected{% endif %}>Con Stock al Cierre (&gt;0)</option>
+                        <option value="sin_stock_cierre" {% if movimiento_filtro == 'sin_stock_cierre' %}selected{% endif %}>Sin Stock al Cierre (=0)</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Ordenar por</label>
+                    <select name="orden" class="form-select form-select-sm bg-white">
+                        <option value="valor_cierre_desc" {% if orden == 'valor_cierre_desc' %}selected{% endif %}>Mayor Valor al Cierre</option>
+                        <option value="valor_inicio_desc" {% if orden == 'valor_inicio_desc' %}selected{% endif %}>Mayor Valor al Inicio</option>
+                        <option value="compras_desc" {% if orden == 'compras_desc' %}selected{% endif %}>Mayor Compra Período</option>
+                        <option value="ventas_desc" {% if orden == 'ventas_desc' %}selected{% endif %}>Mayor Venta Período</option>
+                        <option value="margen_desc" {% if orden == 'margen_desc' %}selected{% endif %}>Mayor Margen Bruto</option>
+                        <option value="nombre_asc" {% if orden == 'nombre_asc' %}selected{% endif %}>Nombre A - Z</option>
+                    </select>
+                </div>
+                <div class="col-12 col-md-6 col-xl-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Buscar texto / IMEI</label>
+                    <input type="text" name="q" value="{{ q }}" placeholder="Modelo, IMEI, código..." class="form-control form-control-sm bg-white">
+                </div>
+                <div class="col-12 col-md-6 col-xl-2 d-flex gap-1">
+                    <button type="submit" class="btn btn-primary btn-sm flex-fill fw-semibold">
+                        <i class="bi bi-funnel-fill me-1"></i>Aplicar Filtros
+                    </button>
+                    <a href="{{ url_for('reporte_stock_integral') }}" class="btn btn-outline-secondary btn-sm" title="Restablecer filtros">
+                        <i class="bi bi-arrow-counterclockwise"></i>
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card p-3 h-100">
+                <div class="d-flex justify-content-between align-items-center text-muted small fw-semibold">
+                    <span>STOCK AL INICIO</span>
+                    <span class="text-primary">{{ fecha_inicio }}</span>
+                </div>
+                <div class="fs-4 fw-bold text-dark mt-2 tabular-nums">{{ kpi.unid_inicio }} <span class="fs-6 fw-normal text-muted">unid.</span></div>
+                <div class="small fw-semibold text-primary tabular-nums mt-1">u$d {{ "{:,.2f}".format(kpi.val_inicio_usd) }}</div>
+                <div class="text-muted tabular-nums" style="font-size: 0.75rem;">${{ "{:,.0f}".format(kpi.val_inicio_ars) }} ARS</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card p-3 h-100">
+                <div class="d-flex justify-content-between align-items-center text-muted small fw-semibold">
+                    <span>(+) COMPRAS PERÍODO</span>
+                    <span class="text-info">{{ compras_periodo|length }} op.</span>
+                </div>
+                <div class="fs-4 fw-bold text-dark mt-2 tabular-nums">+{{ kpi.unid_compras }} <span class="fs-6 fw-normal text-muted">unid.</span></div>
+                <div class="small fw-semibold text-info tabular-nums mt-1">u$d {{ "{:,.2f}".format(kpi.val_compras_usd) }}</div>
+                <div class="text-muted tabular-nums" style="font-size: 0.75rem;">${{ "{:,.0f}".format(kpi.val_compras_ars) }} ARS</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card p-3 h-100">
+                <div class="d-flex justify-content-between align-items-center text-muted small fw-semibold">
+                    <span>(-) SALIDAS / VENTAS</span>
+                    <span class="text-warning">{{ salidas_periodo|length }} mov.</span>
+                </div>
+                <div class="fs-4 fw-bold text-dark mt-2 tabular-nums">-{{ kpi.unid_salidas }} <span class="fs-6 fw-normal text-muted">unid.</span></div>
+                <div class="small fw-semibold text-warning tabular-nums mt-1">CMV: u$d {{ "{:,.2f}".format(kpi.cmv_usd) }}</div>
+                <div class="text-muted tabular-nums" style="font-size: 0.75rem;">Fact.: u$d {{ "{:,.2f}".format(kpi.ventas_usd) }}</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card p-3 h-100">
+                <div class="d-flex justify-content-between align-items-center text-muted small fw-semibold">
+                    <span>(=) STOCK AL CIERRE</span>
+                    <span class="text-dark">{{ fecha_cierre }}</span>
+                </div>
+                <div class="fs-4 fw-bold text-dark mt-2 tabular-nums">{{ kpi.unid_cierre }} <span class="fs-6 fw-normal text-muted">unid.</span></div>
+                <div class="small fw-semibold text-dark tabular-nums mt-1">u$d {{ "{:,.2f}".format(kpi.val_cierre_usd) }}</div>
+                <div class="text-muted tabular-nums" style="font-size: 0.75rem;">${{ "{:,.0f}".format(kpi.val_cierre_ars) }} ARS</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-12 col-xl">
+            <div class="kpi-card p-3 h-100">
+                <div class="d-flex justify-content-between align-items-center text-muted small fw-semibold">
+                    <span>MARGEN BRUTO & ALERTA</span>
+                    <i class="bi bi-graph-up-arrow text-success"></i>
+                </div>
+                <div class="fs-4 fw-bold {{ 'text-success' if kpi.margen_usd >= 0 else 'text-danger' }} mt-2 tabular-nums">
+                    u$d {{ "{:,.2f}".format(kpi.margen_usd) }}
+                </div>
+                <div class="small text-muted tabular-nums mt-1">${{ "{:,.0f}".format(kpi.margen_ars) }} ARS</div>
+                <div class="mt-1" style="font-size: 0.75rem;">
+                    {% if kpi.inmovilizados_cant > 0 %}
+                    <span class="text-danger fw-semibold"><i class="bi bi-exclamation-circle me-1"></i>{{ kpi.inmovilizados_cant }} unid. inmovilizadas (u$d {{ "{:,.0f}".format(kpi.inmovilizados_usd) }})</span>
+                    {% else %}
+                    <span class="text-success fw-semibold"><i class="bi bi-check2-circle me-1"></i>Sin stock inmovilizado</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gráficas Interactivas (Chart.js) -->
+    <div class="row g-3 mb-4">
+        <!-- 1. Puente Ecuación de Inventario -->
+        <div class="col-12 col-lg-6">
+            <div class="chart-card p-3 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div>
+                        <h6 class="fw-bold mb-0 text-dark">Ecuación Contable de Inventario</h6>
+                        <small class="text-muted">Inicio + Compras - Salidas (CMV) = Cierre</small>
+                    </div>
+                    <div class="btn-group btn-group-sm no-print" role="group">
+                        <button type="button" class="btn btn-primary active" id="btnEcuUsd" onclick="switchEcuacion('usd')">USD</button>
+                        <button type="button" class="btn btn-outline-primary" id="btnEcuUnid" onclick="switchEcuacion('unid')">Unidades</button>
+                    </div>
+                </div>
+                <div class="chart-box">
+                    <canvas id="chartEcuacion"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Evolución Diaria Compras vs Ventas -->
+        <div class="col-12 col-lg-6">
+            <div class="chart-card p-3 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div>
+                        <h6 class="fw-bold mb-0 text-dark">Flujo Diario: Compras vs. Facturación Ventas (USD)</h6>
+                        <small class="text-muted">Comparativa cronológica del período seleccionado</small>
+                    </div>
+                </div>
+                <div class="chart-box">
+                    <canvas id="chartDiario"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Composición Stock al Cierre por Rubro -->
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="chart-card p-3 h-100">
+                <h6 class="fw-bold mb-0 text-dark">Stock al Cierre por Rubro (USD)</h6>
+                <small class="text-muted d-block mb-2">Distribución del capital inmovilizado al {{ fecha_cierre }}</small>
+                <div class="chart-box">
+                    <canvas id="chartRubros"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. Salidas CMV por Canal Operativo -->
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="chart-card p-3 h-100">
+                <h6 class="fw-bold mb-0 text-dark">Salidas CMV por Canal Operativo</h6>
+                <small class="text-muted d-block mb-2">Equipos, Adicionales, Taller y Cortesías (USD)</small>
+                <div class="chart-box">
+                    <canvas id="chartCanales"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. Top Proveedores: Pagado vs Pendiente -->
+        <div class="col-12 col-lg-4">
+            <div class="chart-card p-3 h-100">
+                <h6 class="fw-bold mb-0 text-dark">Top Proveedores: Pagado vs. Pendiente</h6>
+                <small class="text-muted d-block mb-2">Compras del período en USD por estado de pago</small>
+                <div class="chart-box">
+                    <canvas id="chartProveedores"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. Top Marcas / Compatibilidad: Cierre vs Margen -->
+        <div class="col-12">
+            <div class="chart-card p-3">
+                <h6 class="fw-bold mb-0 text-dark">Top Marcas / Compatibilidad: Stock al Cierre vs. Margen Generado (USD)</h6>
+                <small class="text-muted d-block mb-2">Relación entre inventario retenido al cierre y rentabilidad realizada en el período</small>
+                <div class="chart-box" style="height: 240px;">
+                    <canvas id="chartMarcas"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pestañas de Detalle -->
+    <div class="card border shadow-sm">
+        <div class="card-header bg-white pb-0 pt-2">
+            <ul class="nav nav-tabs card-header-tabs" id="stockTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active fw-semibold" id="tab-matriz-btn" data-bs-toggle="tab" data-bs-target="#tab-matriz" type="button" role="tab">
+                        <i class="bi bi-table me-1"></i>Matriz Inicio → Cierre ({{ items_matriz|length }})
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link fw-semibold" id="tab-compras-btn" data-bs-toggle="tab" data-bs-target="#tab-compras" type="button" role="tab">
+                        <i class="bi bi-bag-check me-1"></i>Detalle Compras ({{ compras_periodo|length }})
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link fw-semibold" id="tab-salidas-btn" data-bs-toggle="tab" data-bs-target="#tab-salidas" type="button" role="tab">
+                        <i class="bi bi-cart-check me-1"></i>Detalle Ventas / Salidas ({{ salidas_periodo|length }})
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link fw-semibold" id="tab-marcas-btn" data-bs-toggle="tab" data-bs-target="#tab-marcas" type="button" role="tab">
+                        <i class="bi bi-tags me-1"></i>Resumen por Marca ({{ resumen_marcas|length }})
+                    </button>
+                </li>
+            </ul>
+        </div>
+        <div class="card-body p-0">
+            <div class="tab-content" id="stockTabsContent">
+                <!-- TAB 1: MATRIZ INICIO -> CIERRE -->
+                <div class="tab-pane fade show active" id="tab-matriz" role="tabpanel">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm mb-0 table-report">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-3">Artículo / Código</th>
+                                    <th>Rubro · Marca</th>
+                                    <th>Proveedor</th>
+                                    <th class="text-end">Costo U.</th>
+                                    <th class="text-end bg-primary-subtle">Inicio ({{ fecha_inicio }})</th>
+                                    <th class="text-end bg-info-subtle">(+) Compras</th>
+                                    <th class="text-end bg-warning-subtle">(-) Salidas / CMV</th>
+                                    <th class="text-end">Facturación</th>
+                                    <th class="text-end">Margen</th>
+                                    <th class="text-end bg-dark-subtle">Cierre ({{ fecha_cierre }})</th>
+                                    <th class="text-end pe-3">Actual</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for it in items_matriz %}
+                                <tr>
+                                    <td class="ps-3">
+                                        <div class="fw-semibold text-dark">{{ it.descripcion }}</div>
+                                        <div class="text-muted small font-monospace">{{ it.codigo }}
+                                            {% if it.inmovilizado %}
+                                                <span class="text-danger ms-1 fw-sans" title="Sin salidas en el período">· Inmovilizado</span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="fw-medium">{{ it.tipo_label }}</div>
+                                        <div class="text-muted small">{{ it.marca_compat }} · {{ it.subcategoria }}</div>
+                                    </td>
+                                    <td>
+                                        <div>{{ it.proveedor_nombre }}</div>
+                                        {% if it.estado_compra != 'N/A' %}
+                                        <div class="small {{ 'text-success' if it.estado_compra == 'PAGADO_TOTAL' else 'text-warning' if it.estado_compra == 'PAGADO_PARCIAL' else 'text-danger' }}">{{ it.estado_compra }}</div>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end tabular-nums">u$d {{ "{:,.2f}".format(it.costo_unit_usd) }}</td>
+                                    <td class="text-end tabular-nums bg-primary-subtle bg-opacity-25">
+                                        <div class="fw-bold">{{ it.stock_inicio }}</div>
+                                        <div class="small text-muted">u$d {{ "{:,.2f}".format(it.valor_inicio_usd) }}</div>
+                                    </td>
+                                    <td class="text-end tabular-nums bg-info-subtle bg-opacity-25">
+                                        <div class="fw-bold text-info">{{ "+{}".format(it.compras_cant) if it.compras_cant > 0 else "0" }}</div>
+                                        <div class="small text-muted">u$d {{ "{:,.2f}".format(it.compras_usd) }}</div>
+                                    </td>
+                                    <td class="text-end tabular-nums bg-warning-subtle bg-opacity-25">
+                                        <div class="fw-bold text-warning-emphasis">{{ "-{}".format(it.salidas_cant) if it.salidas_cant > 0 else "0" }}</div>
+                                        <div class="small text-muted">u$d {{ "{:,.2f}".format(it.cmv_usd) }}</div>
+                                    </td>
+                                    <td class="text-end tabular-nums">
+                                        <div class="fw-medium">u$d {{ "{:,.2f}".format(it.ventas_usd) }}</div>
+                                        <div class="small text-muted">${{ "{:,.0f}".format(it.ventas_ars) }}</div>
+                                    </td>
+                                    <td class="text-end tabular-nums">
+                                        <div class="fw-bold {{ 'text-success' if it.margen_usd > 0 else 'text-danger' if it.margen_usd < 0 else 'text-muted' }}">
+                                            u$d {{ "{:,.2f}".format(it.margen_usd) }}
+                                        </div>
+                                    </td>
+                                    <td class="text-end tabular-nums bg-light">
+                                        <div class="fw-bold text-dark">{{ it.stock_cierre }}</div>
+                                        <div class="small text-muted">u$d {{ "{:,.2f}".format(it.valor_cierre_usd) }}</div>
+                                    </td>
+                                    <td class="text-end pe-3 tabular-nums text-muted">{{ it.stock_actual }}</td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="11" class="text-center py-4 text-muted">No se encontraron artículos para los filtros aplicados.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            {% if items_matriz %}
+                            <tfoot class="table-light fw-bold">
+                                <tr>
+                                    <td colspan="4" class="ps-3">TOTAL CONSOLIDADO ({{ items_matriz|length }} artículos)</td>
+                                    <td class="text-end tabular-nums">{{ kpi.unid_inicio }} u. · u$d {{ "{:,.2f}".format(kpi.val_inicio_usd) }}</td>
+                                    <td class="text-end tabular-nums text-info">+{{ kpi.unid_compras }} u. · u$d {{ "{:,.2f}".format(kpi.val_compras_usd) }}</td>
+                                    <td class="text-end tabular-nums text-warning-emphasis">-{{ kpi.unid_salidas }} u. · u$d {{ "{:,.2f}".format(kpi.cmv_usd) }}</td>
+                                    <td class="text-end tabular-nums">u$d {{ "{:,.2f}".format(kpi.ventas_usd) }}</td>
+                                    <td class="text-end tabular-nums {{ 'text-success' if kpi.margen_usd >= 0 else 'text-danger' }}">u$d {{ "{:,.2f}".format(kpi.margen_usd) }}</td>
+                                    <td class="text-end tabular-nums">{{ kpi.unid_cierre }} u. · u$d {{ "{:,.2f}".format(kpi.val_cierre_usd) }}</td>
+                                    <td class="pe-3"></td>
+                                </tr>
+                            </tfoot>
+                            {% endif %}
+                        </table>
+                    </div>
+                </div>
+
+                <!-- TAB 2: DETALLE COMPRAS -->
+                <div class="tab-pane fade" id="tab-compras" role="tabpanel">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm mb-0 table-report">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-3">Fecha</th>
+                                    <th>Proveedor</th>
+                                    <th>Artículo / Identificador</th>
+                                    <th>Rubro</th>
+                                    <th class="text-end">Cant.</th>
+                                    <th class="text-end">Costo U. USD</th>
+                                    <th class="text-end">Total USD</th>
+                                    <th class="text-end">Total ARS</th>
+                                    <th>Pago</th>
+                                    <th class="pe-3">Usuario</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for c in compras_periodo %}
+                                <tr>
+                                    <td class="ps-3 tabular-nums text-muted">{{ c.fecha[:16] }}</td>
+                                    <td class="fw-medium">{{ c.proveedor_nombre }}</td>
+                                    <td>
+                                        <div class="fw-semibold">{{ c.descripcion }}</div>
+                                        <div class="small text-muted font-monospace">{{ c.identificador }}</div>
+                                    </td>
+                                    <td>{{ c.rubro_cat }}</td>
+                                    <td class="text-end tabular-nums fw-bold">{{ c.cantidad }}</td>
+                                    <td class="text-end tabular-nums">u$d {{ "{:,.2f}".format(c.costo_unit_usd) }}</td>
+                                    <td class="text-end tabular-nums fw-bold text-info">u$d {{ "{:,.2f}".format(c.costo_total_usd) }}</td>
+                                    <td class="text-end tabular-nums">${{ "{:,.2f}".format(c.costo_total_ars) }}</td>
+                                    <td>
+                                        <span class="fw-semibold small {{ 'text-success' if c.estado_pago == 'PAGADO_TOTAL' else 'text-warning' if c.estado_pago == 'PAGADO_PARCIAL' else 'text-danger' }}">
+                                            {{ c.estado_pago }}
+                                        </span>
+                                    </td>
+                                    <td class="pe-3 text-muted small">{{ c.usuario }}</td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="10" class="text-center py-4 text-muted">No hay compras registradas en este período con los filtros elegidos.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- TAB 3: DETALLE VENTAS / SALIDAS -->
+                <div class="tab-pane fade" id="tab-salidas" role="tabpanel">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm mb-0 table-report">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-3">Fecha</th>
+                                    <th>Canal / Ref.</th>
+                                    <th>Cliente</th>
+                                    <th>Artículo / Código</th>
+                                    <th class="text-end">Cant.</th>
+                                    <th class="text-end">CMV USD</th>
+                                    <th class="text-end">Facturación USD</th>
+                                    <th class="text-end">Facturación ARS</th>
+                                    <th class="text-end pe-3">Ganancia USD</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for s in salidas_periodo %}
+                                <tr>
+                                    <td class="ps-3 tabular-nums text-muted">{{ s.fecha[:16] }}</td>
+                                    <td><span class="fw-semibold">{{ s.origen_label }}</span></td>
+                                    <td>{{ s.cliente_nombre }}</td>
+                                    <td>
+                                        <div class="fw-semibold">{{ s.descripcion }}</div>
+                                        <div class="small text-muted font-monospace">{{ s.codigo }}</div>
+                                    </td>
+                                    <td class="text-end tabular-nums fw-bold">{{ s.cantidad }}</td>
+                                    <td class="text-end tabular-nums text-warning-emphasis">u$d {{ "{:,.2f}".format(s.cmv_usd) }}</td>
+                                    <td class="text-end tabular-nums fw-medium">u$d {{ "{:,.2f}".format(s.venta_usd) }}</td>
+                                    <td class="text-end tabular-nums text-muted">${{ "{:,.2f}".format(s.venta_ars) }}</td>
+                                    <td class="text-end pe-3 tabular-nums fw-bold {{ 'text-success' if s.ganancia_usd >= 0 else 'text-danger' }}">
+                                        u$d {{ "{:,.2f}".format(s.ganancia_usd) }}
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="9" class="text-center py-4 text-muted">No hay salidas de stock registradas en este período.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- TAB 4: RESUMEN POR MARCA -->
+                <div class="tab-pane fade" id="tab-marcas" role="tabpanel">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm mb-0 table-report">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-3">Marca / Compatibilidad</th>
+                                    <th class="text-end">Unid. Inicio</th>
+                                    <th class="text-end">Unid. Compras</th>
+                                    <th class="text-end">Unid. Salidas</th>
+                                    <th class="text-end">Unid. Cierre</th>
+                                    <th class="text-end">Valor Cierre USD</th>
+                                    <th class="text-end pe-3">Margen Período USD</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for m in resumen_marcas %}
+                                <tr>
+                                    <td class="ps-3 fw-semibold">{{ m.nombre }}</td>
+                                    <td class="text-end tabular-nums">{{ m.inicio }}</td>
+                                    <td class="text-end tabular-nums text-info">+{{ m.compras }}</td>
+                                    <td class="text-end tabular-nums text-warning-emphasis">-{{ m.salidas }}</td>
+                                    <td class="text-end tabular-nums fw-bold">{{ m.cierre }}</td>
+                                    <td class="text-end tabular-nums fw-semibold">u$d {{ "{:,.2f}".format(m.cierre_usd) }}</td>
+                                    <td class="text-end pe-3 tabular-nums fw-bold {{ 'text-success' if m.margen_usd >= 0 else 'text-danger' }}">
+                                        u$d {{ "{:,.2f}".format(m.margen_usd) }}
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="7" class="text-center py-4 text-muted">Sin datos para agrupar.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+const chartsData = {{ charts_json|safe }};
+
+let chartEcuacionInstance = null;
+function renderEcuacion(mode) {
+    const ctx = document.getElementById('chartEcuacion');
+    if (!ctx) return;
+    if (chartEcuacionInstance) chartEcuacionInstance.destroy();
+    const isUsd = mode === 'usd';
+    const values = isUsd ? chartsData.ecuacion_usd : chartsData.ecuacion_unid;
+    chartEcuacionInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: chartsData.ecuacion_labels,
+            datasets: [{
+                label: isUsd ? 'Valorización (USD)' : 'Unidades físicas',
+                data: values,
+                backgroundColor: ['#3b82f6', '#06b6d4', '#f59e0b', '#0f172a'],
+                borderRadius: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: v => isUsd ? 'u$d ' + v.toLocaleString() : v + ' u.'
+                    }
+                }
+            }
+        }
+    });
+}
+
+function switchEcuacion(mode) {
+    document.getElementById('btnEcuUsd').classList.toggle('active', mode === 'usd');
+    document.getElementById('btnEcuUsd').classList.toggle('btn-primary', mode === 'usd');
+    document.getElementById('btnEcuUsd').classList.toggle('btn-outline-primary', mode !== 'usd');
+    document.getElementById('btnEcuUnid').classList.toggle('active', mode === 'unid');
+    document.getElementById('btnEcuUnid').classList.toggle('btn-primary', mode === 'unid');
+    document.getElementById('btnEcuUnid').classList.toggle('btn-outline-primary', mode !== 'unid');
+    renderEcuacion(mode);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    renderEcuacion('usd');
+
+    // 2. Diario Compras vs Ventas
+    new Chart(document.getElementById('chartDiario'), {
+        type: 'bar',
+        data: {
+            labels: chartsData.diario_labels,
+            datasets: [
+                { label: 'Compras (USD)', data: chartsData.diario_compras, backgroundColor: '#0ea5e9', borderRadius: 4 },
+                { label: 'Ventas Facturadas (USD)', data: chartsData.diario_ventas, backgroundColor: '#10b981', borderRadius: 4 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true } }
+        }
+    });
+
+    // 3. Stock al cierre por rubro
+    new Chart(document.getElementById('chartRubros'), {
+        type: 'doughnut',
+        data: {
+            labels: chartsData.rubro_labels,
+            datasets: [{
+                data: chartsData.rubro_valores,
+                backgroundColor: ['#2563eb', '#0891b2', '#10b981', '#f59e0b', '#6366f1']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom' } }
+        }
+    });
+
+    // 4. Salidas CMV por canal
+    new Chart(document.getElementById('chartCanales'), {
+        type: 'bar',
+        data: {
+            labels: chartsData.canal_labels,
+            datasets: [{
+                label: 'CMV (USD)',
+                data: chartsData.canal_valores,
+                backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'],
+                borderRadius: 5
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true } }
+        }
+    });
+
+    // 5. Top Proveedores (Pagado vs Pendiente)
+    new Chart(document.getElementById('chartProveedores'), {
+        type: 'bar',
+        data: {
+            labels: chartsData.prov_labels,
+            datasets: [
+                { label: 'Pagado Total (USD)', data: chartsData.prov_pagado, backgroundColor: '#10b981' },
+                { label: 'Pendiente / Parcial (USD)', data: chartsData.prov_pendiente, backgroundColor: '#f59e0b' }
+            ]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { x: { stacked: true, beginAtZero: true }, y: { stacked: true } }
+        }
+    });
+
+    // 6. Top Marcas: Stock al Cierre vs Margen
+    new Chart(document.getElementById('chartMarcas'), {
+        type: 'bar',
+        data: {
+            labels: chartsData.marca_labels,
+            datasets: [
+                { label: 'Valor Stock Cierre (USD)', data: chartsData.marca_cierre_usd, backgroundColor: '#3b82f6', borderRadius: 4 },
+                { label: 'Margen Período (USD)', data: chartsData.marca_margen_usd, backgroundColor: '#10b981', borderRadius: 4 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true } }
+        }
+    });
+});
+</script>
+{% endblock %}
