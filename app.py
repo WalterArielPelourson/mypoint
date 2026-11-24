@@ -1436,7 +1436,6 @@ def eliminar_compra(compra_id):
 
 @app.route('/compras/editar/<int:compra_id>', methods=['GET', 'POST'])
 @login_required
-
 def editar_compra(compra_id):
     db_conn = get_db()
     # Obtener la compra con datos del ítem
@@ -1453,46 +1452,104 @@ def editar_compra(compra_id):
     compra = dict(compra_data[0])
     proveedores = db_query("SELECT * FROM personas WHERE es_proveedor = 1 ORDER BY razon_social, apellido")
 
+    tipo_upper = (compra.get('tipo_item') or '').upper()
+    lista_equipos = ['CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO', 'CELULARES', 'TABLETS']
+    es_equipo = tipo_upper in lista_equipos
+    es_servicio_externo = (tipo_upper == 'SERVICIO_EXTERNO')
+
     if request.method == 'POST':
         try:
             # Capturar nuevos datos
             nuevo_proveedor_id = int(request.form.get('proveedor_id'))
-            nuevo_costo_usd = float(request.form.get('costo_unitario_usd'))
-            nueva_cantidad = int(request.form.get('cantidad'))
-            nueva_cotizacion = float(request.form.get('valor_dolar_momento'))
-            
-            # Cálculos
-            nuevo_total_usd = nuevo_costo_usd * nueva_cantidad
-            nuevo_total_ars = nuevo_total_usd * nueva_cotizacion
+            nueva_cantidad = max(1, int(float(request.form.get('cantidad') or compra.get('cantidad') or 1)))
+            if es_servicio_externo:
+                nueva_cantidad = 1
+
+            nueva_cotizacion = float(request.form.get('valor_dolar_momento') or compra.get('valor_dolar_momento') or 1)
+            if nueva_cotizacion <= 0:
+                nueva_cotizacion = 1.0
+
+            moneda_edicion = (request.form.get('moneda_edicion') or ('ARS' if not es_equipo else 'USD')).upper()
+
+            # Cálculos según la moneda elegida (ARS o USD)
+            if es_servicio_externo:
+                costo_unit_ars = float(request.form.get('costo_unitario_ars') or 0)
+                costo_tot_ars_in = float(request.form.get('costo_total_ars') or 0)
+                nuevo_total_ars = round(costo_tot_ars_in if costo_tot_ars_in > 0 else (costo_unit_ars * nueva_cantidad), 2)
+                nuevo_costo_usd = 0.0
+                nuevo_total_usd = 0.0
+            elif moneda_edicion == 'ARS':
+                costo_unit_ars = float(request.form.get('costo_unitario_ars') or 0)
+                costo_tot_ars_in = float(request.form.get('costo_total_ars') or 0)
+                nuevo_total_ars = round(costo_tot_ars_in if costo_tot_ars_in > 0 else (costo_unit_ars * nueva_cantidad), 2)
+                unit_ars_efectivo = nuevo_total_ars / nueva_cantidad if nueva_cantidad > 0 else nuevo_total_ars
+                nuevo_costo_usd = round(unit_ars_efectivo / nueva_cotizacion, 4)
+                nuevo_total_usd = round(nuevo_total_ars / nueva_cotizacion, 4)
+            else:
+                nuevo_costo_usd = round(float(request.form.get('costo_unitario_usd') or 0), 4)
+                nuevo_total_usd = round(nuevo_costo_usd * nueva_cantidad, 4)
+                nuevo_total_ars = round(nuevo_total_usd * nueva_cotizacion, 2)
             
             db_conn.execute("BEGIN TRANSACTION")
 
-            # --- AJUSTE DE STOCK ---
-            dif_cantidad = nueva_cantidad - compra['cantidad']
+            # --- AJUSTE DE STOCK Y COSTO ---
+            dif_cantidad = nueva_cantidad - int(compra.get('cantidad') or 1)
             
-            if compra['tipo_item'] in ['CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO']:
-                # En equipos la cantidad suele ser 1, pero si se cambia el costo, actualizamos el celular
+            if es_equipo:
+                # En equipos actualizamos el costo en celulares
                 db_execute_func(db_conn, "UPDATE celulares SET costo_usd = ? WHERE id = ?", (nuevo_costo_usd, compra['item_id']))
+            elif es_servicio_externo:
+                # En servicios externos actualizamos proveedor y costo en ARS en la orden (sin tocar repuestos)
+                db_execute_func(db_conn, "UPDATE servicios_reparacion SET externo_proveedor_id = ?, externo_costo_ars = ? WHERE id = ?",
+                                (nuevo_proveedor_id, nuevo_total_ars, compra['item_id']))
             else:
-                # En repuestos, ajustamos el stock sumando/restando la diferencia
-                db_execute_func(db_conn, "UPDATE repuestos SET stock = stock + ? WHERE id = ?", (dif_cantidad, compra['item_id']))
+                # En repuestos, ajustamos el stock sumando/restando la diferencia y actualizamos su costo_usd
+                db_execute_func(db_conn, "UPDATE repuestos SET stock = MAX(0, COALESCE(stock, 0) + ?), costo_usd = ? WHERE id = ?",
+                                (dif_cantidad, nuevo_costo_usd, compra['item_id']))
+
+            # --- RECALCULAR ESTADO DE PAGO SEGÚN PAGOS YA REALIZADOS ---
+            pagos_row = db_conn.execute("""
+                SELECT COALESCE(SUM(CASE WHEN COALESCE(monto_usd, 0) > 0 THEN monto_usd ELSE COALESCE(monto_ars, 0) / COALESCE(NULLIF(valor_dolar_momento, 0), ?) END), 0),
+                       COALESCE(SUM(CASE WHEN COALESCE(monto_ars, 0) > 0 THEN monto_ars ELSE COALESCE(monto_usd, 0) * COALESCE(NULLIF(valor_dolar_momento, 0), ?) END), 0)
+                FROM pagos_proveedores
+                WHERE compra_id = ?
+            """, (nueva_cotizacion, nueva_cotizacion, compra_id)).fetchone()
+
+            pagado_usd = float(pagos_row[0] or 0) if pagos_row else 0.0
+            pagado_ars = float(pagos_row[1] or 0) if pagos_row else 0.0
+
+            if es_equipo:
+                if pagado_usd <= 0.005:
+                    nuevo_estado = 'PENDIENTE'
+                elif pagado_usd >= nuevo_total_usd - 0.01:
+                    nuevo_estado = 'PAGADO_TOTAL'
+                else:
+                    nuevo_estado = 'PAGADO_PARCIAL'
+            else:
+                if pagado_ars <= 0.05:
+                    nuevo_estado = 'PENDIENTE'
+                elif pagado_ars >= nuevo_total_ars - 0.05:
+                    nuevo_estado = 'PAGADO_TOTAL'
+                else:
+                    nuevo_estado = 'PAGADO_PARCIAL'
 
             # --- ACTUALIZAR REGISTRO DE COMPRA ---
             db_execute_func(db_conn, """
                 UPDATE compras SET 
                     proveedor_id = ?, costo_unitario_usd = ?, costo_total_usd = ?, 
-                    valor_dolar_momento = ?, costo_total_ars = ?, cantidad = ?
+                    valor_dolar_momento = ?, costo_total_ars = ?, cantidad = ?, estado_pago = ?
                 WHERE id = ?""", 
-                (nuevo_proveedor_id, nuevo_costo_usd, nuevo_total_usd, nueva_cotizacion, nuevo_total_ars, nueva_cantidad, compra_id))
+                (nuevo_proveedor_id, nuevo_costo_usd, nuevo_total_usd, nueva_cotizacion, nuevo_total_ars, nueva_cantidad, nuevo_estado, compra_id))
 
             # --- REGISTRAR EN AUDITORÍA ---
             registrar_movimiento(current_user.id, 'MODIFICACION_COMPRA', 'COMPRA', compra_id, {
-                'antes': {'qty': compra['cantidad'], 'costo': compra['costo_unitario_usd']},
-                'ahora': {'qty': nueva_cantidad, 'costo': nuevo_costo_usd}
+                'moneda_edicion': moneda_edicion,
+                'antes': {'qty': compra['cantidad'], 'costo_usd': compra['costo_unitario_usd'], 'total_ars': compra.get('costo_total_ars')},
+                'ahora': {'qty': nueva_cantidad, 'costo_usd': nuevo_costo_usd, 'total_ars': nuevo_total_ars}
             })
 
             db_conn.commit()
-            flash("Compra actualizada correctamente. Se ajustaron los saldos y el stock.", "success")
+            flash(f"Compra actualizada correctamente en {moneda_edicion}. Se ajustaron los saldos y el stock.", "success")
             return redirect(url_for('listar_compras'))
 
         except Exception as e:
@@ -1500,8 +1557,6 @@ def editar_compra(compra_id):
             flash(f"Error al modificar: {e}", "danger")
 
     return render_template('compras/editar_compra.html', compra=compra, proveedores=proveedores)
-
-
 
 
 

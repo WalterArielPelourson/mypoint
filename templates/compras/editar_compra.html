@@ -1,48 +1,221 @@
 {% extends 'layout.html' %}
 {% block content %}
+{% set cant_inicial = (compra.cantidad or 1)|int %}
+{% if cant_inicial < 1 %}{% set cant_inicial = 1 %}{% endif %}
+{% set dolar_inicial_val = (compra.valor_dolar_momento or 1)|float %}
+{% if dolar_inicial_val <= 0 %}{% set dolar_inicial_val = 1.0 %}{% endif %}
+{% set es_servicio = (compra.tipo_item == 'SERVICIO_EXTERNO') %}
+{% set total_ars_inicial = (compra.costo_total_ars or 0)|float %}
+{% if total_ars_inicial <= 0 and (compra.costo_total_usd or 0)|float > 0 %}
+    {% set total_ars_inicial = (compra.costo_total_usd|float) * dolar_inicial_val %}
+{% endif %}
+{% set unit_ars_inicial = (total_ars_inicial / cant_inicial) if cant_inicial > 0 else total_ars_inicial %}
+{% set moneda_inicial = 'ARS' if (es_servicio or (compra.tipo_item or '')|upper not in ['CELULAR', 'TABLET', 'SMARTWATCH', 'EQUIPO', 'CELULARES', 'TABLETS']) else 'USD' %}
+
 <div class="container mt-4">
     <div class="card shadow">
-        <div class="card-header bg-warning text-dark">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
             <h4 class="mb-0"><i class="bi bi-pencil-square me-2"></i>Editar Compra #{{ compra.id }}</h4>
+            <span class="badge bg-dark text-white">{{ compra.tipo_item }}</span>
         </div>
         <div class="card-body">
             <form method="POST">
+                <input type="hidden" name="moneda_edicion" id="moneda_edicion" value="{{ moneda_inicial }}">
+
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label class="form-label fw-bold">Proveedor</label>
                         <select name="proveedor_id" class="form-select" required>
                             {% for p in proveedores %}
                             <option value="{{ p.id }}" {% if p.id == compra.proveedor_id %}selected{% endif %}>
-                                {{ p.razon_social or (p.nombre + ' ' + p.apellido) }}
+                                {{ p.razon_social or (((p.nombre or '') ~ ' ' ~ (p.apellido or ''))|trim) }}
                             </option>
                             {% endfor %}
                         </select>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label fw-bold">Cantidad</label>
-                        <input type="number" name="cantidad" class="form-control" value="{{ compra.cantidad }}" required>
+                        <input type="number" name="cantidad" id="cantidad" min="1" class="form-control fw-bold" value="{{ cant_inicial }}" {% if es_servicio %}readonly{% endif %} required>
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label fw-bold">Costo Unitario USD</label>
-                        <input type="number" step="0.01" name="costo_unitario_usd" class="form-control" value="{{ compra.costo_unitario_usd }}" required>
-                    </div>
-                    <div class="col-md-6">
                         <label class="form-label fw-bold">Cotización Dólar (Dólar Momento)</label>
-                        <input type="number" step="0.01" name="valor_dolar_momento" class="form-control" value="{{ compra.valor_dolar_momento }}" required>
+                        <input type="number" step="0.01" min="1" name="valor_dolar_momento" id="valor_dolar_momento" class="form-control" value="{{ '%.2f'|format(dolar_inicial_val) }}" required>
                     </div>
+
+                    {% if not es_servicio %}
+                    <div class="col-12">
+                        <label class="form-label fw-bold small text-uppercase text-muted d-block mb-2">Moneda base para editar el costo:</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="selector_moneda" id="radio_ars" value="ARS" {% if moneda_inicial == 'ARS' %}checked{% endif %}>
+                            <label class="btn btn-outline-success fw-bold" for="radio_ars">
+                                <i class="bi bi-cash-coin me-1"></i>Editar en Pesos (ARS $)
+                            </label>
+
+                            <input type="radio" class="btn-check" name="selector_moneda" id="radio_usd" value="USD" {% if moneda_inicial == 'USD' %}checked{% endif %}>
+                            <label class="btn btn-outline-primary fw-bold" for="radio_usd">
+                                <i class="bi bi-currency-dollar me-1"></i>Editar en Dólares (USD u$d)
+                            </label>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- COSTO EN ARS -->
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold text-success">Costo Unitario (ARS $)</label>
+                        <input type="number" step="0.01" min="0" name="costo_unitario_ars" id="costo_unitario_ars" class="form-control border-success fw-bold" value="{{ '%.2f'|format(unit_ars_inicial) }}" onfocus="this.select()" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold text-success">Costo Total (ARS $)</label>
+                        <input type="number" step="0.01" min="0" name="costo_total_ars" id="costo_total_ars" class="form-control border-success fw-bold" value="{{ '%.2f'|format(total_ars_inicial) }}" onfocus="this.select()" required>
+                    </div>
+
+                    <!-- COSTO EN USD -->
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold text-primary">Costo Unitario USD</label>
+                        <input type="number" step="any" min="0" name="costo_unitario_usd" id="costo_unitario_usd" class="form-control border-primary fw-bold" value="{{ '%.4f'|format(compra.costo_unitario_usd or 0) if (compra.costo_unitario_usd or 0) != (compra.costo_unitario_usd or 0)|round(2) else '%.2f'|format(compra.costo_unitario_usd or 0) }}" onfocus="this.select()" {% if es_servicio %}readonly{% endif %} required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold text-primary">Costo Total USD</label>
+                        <input type="number" step="0.01" min="0" id="costo_total_usd" class="form-control bg-light fw-bold" value="{{ '%.2f'|format(compra.costo_total_usd or 0) }}" readonly>
+                    </div>
+
                     <div class="col-12 mt-4">
-                        <div class="alert alert-info">
+                        <div class="alert alert-info mb-0">
                             <i class="bi bi-info-circle me-2"></i>
                             Al modificar el costo o la cantidad, se actualizará automáticamente el saldo en la Cuenta Corriente del proveedor y el stock disponible.
+                            <div class="small mt-1 fw-bold">
+                                Moneda activa: <span id="badge_moneda">{{ 'ARS (Servicio Externo)' if es_servicio else moneda_inicial }}</span> |
+                                Total: <span id="resumen_totales">${{ '%.2f'|format(total_ars_inicial) }} / u$d {{ '%.2f'|format(compra.costo_total_usd or 0) }}</span>
+                            </div>
                         </div>
                     </div>
                     <div class="col-12 text-end">
                         <a href="{{ url_for('listar_compras') }}" class="btn btn-secondary text-white">Cancelar</a>
-                        <button type="submit" class="btn btn-warning">Guardar Cambios</button>
+                        <button type="submit" class="btn btn-warning fw-bold">Guardar Cambios</button>
                     </div>
                 </div>
             </form>
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const esServicio = {{ 'true' if es_servicio else 'false' }};
+    const monedaInput = document.getElementById('moneda_edicion');
+    const radioArs = document.getElementById('radio_ars');
+    const radioUsd = document.getElementById('radio_usd');
+    const badgeMoneda = document.getElementById('badge_moneda');
+    const resumenEl = document.getElementById('resumen_totales');
+
+    const cantidadEl = document.getElementById('cantidad');
+    const dolarEl = document.getElementById('valor_dolar_momento');
+    const unitArsEl = document.getElementById('costo_unitario_ars');
+    const totalArsEl = document.getElementById('costo_total_ars');
+    const unitUsdEl = document.getElementById('costo_unitario_usd');
+    const totalUsdEl = document.getElementById('costo_total_usd');
+
+    function getCant() {
+        return Math.max(1, parseInt(cantidadEl.value || '1', 10) || 1);
+    }
+
+    function getDolar() {
+        const d = parseFloat(dolarEl.value || '1') || 1;
+        return d > 0 ? d : 1;
+    }
+
+    function actualizarResumen() {
+        const tArs = parseFloat(totalArsEl.value || '0') || 0;
+        const tUsd = parseFloat(totalUsdEl.value || '0') || 0;
+        resumenEl.textContent = '$' + tArs.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
+            ' / u$d ' + tUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function setMoneda(m) {
+        if (esServicio) {
+            monedaInput.value = 'ARS';
+            return;
+        }
+        monedaInput.value = m;
+        if (radioArs && radioUsd) {
+            radioArs.checked = (m === 'ARS');
+            radioUsd.checked = (m === 'USD');
+        }
+        if (badgeMoneda) badgeMoneda.textContent = m;
+        actualizarResumen();
+    }
+
+    function recalcularDesdeUnitArs() {
+        setMoneda('ARS');
+        const cant = getCant();
+        const dolar = getDolar();
+        const uArs = parseFloat(unitArsEl.value || '0') || 0;
+        const tArs = uArs * cant;
+        totalArsEl.value = tArs.toFixed(2);
+        if (esServicio) {
+            unitUsdEl.value = '0.00';
+            totalUsdEl.value = '0.00';
+        } else {
+            unitUsdEl.value = (uArs / dolar).toFixed(4);
+            totalUsdEl.value = (tArs / dolar).toFixed(2);
+        }
+        actualizarResumen();
+    }
+
+    function recalcularDesdeTotalArs() {
+        setMoneda('ARS');
+        const cant = getCant();
+        const dolar = getDolar();
+        const tArs = parseFloat(totalArsEl.value || '0') || 0;
+        const uArs = tArs / cant;
+        unitArsEl.value = uArs.toFixed(2);
+        if (esServicio) {
+            unitUsdEl.value = '0.00';
+            totalUsdEl.value = '0.00';
+        } else {
+            unitUsdEl.value = (uArs / dolar).toFixed(4);
+            totalUsdEl.value = (tArs / dolar).toFixed(2);
+        }
+        actualizarResumen();
+    }
+
+    function recalcularDesdeUnitUsd() {
+        if (esServicio) return;
+        setMoneda('USD');
+        const cant = getCant();
+        const dolar = getDolar();
+        const uUsd = parseFloat(unitUsdEl.value || '0') || 0;
+        const tUsd = uUsd * cant;
+        totalUsdEl.value = tUsd.toFixed(2);
+        unitArsEl.value = (uUsd * dolar).toFixed(2);
+        totalArsEl.value = (tUsd * dolar).toFixed(2);
+        actualizarResumen();
+    }
+
+    unitArsEl.addEventListener('input', recalcularDesdeUnitArs);
+    totalArsEl.addEventListener('input', recalcularDesdeTotalArs);
+    unitUsdEl.addEventListener('input', recalcularDesdeUnitUsd);
+
+    cantidadEl.addEventListener('input', function() {
+        if (esServicio || monedaInput.value === 'ARS') {
+            recalcularDesdeUnitArs();
+        } else {
+            recalcularDesdeUnitUsd();
+        }
+    });
+
+    dolarEl.addEventListener('input', function() {
+        if (esServicio || monedaInput.value === 'ARS') {
+            recalcularDesdeTotalArs();
+        } else {
+            recalcularDesdeUnitUsd();
+        }
+    });
+
+    if (radioArs) radioArs.addEventListener('change', function() { if (this.checked) setMoneda('ARS'); });
+    if (radioUsd) radioUsd.addEventListener('change', function() { if (this.checked) setMoneda('USD'); });
+
+    actualizarResumen();
+});
+</script>
 {% endblock %}
