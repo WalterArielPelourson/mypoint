@@ -2,6 +2,43 @@
 
 {% block title %}Historial de Reparaciones - {{ super() }}{% endblock %}
 
+{% block head_extra %}
+<style>
+    /* Expande el contenedor principal al 98% del ancho en escritorio solo en esta vista */
+    @media (min-width: 992px) {
+        body:has(.tabla-historial-ancha) .container {
+            max-width: 98% !important;
+        }
+    }
+
+    /* Ajuste compacto de la tabla para visualizar las 14 columnas completas en pantalla */
+    .tabla-historial-ancha {
+        width: 100%;
+        font-size: 0.74rem;
+        line-height: 1.22;
+    }
+    .tabla-historial-ancha th,
+    .tabla-historial-ancha td {
+        padding: 0.34rem 0.35rem !important;
+        vertical-align: middle;
+    }
+    .tabla-historial-ancha thead th {
+        font-size: 0.68rem;
+        white-space: nowrap;
+        letter-spacing: -0.01em;
+    }
+    .tabla-historial-ancha .col-wrap {
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+    }
+    .tabla-historial-ancha .badge {
+        font-size: 0.66rem;
+        padding: 0.25em 0.45em;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <!-- CABECERA: Título y Botón de Exportación -->
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -26,7 +63,7 @@
                 <label for="cliente" class="form-label fw-bold">Cliente:</label>
                 <select class="form-select select2-persona" id="cliente" name="cliente">
                     {% if filtros_activos.cliente %}
-                        <option value="{{ filtros_activos.cliente }}" selected>Cargando...</option>
+                        <option value="{{ filtros_activos.cliente }}" selected>Tipee Cliente</option>
                     {% else %}
                         <option value="">Todos los clientes</option>
                     {% endif %}
@@ -65,7 +102,7 @@
                     <option value="">-- Todos los laboratorios --</option>
                     {% for p in prov_externos %}
                         <option value="{{ p.id }}" {% if filtros_activos.prov_ext|string == p.id|string %}selected{% endif %}>
-                            {{ p.razon_social or (p.nombre + ' ' + p.apellido) }}
+                            {{ p.razon_social or (((p.nombre or '') ~ ' ' ~ (p.apellido or ''))|trim) }}
                         </option>
                     {% endfor %}
                 </select>
@@ -94,8 +131,8 @@
 </div>
 
 <!-- TABLA DE RESULTADOS UNIFICADA -->
-<div class="table-responsive mt-4">
-    <table class="table table-striped table-hover align-middle">
+<div class="table-responsive mt-3">
+    <table class="table table-striped table-hover table-sm align-middle mb-0 tabla-historial-ancha">
         <thead class="table-dark">
             <tr>
                 <th scope="col">ID</th>
@@ -106,64 +143,70 @@
                 <th scope="col">Equipo (Modelo/IMEI/PIN)</th>
                 <th scope="col">Falla / Solución</th>
                 <th scope="col">Notas Internas</th>
-                <th scope="col">M. Obra</th>
-                <th scope="col">Insumos</th>
+                <th scope="col" class="text-end">M. Obra</th>
+                <th scope="col" class="text-end">Insumos</th>
+                <th scope="col" class="text-end">Costo Tercero</th>
                 <th scope="col" class="text-end">Total ARS</th>
-                <th scope="col">Estado</th>
+                <th scope="col" class="text-center">Estado</th>
                 <th scope="col" class="text-center">Acciones</th>
             </tr>
         </thead>
         <tbody>
             {% if reparaciones %}
+                {% set ns = namespace(total_ext=0.0, total_final=0.0) %}
                 {% for reparacion in reparaciones %}
+                    {% if reparacion.es_terciarizada == 1 %}
+                        {% set ns.total_ext = ns.total_ext + (reparacion.externo_costo_ars or 0) %}
+                    {% endif %}
+                    {% set ns.total_final = ns.total_final + (reparacion.precio_final_ars or 0) %}
                 <tr>
                     <!-- 1. ID -->
-                    <td><span class="fw-bold">#{{ reparacion.id }}</span></td>
+                    <td class="text-nowrap"><span class="fw-bold">#{{ reparacion.id }}</span></td>
 
                     <!-- 2. FECHA -->
-                    <td class="small">
+                    <td class="text-nowrap" style="font-size: 0.7rem;">
                         {{ reparacion.fecha_servicio.split(' ')[0] }}<br>
                         <small class="text-muted">{{ reparacion.fecha_servicio.split(' ')[1] }}</small>
                     </td>
 
                     <!-- 3. CLIENTE -->
-                    <td>{{ reparacion.razon_social or (reparacion.nombre + ' ' + reparacion.apellido) }}</td>
+                    <td class="col-wrap" style="max-width: 115px;">{{ reparacion.razon_social or (((reparacion.nombre or '') ~ ' ' ~ (reparacion.apellido or ''))|trim) }}</td>
 
                     <!-- 4. TÉCNICO (DATO AGREGADO) -->
-                    <td class="small fw-bold text-secondary">
+                    <td class="fw-bold text-secondary col-wrap" style="max-width: 85px;">
                         {{ reparacion.tecnico_nombre or 'Sin asignar' }}
                     </td>
 
                     <!-- 5. TIPO 
                     <td class="small"><span class="badge bg-secondary">{{ reparacion.tipo_servicio }}</span></td>-->
                     
-                    <td class="small">
-                        <span class="badge bg-secondary">{{ reparacion.tipo_servicio }}</span><br>
+                    <td class="col-wrap" style="max-width: 105px;">
+                        <span class="badge bg-secondary text-wrap">{{ reparacion.tipo_servicio }}</span><br>
                         {% if reparacion.es_terciarizada == 1 %}
                             <div class="mt-1">
-                                <span class="text-danger fw-bold" style="font-size: 0.75rem;">
+                                <span class="text-danger fw-bold" style="font-size: 0.68rem;">
                                     <i class="bi bi-truck me-1"></i>EXTERNO:
                                 </span>
-                                <div class="small text-muted text-uppercase">
-                                    {{ reparacion.prov_externo_social or (reparacion.prov_externo_nom + ' ' + reparacion.prov_externo_ape) }}
+                                <div class="text-muted text-uppercase col-wrap" style="font-size: 0.68rem;">
+                                    {{ reparacion.prov_externo_social or (((reparacion.prov_externo_nom or '') ~ ' ' ~ (reparacion.prov_externo_ape or ''))|trim or 'Sin asignar') }}
                                 </div>
                             </div>
                         {% else %}
-                            <small class="text-primary fw-bold" style="font-size: 0.75rem;">
+                            <small class="text-primary fw-bold" style="font-size: 0.68rem;">
                                 <i class="bi bi-person-check me-1"></i>INTERNO
                             </small>
                         {% endif %}
                     </td>
 
                     <!-- 6. EQUIPO (MODELO / IMEI / PIN) -->
-                    <td>
+                    <td class="col-wrap" style="max-width: 130px;">
                         <div class="fw-bold text-primary">{{ reparacion.modelo_equipo or 'Sin Modelo' }}</div>
-                        <div class="small text-muted">IMEI: {{ reparacion.imei_equipo or 'N/A' }}</div>
-                        <div class="small text-danger fw-bold">PIN: {{ reparacion.pin_code or 'N/A' }}</div>
+                        <div class="text-muted" style="font-size: 0.68rem;">IMEI: {{ reparacion.imei_equipo or 'N/A' }}</div>
+                        <div class="text-danger fw-bold" style="font-size: 0.68rem;">PIN: {{ reparacion.pin_code or 'N/A' }}</div>
                     </td>
 
                     <!-- 7. FALLA Y SOLUCIÓN -->
-                    <td class="small">
+                    <td class="col-wrap" style="max-width: 145px;">
                         <div title="{{ reparacion.falla_reportada }}"><strong>F:</strong> {{ (reparacion.falla_reportada or '')|truncate(30) }}</div>
                         {% if reparacion.solucion_aplicada %}
                             <div class="text-success" title="{{ reparacion.solucion_aplicada }}"><strong>S:</strong> {{ (reparacion.solucion_aplicada or '')|truncate(30) }}</div>
@@ -171,37 +214,46 @@
                     </td>
 
                     <!-- 8. NOTAS INTERNAS -->
-                    <td class="small">
-                        <p class="text-muted font-italic mb-0" style="font-size: 0.8rem;">
+                    <td class="col-wrap" style="max-width: 110px;">
+                        <p class="text-muted font-italic mb-0" style="font-size: 0.7rem;">
                             {{ (reparacion.observaciones or '')|truncate(40) or '-' }}
                         </p>
                     </td>
 
                     <!-- 9. MANO DE OBRA -->
-                    <td class="small text-nowrap">ARS {{ (reparacion.precio_mano_obra_ars or 0)|round(2) }}</td>
+                    <td class="text-nowrap text-end">ARS {{ (reparacion.precio_mano_obra_ars or 0)|round(2) }}</td>
 
                     <!-- 10. COSTO REPUESTOS -->
-                    <td class="small text-nowrap">USD {{ (reparacion.costo_total_repuestos_usd or 0)|round(2) }}</td>
+                    <td class="text-nowrap text-end">USD {{ (reparacion.costo_total_repuestos_usd or 0)|round(2) }}</td>
 
-                    <!-- 11. PRECIO FINAL -->
+                    <!-- 11. COSTO TERCERO (PROVEEDOR EXTERNO) -->
+                    <td class="text-nowrap text-end">
+                        {% if reparacion.es_terciarizada == 1 %}
+                            <span class="fw-bold text-danger">ARS {{ "{:,.2f}".format(reparacion.externo_costo_ars or 0) }}</span>
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- 12. PRECIO FINAL -->
                     <td class="fw-bold text-nowrap text-end text-success">
                         ARS {{ (reparacion.precio_final_ars or 0)|round(2) }}
                     </td>
 
-                    <!-- 12. ESTADO -->
-                    <td>
+                    <!-- 13. ESTADO -->
+                    <td class="text-center text-nowrap">
                         <span class="badge bg-success">{{ reparacion.status }}</span>
                     </td>
 
-                    <!-- 13. ACCIONES (Diseño 2x2) -->
-                    <td style="width: 100px;">
-                        <div class="d-flex flex-wrap justify-content-center gap-1" style="width: 75px; margin: 0 auto;">
+                    <!-- 14. ACCIONES (Diseño compacto) -->
+                    <td class="text-nowrap" style="width: 68px;">
+                        <div class="d-flex justify-content-center gap-1">
                             <a href="{{ url_for('view_reparacion', servicio_id=reparacion.id) }}" 
-                               class="btn btn-sm btn-info text-white" style="width: 32px;" title="Ver Detalles">
+                               class="btn btn-sm btn-info text-white py-0 px-1" style="width: 28px;" title="Ver Detalles">
                                <i class="bi bi-eye"></i>
                             </a>
                             <a href="{{ url_for('imprimir_reparacion', servicio_id=reparacion.id) }}" 
-                               target="_blank" class="btn btn-sm btn-secondary" style="width: 32px;" title="Imprimir">
+                               target="_blank" class="btn btn-sm btn-secondary py-0 px-1" style="width: 28px;" title="Imprimir">
                                <i class="bi bi-printer"></i>
                             </a>
                         </div>
@@ -210,10 +262,20 @@
                 {% endfor %}
             {% else %}
                 <tr>
-                    <td colspan="13" class="text-center text-muted py-4">No se encontraron reparaciones completadas con los filtros aplicados.</td>
+                    <td colspan="14" class="text-center text-muted py-4">No se encontraron reparaciones completadas con los filtros aplicados.</td>
                 </tr>
             {% endif %}
         </tbody>
+        {% if reparaciones %}
+        <tfoot class="table-light fw-bold">
+            <tr>
+                <td colspan="10" class="text-end text-uppercase small text-muted">Totales del listado:</td>
+                <td class="text-end text-nowrap text-danger">ARS {{ "{:,.2f}".format(ns.total_ext) }}</td>
+                <td class="text-end text-nowrap text-success">ARS {{ "{:,.2f}".format(ns.total_final) }}</td>
+                <td colspan="2"></td>
+            </tr>
+        </tfoot>
+        {% endif %}
     </table>
 </div>
 {% endblock %}
@@ -242,17 +304,19 @@
         });
 
         // Lógica de Pre-cargado
-        {% if filtros_activos.cliente %}
+        {% if filtros_activos.cliente and not reparaciones %}
             var clienteId = "{{ filtros_activos.cliente }}";
             $.ajax({
                 type: 'GET',
                 url: '{{ url_for("api_buscar_personas") }}',
-                data: { q: clienteId, rol: 'cliente' }
+                data: { id: clienteId, q: clienteId, rol: 'cliente' }
             }).then(function (data) {
                 if (data.results && data.results.length > 0) {
-                    var item = data.results.find(x => x.id == clienteId) || data.results[0];
-                    var option = new Option(item.text, item.id, true, true);
-                    $('#cliente').append(option).trigger('change');
+                    var item = data.results.find(x => String(x.id) === String(clienteId));
+                    if (item) {
+                        var option = new Option(item.text, item.id, true, true);
+                        $('#cliente').empty().append(option).trigger('change');
+                    }
                 }
             });
         {% endif %}

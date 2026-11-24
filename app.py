@@ -1937,8 +1937,22 @@ def listar_compras():
 
     # 2. Construcción de la Query Base
     query = f"""
-        SELECT co.*, p.razon_social, p.nombre, p.apellido, u.username,
+        SELECT co.*,
+               COALESCE(p.razon_social, '') AS razon_social,
+               COALESCE(p.nombre, '') AS nombre,
+               COALESCE(p.apellido, '') AS apellido,
+               u.username,
+               COALESCE(sr.imei_equipo, '') AS rep_imei,
+               COALESCE(sr.modelo_equipo, '') AS rep_modelo,
+               COALESCE(NULLIF(TRIM(cli.razon_social), ''), TRIM(COALESCE(cli.nombre, '') || ' ' || COALESCE(cli.apellido, '')), '') AS rep_cliente_nombre,
                CASE
+                   WHEN UPPER(COALESCE(co.tipo_item, '')) = 'SERVICIO_EXTERNO' THEN
+                        'TRABAJO EXTERNO (Orden #' || co.item_id || ')' ||
+                        CASE WHEN COALESCE(TRIM(sr.modelo_equipo), '') != '' THEN ' - ' || TRIM(sr.modelo_equipo) ELSE '' END ||
+                        CASE WHEN COALESCE(TRIM(sr.imei_equipo), '') != '' THEN ' | IMEI: ' || TRIM(sr.imei_equipo) ELSE '' END ||
+                        CASE WHEN COALESCE(NULLIF(TRIM(cli.razon_social), ''), TRIM(COALESCE(cli.nombre, '') || ' ' || COALESCE(cli.apellido, ''))) != ''
+                             THEN ' | Cliente: ' || COALESCE(NULLIF(TRIM(cli.razon_social), ''), TRIM(COALESCE(cli.nombre, '') || ' ' || COALESCE(cli.apellido, '')))
+                             ELSE '' END
                    WHEN co.tipo_item IN {categorias_celulares} THEN 
                         COALESCE(c.marca, 'Equipo') || ' ' || COALESCE(c.modelo, '') || ' (IMEI: ' || COALESCE(c.imei, 'N/A') || ')'
                    WHEN co.tipo_item IN {categorias_repuestos} THEN 
@@ -1950,6 +1964,8 @@ def listar_compras():
         JOIN users u ON co.user_id = u.id
         LEFT JOIN celulares c ON co.item_id = c.id AND co.tipo_item IN {categorias_celulares}
         LEFT JOIN repuestos r ON co.item_id = r.id AND co.tipo_item IN {categorias_repuestos}
+        LEFT JOIN servicios_reparacion sr ON co.item_id = sr.id AND UPPER(COALESCE(co.tipo_item, '')) = 'SERVICIO_EXTERNO'
+        LEFT JOIN personas cli ON sr.cliente_id = cli.id
         WHERE 1=1
     """
     params = []
@@ -1995,8 +2011,7 @@ def listar_compras():
                            filtros_activos={'proveedor': filtro_proveedor, 'tipo_item': filtro_tipo_item, 'estado_pago': filtro_estado_pago},
                            proveedores_disponibles=proveedores_disponibles)
     
-    
-    
+        
       
 # --- Rutas para Cuentas Corrientes de Proveedores ---
 ## NUEVAS MODIFICACIONES (Punto 3 de Requerimientos) ##

@@ -22,6 +22,27 @@
     .select2-container--default .select2-selection--single .select2-selection__clear {
         margin-right: 1.5rem;
     }
+
+    /* Ajuste para ver todas las columnas de la tabla en pantalla */
+    @media (min-width: 992px) {
+        body:has(.tabla-compras-ancha) .container {
+            max-width: 98% !important;
+        }
+    }
+    .tabla-compras-ancha {
+        width: 100%;
+        font-size: 0.78rem;
+        line-height: 1.25;
+    }
+    .tabla-compras-ancha th,
+    .tabla-compras-ancha td {
+        padding: 0.4rem 0.4rem !important;
+        vertical-align: middle;
+    }
+    .tabla-compras-ancha thead th {
+        font-size: 0.72rem;
+        white-space: nowrap;
+    }
 </style>
 {% endblock %}
 
@@ -46,7 +67,8 @@
                 <label for="proveedor" class="form-label fw-bold">Proveedor:</label>
                 <select class="form-select select2-proveedor" id="proveedor" name="proveedor">
                     {% if filtros_activos.proveedor %}
-                        <option value="{{ filtros_activos.proveedor }}" selected>Cargando proveedor...</option>
+                        {% set prov_label = (compras[0].razon_social or (((compras[0].nombre or '') ~ ' ' ~ (compras[0].apellido or ''))|trim)) if compras else ('Proveedor #' ~ filtros_activos.proveedor) %}
+                        <option value="{{ filtros_activos.proveedor }}" selected>{{ prov_label }}</option>
                     {% else %}
                         <option value="">Todos los proveedores</option>
                     {% endif %}
@@ -71,6 +93,7 @@
                     <option value="CELULAR" {% if filtros_activos.tipo_item == 'CELULAR' %}selected{% endif %}>Celular / Equipo</option>
                     <option value="repuesto" {% if filtros_activos.tipo_item == 'repuesto' %}selected{% endif %}>Repuesto </option>
                     <option value="accesorio" {% if filtros_activos.tipo_item == 'accesorio' %}selected{% endif %}>Accesorio</option>
+                    <option value="SERVICIO_EXTERNO" {% if filtros_activos.tipo_item == 'SERVICIO_EXTERNO' %}selected{% endif %}>Servicio Externo</option>
                 </select>
             </div>
             <div class="col-md-4">
@@ -92,7 +115,7 @@
 
 {# Tabla de Compras #}
 <div class="table-responsive mt-4">
-    <table class="table table-striped table-hover align-middle">
+    <table class="table table-striped table-hover align-middle tabla-compras-ancha">
         <thead class="table-dark">
             <tr>
                 <th scope="col">ID</th>
@@ -107,23 +130,35 @@
                 <th scope="col">Dólar Momento</th>
                 <th scope="col">Total ARS</th>
                 <th scope="col">Estado Pago</th>
-                <th scope="col" style="min-width: 150px;">Acciones</th>
+                <th scope="col" style="min-width: 110px;">Acciones</th>
             </tr>
         </thead>
         <tbody>
             {% for compra in compras %}
             <tr>
                 <td>{{ compra.id }}</td>
-                <td>{{ compra.fecha_compra|datetimeformat('%d/%m/%Y %H:%M') }}</td>
-                <td>{{ compra.razon_social or (compra.nombre + ' ' + compra.apellido) }}</td>
+                <td class="text-nowrap">{{ compra.fecha_compra|datetimeformat('%d/%m/%Y %H:%M') }}</td>
+                <td>{{ compra.razon_social or (((compra.nombre or '') ~ ' ' ~ (compra.apellido or ''))|trim) }}</td>
                 <td>{{ compra.username }}</td>
                 <td>{{ compra.tipo_item }}</td>
-                <td>{{ compra.item_descripcion }}</td>
+                <td>
+                    <div>{{ compra.item_descripcion }}</div>
+                    {% if (compra.tipo_item or '')|upper == 'SERVICIO_EXTERNO' %}
+                        {% if (compra.rep_imei or compra.rep_cliente_nombre) and ('IMEI:' not in (compra.item_descripcion or '')) %}
+                            <div class="small text-muted mt-1">
+                                <span class="me-2"><i class="bi bi-phone me-1"></i><strong>IMEI:</strong> {{ compra.rep_imei or 'N/A' }}</span>
+                                <span><i class="bi bi-person me-1"></i><strong>Cliente:</strong> {{ compra.rep_cliente_nombre or 'Sin cliente' }}</span>
+                            </div>
+                        {% elif compra.imei_celular and ('IMEI:' not in (compra.item_descripcion or '')) and ('Cliente:' not in (compra.item_descripcion or '')) %}
+                            <div class="small text-muted">{{ compra.imei_celular }}</div>
+                        {% endif %}
+                    {% endif %}
+                </td>
                 <td>{{ compra.cantidad }}</td>
-                <td>USD {{ compra.costo_unitario_usd|round(2) }}</td>
-                <td>USD {{ compra.costo_total_usd|round(2) }}</td>
-                <td>ARS {{ compra.valor_dolar_momento|round(2) }}</td>
-                <td>ARS {{ compra.costo_total_ars|round(2) }}</td>
+                <td class="text-nowrap">USD {{ (compra.costo_unitario_usd or 0)|round(2) }}</td>
+                <td class="text-nowrap">USD {{ (compra.costo_total_usd or 0)|round(2) }}</td>
+                <td class="text-nowrap">ARS {{ (compra.valor_dolar_momento or 0)|round(2) }}</td>
+                <td class="text-nowrap">ARS {{ (compra.costo_total_ars or 0)|round(2) }}</td>
                 <td>
                     {% if compra.estado_pago == 'PENDIENTE' %}
                         <span class="badge bg-danger">{{ compra.estado_pago }}</span>
@@ -202,21 +237,24 @@
         });
 
         // 2. Lógica de Pre-cargado: Mantiene el nombre del proveedor visible después de filtrar
-        {% if filtros_activos.proveedor %}
+        {% if filtros_activos.proveedor and not compras %}
             var proveedorId = "{{ filtros_activos.proveedor }}";
             $.ajax({
                 type: 'GET',
                 url: '{{ url_for("api_buscar_personas") }}',
                 data: {
+                    id: proveedorId,
                     q: proveedorId, // Enviamos el ID para que la API traiga el nombre
                     rol: 'proveedor'
                 }
             }).then(function (data) {
                 if (data.results && data.results.length > 0) {
-                    // Buscamos el proveedor que coincida con el ID filtrado
-                    var item = data.results.find(x => x.id == proveedorId) || data.results[0];
-                    var option = new Option(item.text, item.id, true, true);
-                    proveedorFilterSelect.append(option).trigger('change');
+                    // Buscamos el proveedor que coincida exactamente con el ID filtrado
+                    var item = data.results.find(x => String(x.id) === String(proveedorId));
+                    if (item) {
+                        var option = new Option(item.text, item.id, true, true);
+                        proveedorFilterSelect.empty().append(option).trigger('change');
+                    }
                 }
             });
         {% endif %}
